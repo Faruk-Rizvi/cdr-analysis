@@ -39,63 +39,293 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────
-# CUSTOM CSS
+# CUSTOM CSS — Professional Design
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
-    .main-header {
-        background: linear-gradient(135deg, #1F3864 0%, #2E74B5 100%);
-        padding: 2rem;
+    /* Global */
+    .stApp { background: #f1f5f9; }
+    .main .block-container { padding-top: 1rem; padding-bottom: 2rem; max-width: 1400px; }
+    #MainMenu, footer, header[data-testid="stHeader"] { visibility: hidden; }
+
+    /* Top App Header */
+    .app-header {
+        background: white;
+        padding: 1rem 1.5rem;
         border-radius: 12px;
-        text-align: center;
-        margin-bottom: 2rem;
+        margin-bottom: 1.25rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .app-header-left { display: flex; align-items: center; gap: 0.75rem; }
+    .app-header-logo {
+        width: 42px; height: 42px;
+        background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+        border-radius: 10px;
+        display: flex; align-items: center; justify-content: center;
+        color: white; font-size: 1.3rem;
+    }
+    .app-header-title {
+        font-size: 1.15rem; font-weight: 700; color: #0f172a;
+    }
+    .app-header-nav { display: flex; gap: 1.75rem; color: #475569; font-size: 0.95rem; font-weight: 500; }
+    .app-header-nav span { display: flex; align-items: center; gap: 0.4rem; cursor: default; }
+
+    /* Hero Section */
+    .hero {
+        background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 50%, #2563eb 100%);
+        border-radius: 16px;
+        padding: 2.75rem 2.5rem;
         color: white;
+        margin-bottom: 1.5rem;
+        position: relative;
+        overflow: hidden;
+        box-shadow: 0 10px 30px rgba(30, 58, 138, 0.25);
     }
-    .main-header h1 { color: white; margin: 0; font-size: 2.2rem; }
-    .main-header p  { color: #cce0ff; margin: 0.5rem 0 0 0; font-size: 1rem; }
+    .hero::before {
+        content: '';
+        position: absolute;
+        top: -50%; right: -10%;
+        width: 500px; height: 500px;
+        background: radial-gradient(circle, rgba(96, 165, 250, 0.15) 0%, transparent 70%);
+        border-radius: 50%;
+    }
+    .hero-icon-area {
+        position: absolute;
+        right: 2.5rem; top: 50%;
+        transform: translateY(-50%);
+        font-size: 5rem;
+        opacity: 0.15;
+        z-index: 0;
+    }
+    .hero h1 {
+        color: white !important;
+        font-size: 2.8rem !important;
+        font-weight: 800;
+        margin: 0 0 0.5rem 0 !important;
+        line-height: 1.1;
+        position: relative; z-index: 1;
+    }
+    .hero p {
+        color: #cfe0ff !important;
+        font-size: 1.05rem;
+        margin: 0 0 1.5rem 0;
+        max-width: 600px;
+        line-height: 1.5;
+        position: relative; z-index: 1;
+    }
+    .hero-supports {
+        display: flex; align-items: center; gap: 0.5rem;
+        color: #93c5fd; font-size: 0.9rem; font-weight: 600;
+        margin-bottom: 1rem;
+        position: relative; z-index: 1;
+    }
+    .operator-row {
+        display: flex; gap: 0.6rem; flex-wrap: wrap;
+        position: relative; z-index: 1;
+    }
+    .op-badge {
+        background: white;
+        padding: 0.6rem 1rem;
+        border-radius: 10px;
+        display: flex; align-items: center; gap: 0.5rem;
+        color: #0f172a; font-weight: 600; font-size: 0.9rem;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    }
+    .op-dot { width: 14px; height: 14px; border-radius: 50%; }
 
+    /* Card Container */
+    .card {
+        background: white;
+        border-radius: 14px;
+        padding: 1.75rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        margin-bottom: 1.25rem;
+    }
+    .card-title {
+        display: flex; align-items: center; gap: 0.7rem;
+        font-size: 1.15rem; font-weight: 700; color: #0f172a;
+        margin-bottom: 0.25rem;
+    }
+    .card-subtitle { color: #64748b; font-size: 0.88rem; margin-bottom: 1rem; }
+    .card-icon-blue {
+        width: 36px; height: 36px;
+        background: #dbeafe;
+        border-radius: 9px;
+        display: flex; align-items: center; justify-content: center;
+        color: #2563eb; font-size: 1.1rem;
+    }
+
+    /* Info Banner */
+    .info-banner {
+        background: #eff6ff;
+        border-left: 4px solid #2563eb;
+        border-radius: 12px;
+        padding: 1rem 1.5rem;
+        display: flex; align-items: center; gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    .info-banner-icon {
+        width: 40px; height: 40px;
+        background: #2563eb;
+        border-radius: 50%;
+        color: white;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.2rem;
+        flex-shrink: 0;
+    }
+    .info-banner-title { font-weight: 700; color: #1e3a8a; font-size: 1rem; }
+    .info-banner-text { color: #475569; font-size: 0.9rem; margin-top: 0.15rem; }
+
+    /* Capabilities Grid */
+    .cap-card {
+        background: white;
+        border-radius: 14px;
+        padding: 1.5rem 1.75rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        margin-bottom: 1.25rem;
+    }
+    .cap-title {
+        display: flex; align-items: center; gap: 0.6rem;
+        font-size: 1.1rem; font-weight: 700; color: #0f172a;
+        margin-bottom: 1.25rem;
+    }
+    .cap-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.75rem 2rem;
+    }
+    .cap-item {
+        display: flex; align-items: center; gap: 0.85rem;
+        padding: 0.5rem 0;
+    }
+    .cap-icon {
+        width: 38px; height: 38px;
+        border-radius: 10px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.05rem;
+        flex-shrink: 0;
+    }
+    .cap-text { color: #334155; font-size: 0.92rem; font-weight: 500; }
+
+    /* Trust Badges */
+    .trust-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1rem;
+        background: white;
+        border-radius: 14px;
+        padding: 1.5rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .trust-item { display: flex; align-items: center; gap: 1rem; }
+    .trust-icon {
+        width: 48px; height: 48px;
+        border-radius: 12px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.4rem;
+    }
+    .trust-title { font-weight: 700; color: #0f172a; font-size: 0.98rem; }
+    .trust-sub { color: #64748b; font-size: 0.85rem; margin-top: 0.1rem; }
+
+    /* Footer */
+    .footer {
+        text-align: center;
+        margin-top: 2rem;
+        padding: 1rem;
+        color: #64748b;
+        font-size: 0.88rem;
+        border-top: 1px solid #e2e8f0;
+    }
+    .footer .dev-name { color: #2563eb; font-weight: 700; }
+
+    /* Stat Cards */
     .stat-card {
-        background: #f0f4ff;
-        border-left: 4px solid #2E74B5;
+        background: white;
+        border-left: 4px solid #2563eb;
         padding: 1rem 1.2rem;
-        border-radius: 8px;
+        border-radius: 10px;
         margin-bottom: 0.5rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
-    .stat-card .label { font-size: 0.8rem; color: #666; font-weight: 600; text-transform: uppercase; }
-    .stat-card .value { font-size: 1.4rem; color: #1F3864; font-weight: 700; }
+    .stat-card .label { font-size: 0.78rem; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat-card .value { font-size: 1.4rem; color: #1e3a8a; font-weight: 700; margin-top: 0.2rem; }
 
+    /* Status Boxes */
     .success-box {
-        background: #e8f5e9;
-        border: 1px solid #4caf50;
-        border-radius: 8px;
+        background: #ecfdf5;
+        border: 1px solid #10b981;
+        border-radius: 10px;
         padding: 1rem 1.5rem;
         margin: 1rem 0;
+        color: #065f46;
     }
     .warning-box {
-        background: #fff8e1;
-        border: 1px solid #ffc107;
-        border-radius: 8px;
-        padding: 0.8rem 1.2rem;
+        background: #fffbeb;
+        border: 1px solid #f59e0b;
+        border-radius: 10px;
+        padding: 0.85rem 1.25rem;
         margin: 0.5rem 0;
+        color: #92400e;
     }
-    .download-btn {
-        display: inline-block;
-        padding: 0.6rem 1.2rem;
-        border-radius: 8px;
-        font-weight: 600;
-        text-decoration: none;
-        margin: 0.3rem;
-    }
+
+    /* Download Button */
     div[data-testid="stDownloadButton"] button {
         width: 100%;
-        border-radius: 8px;
+        border-radius: 10px;
         font-weight: 600;
-        padding: 0.6rem;
+        padding: 0.7rem;
+        background: #2563eb;
+        color: white;
+        border: none;
     }
+    div[data-testid="stDownloadButton"] button:hover {
+        background: #1e40af;
+    }
+
+    /* Progress */
     .stProgress > div > div > div {
-        background: linear-gradient(90deg, #1F3864, #2E74B5);
+        background: linear-gradient(90deg, #1e3a8a, #2563eb);
     }
-    footer { visibility: hidden; }
+
+    /* File Uploader Style */
+    div[data-testid="stFileUploader"] section {
+        background: #f8fafc;
+        border: 2px dashed #cbd5e1;
+        border-radius: 12px;
+        padding: 1.5rem;
+    }
+    div[data-testid="stFileUploader"] section:hover {
+        border-color: #2563eb;
+        background: #eff6ff;
+    }
+
+    /* Text Input */
+    div[data-testid="stTextInput"] input {
+        border-radius: 10px;
+        border: 1px solid #cbd5e1;
+        padding: 0.75rem 1rem;
+        font-size: 0.95rem;
+    }
+    div[data-testid="stTextInput"] input:focus {
+        border-color: #2563eb;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+
+    /* Expander */
+    div[data-testid="stExpander"] {
+        background: white;
+        border-radius: 12px;
+        border: 1px solid #e2e8f0;
+        margin-bottom: 0.75rem;
+    }
+    div[data-testid="stExpander"] summary {
+        font-weight: 600;
+        color: #0f172a;
+        padding: 0.75rem 1rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -878,44 +1108,177 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
 # STREAMLIT UI
 # ─────────────────────────────────────────────
 def main():
+    # ── Top App Header ──
     st.markdown("""
-    <div class="main-header">
-        <h1>📞 CDR Analysis Tool</h1>
-        <p>Upload any CDR Excel file → Get HTML & Word Report instantly</p>
-        <p style="font-size:0.85rem; margin-top:0.3rem;">
-        Supports: Grameenphone · Robi · Banglalink · Teletalk · Airtel
-        </p>
+    <div class="app-header">
+        <div class="app-header-left">
+            <div class="app-header-logo">📊</div>
+            <div class="app-header-title">CDR Analysis Platform</div>
+        </div>
+        <div class="app-header-nav">
+            <span>📈 Dashboard Preview</span>
+            <span>ℹ️ How It Works</span>
+            <span>❓ Help</span>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── File Upload + Target Number Input ──
-    up_col, num_col = st.columns([2, 1])
+    # ── Hero Section ──
+    st.markdown("""
+    <div class="hero">
+        <div class="hero-icon-area">📱📊</div>
+        <h1>CDR Analysis Platform</h1>
+        <p>Upload your Call Detail Records (CDR) and generate actionable insights with automated reports in seconds.</p>
+        <div class="hero-supports">✓ Supports All Major Operators</div>
+        <div class="operator-row">
+            <div class="op-badge"><div class="op-dot" style="background:#0073cf;"></div>Grameenphone</div>
+            <div class="op-badge"><div class="op-dot" style="background:#e60028;"></div>Robi</div>
+            <div class="op-badge"><div class="op-dot" style="background:#f57c00;"></div>Banglalink</div>
+            <div class="op-badge"><div class="op-dot" style="background:#00a651;"></div>Teletalk</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Upload + Target Number Row ──
+    up_col, num_col = st.columns([1.4, 1])
+
     with up_col:
+        st.markdown("""
+        <div class="card-title">
+            <div class="card-icon-blue">📂</div>
+            <div>
+                <div>Upload CDR File</div>
+                <div class="card-subtitle" style="font-weight:400;">Upload your Excel file (.XLSX or .XLS)</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
         uploaded = st.file_uploader(
-            "📂 CDR Excel ফাইল আপলোড করুন",
+            label=" ",
             type=['xlsx', 'xls'],
-            help="যেকোনো অপারেটরের CDR Excel ফাইল (.xlsx / .xls)"
+            help="যেকোনো অপারেটরের CDR Excel ফাইল",
+            label_visibility="collapsed"
         )
+        st.caption("Maximum file size: 200MB")
+
     with num_col:
+        st.markdown("""
+        <div class="card-title">
+            <div class="card-icon-blue">🎯</div>
+            <div>
+                <div>Target Number <span style="color:#94a3b8; font-weight:500; font-size:0.85rem;">(Optional)</span></div>
+                <div class="card-subtitle" style="font-weight:400;">Enter a number to perform focused analysis.</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
         target_number = st.text_input(
-            "🎯 Target Number (Optional)",
+            label=" ",
             placeholder="e.g. 8801712345678",
-            help="যদি কোনো নির্দিষ্ট নম্বরের সাথে interaction জানতে চান, এখানে দিন। Optional — খালি রাখলেও চলবে।"
+            label_visibility="collapsed"
         )
         target_number = target_number.strip() if target_number else None
 
-    if uploaded is None:
-        st.info("⬆️ উপরে CDR Excel ফাইল upload করুন — HTML ও Word Report তৈরি হবে।")
         st.markdown("""
-        **এই tool যা করে:**
-        - ✅ যেকোনো Operator-এর CDR ফাইল process করে
-        - ✅ Anomaly (Service SMS, Invalid numbers) সরিয়ে দেয়
-        - ✅ Call Summary, Daily/Weekly/Monthly Analysis
-        - ✅ Top Contacts, Location Analysis, SMS Analysis
-        - ✅ Last 10 Days Activity (Calls + Locations)
-        - ✅ Specific Number Analysis (যদি Target Number দেন)
-        - ✅ Graphs সহ HTML + Word Report generate করে
-        """)
+        <div style="background:#eff6ff; border-radius:10px; padding:0.75rem 1rem; margin-top:0.5rem; display:flex; gap:0.6rem; align-items:flex-start;">
+            <div style="color:#2563eb; font-size:1.1rem;">ℹ️</div>
+            <div style="color:#1e40af; font-size:0.85rem; line-height:1.4;">
+                Providing a target number helps generate detailed insights for that specific number.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ── Show landing content if no file uploaded ──
+    if uploaded is None:
+        # Info Banner
+        st.markdown("""
+        <div class="info-banner">
+            <div class="info-banner-icon">⚡</div>
+            <div style="flex:1;">
+                <div class="info-banner-title">Instant Analysis & Reports</div>
+                <div class="info-banner-text">After upload, the system will instantly generate interactive dashboards and downloadable HTML & Word reports with comprehensive insights.</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Key Capabilities
+        st.markdown("""
+        <div class="cap-card">
+            <div class="cap-title">⭐ Key Capabilities</div>
+            <div class="cap-grid">
+                <div class="cap-item">
+                    <div class="cap-icon" style="background:#dcfce7; color:#16a34a;">✓</div>
+                    <div class="cap-text">Processes CDR data from any operator</div>
+                </div>
+                <div class="cap-item">
+                    <div class="cap-icon" style="background:#dbeafe; color:#2563eb;">👥</div>
+                    <div class="cap-text">Top contacts &amp; communication patterns</div>
+                </div>
+                <div class="cap-item">
+                    <div class="cap-icon" style="background:#e0e7ff; color:#4f46e5;">🕒</div>
+                    <div class="cap-text">Last 10 days activity tracking</div>
+                </div>
+                <div class="cap-item">
+                    <div class="cap-icon" style="background:#fef3c7; color:#d97706;">⚠</div>
+                    <div class="cap-text">Detects anomalies and invalid numbers</div>
+                </div>
+                <div class="cap-item">
+                    <div class="cap-icon" style="background:#dcfce7; color:#16a34a;">📍</div>
+                    <div class="cap-text">Location and movement analysis</div>
+                </div>
+                <div class="cap-item">
+                    <div class="cap-icon" style="background:#fce7f3; color:#db2777;">🎯</div>
+                    <div class="cap-text">Target-based number analysis</div>
+                </div>
+                <div class="cap-item">
+                    <div class="cap-icon" style="background:#ede9fe; color:#7c3aed;">📅</div>
+                    <div class="cap-text">Call summary (Daily, Weekly, Monthly)</div>
+                </div>
+                <div class="cap-item">
+                    <div class="cap-icon" style="background:#fee2e2; color:#dc2626;">💬</div>
+                    <div class="cap-text">SMS activity insights</div>
+                </div>
+                <div class="cap-item">
+                    <div class="cap-icon" style="background:#cffafe; color:#0891b2;">📊</div>
+                    <div class="cap-text">Auto-generated reports with graphs</div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Trust Badges
+        st.markdown("""
+        <div class="trust-row">
+            <div class="trust-item">
+                <div class="trust-icon" style="background:#dbeafe; color:#2563eb;">🛡️</div>
+                <div>
+                    <div class="trust-title">Secure Processing</div>
+                    <div class="trust-sub">Your data is processed securely</div>
+                </div>
+            </div>
+            <div class="trust-item">
+                <div class="trust-icon" style="background:#dcfce7; color:#16a34a;">🔒</div>
+                <div>
+                    <div class="trust-title">No Data Stored</div>
+                    <div class="trust-sub">We don't store or share your data</div>
+                </div>
+            </div>
+            <div class="trust-item">
+                <div class="trust-icon" style="background:#ede9fe; color:#7c3aed;">⚡</div>
+                <div>
+                    <div class="trust-title">Fast &amp; Reliable</div>
+                    <div class="trust-sub">Get results in seconds</div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Footer
+        st.markdown("""
+        <div class="footer">
+            🛡️ Developed By <span class="dev-name">Md. Omar Faruk Mazumder</span>
+        </div>
+        """, unsafe_allow_html=True)
         return
 
     # ── Process ──
@@ -1165,6 +1528,13 @@ def main():
     except Exception as e:
         st.error(f"❌ Error: {str(e)}")
         st.code(str(e))
+
+    # ── Footer (always shown after upload too) ──
+    st.markdown("""
+    <div class="footer">
+        🛡️ Developed By <span class="dev-name">Md. Omar Faruk Mazumder</span>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 if __name__ == '__main__':
