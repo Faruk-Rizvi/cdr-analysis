@@ -403,6 +403,108 @@ def location_summary(df):
         'Count':    ['N/A', int(mv.iloc[0]) if not mv.empty else 0, hc, wc, ec]
     })
 
+
+def top_sms_contacts(df, direction='out', n=5):
+    """Top SMS contacts with strict valid number filter.
+    Bangladesh mobile pattern: 8801XXXXXXXXX (13 digits) or 01XXXXXXXXX (11 digits).
+    Also accepts other 10-15 digit international formats but excludes shortcodes/random hex.
+    """
+    if 'party_b_clean' not in df.columns:
+        return pd.DataFrame()
+    col = 'is_sms_out' if direction == 'out' else 'is_sms_in'
+    if col not in df.columns:
+        return pd.DataFrame()
+
+    def is_real_mobile(val):
+        s = str(val).strip()
+        if not s.isdigit():
+            return False
+        # Bangladesh mobile: 8801XXXXXXXXX (13 digits) or 01XXXXXXXXX (11 digits)
+        if s.startswith('8801') and len(s) == 13:
+            return True
+        if s.startswith('01') and len(s) == 11:
+            return True
+        # International mobile: 10-15 digits, NOT starting with 0 or 88 (with non-1 third digit)
+        if 10 <= len(s) <= 15 and not s.startswith('0') and not s.startswith('880'):
+            return True
+        return False
+
+    sub = df[df[col] & df['party_b_clean'].apply(is_real_mobile)]
+    if len(sub) == 0:
+        return pd.DataFrame()
+    counts = sub['party_b_clean'].value_counts().head(n)
+    return pd.DataFrame({'Party B': counts.index, 'SMS Count': counts.values})
+
+
+def last_n_days_top_contacts(df, days=10, n=10):
+    """Top contacts (MOC + MTC combined) in last N days."""
+    if 'start' not in df.columns or 'party_b_clean' not in df.columns:
+        return pd.DataFrame()
+    max_date = df['start'].max()
+    cutoff = max_date - pd.Timedelta(days=days)
+    recent = df[(df['start'] >= cutoff) & (df['is_call_out'] | df['is_call_in'])].copy()
+    if len(recent) == 0:
+        return pd.DataFrame()
+    grouped = recent.groupby('party_b_clean').agg(
+        moc=('is_call_out', 'sum'),
+        mtc=('is_call_in', 'sum'),
+        total_duration=('duration', 'sum')
+    )
+    grouped['total_calls'] = grouped['moc'] + grouped['mtc']
+    grouped = grouped.sort_values('total_calls', ascending=False).head(n).reset_index()
+    grouped['Duration (min)'] = (grouped['total_duration'] / 60).round(1)
+    return grouped[['party_b_clean', 'moc', 'mtc', 'total_calls', 'Duration (min)']].rename(
+        columns={'party_b_clean': 'Party B', 'moc': 'MOC',
+                 'mtc': 'MTC', 'total_calls': 'Total Calls'})
+
+
+def last_n_days_top_locations(df, days=10, n=10):
+    """Top locations in last N days."""
+    if 'start' not in df.columns or 'address' not in df.columns:
+        return pd.DataFrame()
+    max_date = df['start'].max()
+    cutoff = max_date - pd.Timedelta(days=days)
+    recent = df[df['start'] >= cutoff]
+    addrs = recent['address'].dropna().value_counts().head(n)
+    if addrs.empty:
+        return pd.DataFrame()
+    return pd.DataFrame({'Address': addrs.index, 'Count': addrs.values})
+
+
+def specific_number_analysis(df, target_number):
+    """Analyze interactions with a specific phone number (MOC, MTC, duration, SMS)."""
+    if 'party_b_clean' not in df.columns or not target_number:
+        return None
+    target = re.sub(r'\D', '', str(target_number).strip())
+    if len(target) < 10:
+        return None
+    # Match flexibly: 8801712345678 == 01712345678 == 1712345678
+    candidates = {target}
+    if target.startswith('880'):  candidates.add('0' + target[3:])
+    elif target.startswith('0'):  candidates.add('880' + target[1:])
+    if target.startswith('880'):  candidates.add(target[3:])
+    candidates.add(target.lstrip('0'))
+    sub = df[df['party_b_clean'].astype(str).isin(candidates)]
+    if len(sub) == 0:
+        return None
+    moc = int(sub.get('is_call_out', pd.Series([False]*len(sub))).sum())
+    mtc = int(sub.get('is_call_in',  pd.Series([False]*len(sub))).sum())
+    sms_out = int(sub.get('is_sms_out', pd.Series([False]*len(sub))).sum())
+    sms_in  = int(sub.get('is_sms_in',  pd.Series([False]*len(sub))).sum())
+    call_mask = sub.get('is_call_out', False) | sub.get('is_call_in', False)
+    total_dur = int(sub.loc[call_mask, 'duration'].sum()) if 'duration' in sub.columns else 0
+    return {
+        'number': target_number,
+        'moc': moc, 'mtc': mtc,
+        'total_calls': moc + mtc,
+        'total_duration_sec': total_dur,
+        'total_duration_min': round(total_dur / 60, 2),
+        'sms_sent': sms_out, 'sms_received': sms_in,
+        'total_sms': sms_out + sms_in,
+        'first_contact': sub['start'].min().strftime('%Y-%m-%d %H:%M:%S') if 'start' in sub.columns and len(sub) else 'N/A',
+        'last_contact':  sub['start'].max().strftime('%Y-%m-%d %H:%M:%S') if 'start' in sub.columns and len(sub) else 'N/A',
+    }
+
 # ─────────────────────────────────────────────
 # GRAPH FUNCTIONS
 # ─────────────────────────────────────────────
@@ -502,7 +604,32 @@ def fig_to_html_img(fig):
     if fig is None: return '<p class="warning">Graph not available (insufficient data).</p>'
     return f'<img src="data:image/png;base64,{fig_to_base64(fig)}">'
 
-def build_html(df, phone, operator, date_range, total_raw, anomaly_count):
+
+def _target_number_html(df, target_number):
+    if not target_number:
+        return ''
+    res = specific_number_analysis(df, target_number)
+    if not res:
+        return f'''<h2>13. Specific Number Analysis</h2>
+        <div class="info-box">
+        <strong>Target Number:</strong> {target_number}<br>
+        <span class="warning">⚠️ এই নম্বরের সাথে কোনো communication পাওয়া যায়নি।</span>
+        </div>'''
+    table_df = pd.DataFrame({
+        'Metric': ['Target Number','Outgoing Calls (MOC)','Incoming Calls (MTC)',
+                   'Total Calls','Total Call Duration (sec)','Total Call Duration (min)',
+                   'Sent SMS','Received SMS','Total SMS',
+                   'First Contact','Last Contact'],
+        'Value':  [res['number'], res['moc'], res['mtc'], res['total_calls'],
+                   f"{res['total_duration_sec']:,}", f"{res['total_duration_min']:,}",
+                   res['sms_sent'], res['sms_received'], res['total_sms'],
+                   res['first_contact'], res['last_contact']]
+    })
+    return f'''<h2>13. Specific Number Analysis</h2>
+    <p>এই section-এ <strong>{target_number}</strong> নম্বরের সাথে subscriber-এর সকল communication-এর সারসংক্ষেপ।</p>
+    {df_to_html(table_df)}'''
+
+def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None):
     imei = sorted(df['imei'].dropna().unique().tolist()) if 'imei' in df.columns else []
     imsi = sorted(df['imsi'].dropna().unique().tolist()) if 'imsi' in df.columns else []
 
@@ -554,6 +681,17 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count):
     <h3>10.6 Work Locations Graph</h3>{fig_to_html_img(plot_locations(df,work_mask,'Work Locations'))}
     <h3>10.5 Possible Weekend Locations</h3>{df_to_html(top_locations(df,weekend_mask,10))}
     <h3>10.6 Weekend Locations Graph</h3>{fig_to_html_img(plot_locations(df,weekend_mask,'Weekend Locations'))}
+
+    <h2>11. SMS Contact Analysis</h2>
+    <h3>11.1 Top 5 Sent SMS Contacts</h3>{df_to_html(top_sms_contacts(df,'out',5))}
+    <h3>11.2 Top 5 Received SMS Contacts</h3>{df_to_html(top_sms_contacts(df,'in',5))}
+
+    <h2>12. Last 10 Days Analysis</h2>
+    <h3>12.1 Top Contacts in Last 10 Days (MOC + MTC)</h3>{df_to_html(last_n_days_top_contacts(df, 10, 10))}
+    <h3>12.2 Top Locations in Last 10 Days</h3>{df_to_html(last_n_days_top_locations(df, 10, 10))}
+
+    {_target_number_html(df, target_number)}
+
     <h2>Overall Comment</h2><p>N/A</p>
     <h2>Recommendation</h2><p>N/A</p>
     <hr><p style="text-align:center;color:gray;font-size:11px;">
@@ -564,7 +702,7 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count):
 # ─────────────────────────────────────────────
 # WORD (DOCX) GENERATOR
 # ─────────────────────────────────────────────
-def build_docx(df, phone, operator, date_range, total_raw, anomaly_count):
+def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None):
     from docx import Document
     from docx.shared import Pt, RGBColor, Inches, Cm
     from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -694,6 +832,37 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count):
     add_h('10.6 Work Graph',2);           add_fig(plot_locations(df,work_mask,'Work Locations'))
     add_h('10.5 Weekend Locations',2);    add_df_table(top_locations(df,weekend_mask,10))
     add_h('10.6 Weekend Graph',2);        add_fig(plot_locations(df,weekend_mask,'Weekend Locations'))
+
+    add_h('11. SMS Contact Analysis')
+    add_h('11.1 Top 5 Sent SMS Contacts',2);     add_df_table(top_sms_contacts(df,'out',5))
+    add_h('11.2 Top 5 Received SMS Contacts',2); add_df_table(top_sms_contacts(df,'in',5))
+
+    add_h('12. Last 10 Days Analysis')
+    add_h('12.1 Top Contacts in Last 10 Days (MOC + MTC)',2)
+    add_df_table(last_n_days_top_contacts(df, 10, 10))
+    add_h('12.2 Top Locations in Last 10 Days',2)
+    add_df_table(last_n_days_top_locations(df, 10, 10))
+
+    if target_number:
+        add_h('13. Specific Number Analysis')
+        res = specific_number_analysis(df, target_number)
+        if res is None:
+            doc.add_paragraph(f'Target Number: {target_number}')
+            doc.add_paragraph('⚠️ এই নম্বরের সাথে কোনো communication পাওয়া যায়নি।')
+        else:
+            doc.add_paragraph(f'এই section-এ {target_number} নম্বরের সাথে subscriber-এর সকল communication-এর সারসংক্ষেপ।')
+            target_df = pd.DataFrame({
+                'Metric': ['Target Number','Outgoing Calls (MOC)','Incoming Calls (MTC)',
+                           'Total Calls','Total Call Duration (sec)','Total Call Duration (min)',
+                           'Sent SMS','Received SMS','Total SMS',
+                           'First Contact','Last Contact'],
+                'Value':  [str(res['number']), str(res['moc']), str(res['mtc']), str(res['total_calls']),
+                           f"{res['total_duration_sec']:,}", f"{res['total_duration_min']:,}",
+                           str(res['sms_sent']), str(res['sms_received']), str(res['total_sms']),
+                           res['first_contact'], res['last_contact']]
+            })
+            add_df_table(target_df)
+
     add_h('Overall Comment');             doc.add_paragraph('N/A')
     add_h('Recommendation');              doc.add_paragraph('N/A')
 
@@ -719,12 +888,21 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    # ── File Upload ──
-    uploaded = st.file_uploader(
-        "📂 CDR Excel ফাইল আপলোড করুন",
-        type=['xlsx', 'xls'],
-        help="যেকোনো অপারেটরের CDR Excel ফাইল (.xlsx / .xls)"
-    )
+    # ── File Upload + Target Number Input ──
+    up_col, num_col = st.columns([2, 1])
+    with up_col:
+        uploaded = st.file_uploader(
+            "📂 CDR Excel ফাইল আপলোড করুন",
+            type=['xlsx', 'xls'],
+            help="যেকোনো অপারেটরের CDR Excel ফাইল (.xlsx / .xls)"
+        )
+    with num_col:
+        target_number = st.text_input(
+            "🎯 Target Number (Optional)",
+            placeholder="e.g. 8801712345678",
+            help="যদি কোনো নির্দিষ্ট নম্বরের সাথে interaction জানতে চান, এখানে দিন। Optional — খালি রাখলেও চলবে।"
+        )
+        target_number = target_number.strip() if target_number else None
 
     if uploaded is None:
         st.info("⬆️ উপরে CDR Excel ফাইল upload করুন — HTML ও Word Report তৈরি হবে।")
@@ -733,7 +911,9 @@ def main():
         - ✅ যেকোনো Operator-এর CDR ফাইল process করে
         - ✅ Anomaly (Service SMS, Invalid numbers) সরিয়ে দেয়
         - ✅ Call Summary, Daily/Weekly/Monthly Analysis
-        - ✅ Top Contacts, Location Analysis
+        - ✅ Top Contacts, Location Analysis, SMS Analysis
+        - ✅ Last 10 Days Activity (Calls + Locations)
+        - ✅ Specific Number Analysis (যদি Target Number দেন)
         - ✅ Graphs সহ HTML + Word Report generate করে
         """)
         return
@@ -768,11 +948,11 @@ def main():
             st.markdown(f'<div class="warning-box">⚠️ <strong>{anomaly_count:,} টি Anomaly</strong> (Service SMS / Invalid Numbers) সরানো হয়েছে।</div>', unsafe_allow_html=True)
 
         progress.progress(55, text="📄 HTML Report তৈরি করছি...")
-        html_content = build_html(df, phone, operator, date_range, total_raw, anomaly_count)
+        html_content = build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number)
         html_bytes   = html_content.encode('utf-8')
 
         progress.progress(80, text="📝 Word Report তৈরি করছি...")
-        docx_bytes = build_docx(df, phone, operator, date_range, total_raw, anomaly_count)
+        docx_bytes = build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number)
 
         progress.progress(100, text="✅ সম্পন্ন!")
 
@@ -926,22 +1106,61 @@ def main():
                 s1, s2 = st.columns(2)
                 with s1:
                     st.markdown("#### 📤 Sent SMS — সবচেয়ে বেশি SMS পাঠিয়েছে")
-                    sms_out = df[df["is_sms_out"]]["party_b_clean"].value_counts().head(5)
-                    if not sms_out.empty:
-                        sms_out_df = pd.DataFrame({"Party B": sms_out.index, "SMS Count": sms_out.values})
+                    sms_out_df = top_sms_contacts(df, 'out', 5)
+                    if not sms_out_df.empty:
                         st.dataframe(sms_out_df, use_container_width=True, hide_index=True)
                     else:
                         st.info("Sent SMS ডেটা নেই")
                 with s2:
                     st.markdown("#### 📥 Received SMS — সবচেয়ে বেশি SMS এসেছে")
-                    sms_in = df[df["is_sms_in"]]["party_b_clean"].value_counts().head(5)
-                    if not sms_in.empty:
-                        sms_in_df = pd.DataFrame({"Party B": sms_in.index, "SMS Count": sms_in.values})
+                    sms_in_df = top_sms_contacts(df, 'in', 5)
+                    if not sms_in_df.empty:
                         st.dataframe(sms_in_df, use_container_width=True, hide_index=True)
                     else:
                         st.info("Received SMS ডেটা নেই")
             else:
                 st.info("এই CDR ফাইলে SMS ডেটা নেই।")
+
+        # ── 6. Last 10 Days Analysis ──
+        with st.expander("📅 Last 10 Days Analysis", expanded=True):
+            ld1, ld2 = st.columns(2)
+            with ld1:
+                st.markdown("#### 📞 Top Contacts — Last 10 Days (MOC + MTC)")
+                last_calls = last_n_days_top_contacts(df, 10, 10)
+                if not last_calls.empty:
+                    st.dataframe(last_calls, use_container_width=True, hide_index=True)
+                else:
+                    st.info("শেষ ১০ দিনের ডেটা নেই")
+            with ld2:
+                st.markdown("#### 📍 Top Locations — Last 10 Days")
+                last_loc = last_n_days_top_locations(df, 10, 10)
+                if not last_loc.empty:
+                    st.dataframe(last_loc, use_container_width=True, hide_index=True)
+                else:
+                    st.info("শেষ ১০ দিনের Location ডেটা নেই")
+
+        # ── 7. Specific Number Analysis (if target_number provided) ──
+        if target_number:
+            with st.expander(f"🎯 Specific Number Analysis — {target_number}", expanded=True):
+                res = specific_number_analysis(df, target_number)
+                if res is None:
+                    st.warning(f"⚠️ **{target_number}** নম্বরের সাথে কোনো communication পাওয়া যায়নি।")
+                else:
+                    sn1, sn2, sn3, sn4 = st.columns(4)
+                    with sn1:
+                        st.markdown(f'<div class="stat-card"><div class="label">MOC</div><div class="value">{res["moc"]}</div></div>', unsafe_allow_html=True)
+                    with sn2:
+                        st.markdown(f'<div class="stat-card"><div class="label">MTC</div><div class="value">{res["mtc"]}</div></div>', unsafe_allow_html=True)
+                    with sn3:
+                        st.markdown(f'<div class="stat-card"><div class="label">Total Duration</div><div class="value" style="font-size:1.1rem;">{res["total_duration_min"]} min</div></div>', unsafe_allow_html=True)
+                    with sn4:
+                        st.markdown(f'<div class="stat-card"><div class="label">Total SMS</div><div class="value">{res["total_sms"]}</div></div>', unsafe_allow_html=True)
+                    st.markdown("")
+                    detail_df = pd.DataFrame({
+                        'Metric': ['Sent SMS', 'Received SMS', 'First Contact', 'Last Contact'],
+                        'Value':  [res['sms_sent'], res['sms_received'], res['first_contact'], res['last_contact']]
+                    })
+                    st.dataframe(detail_df, use_container_width=True, hide_index=True)
 
     except Exception as e:
         st.error(f"❌ Error: {str(e)}")
