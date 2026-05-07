@@ -1592,7 +1592,10 @@ def main():
                         <div style="font-size:0.8rem; color:#64748b; margin-bottom:0.5rem;">
                         Night (10 PM – 6 AM)</div>""", unsafe_allow_html=True)
                     hl = top_locations(df, home_mask, 3)
-                    st.dataframe(hl, use_container_width=True, hide_index=True) if not hl.empty else st.info("No location data.")
+                    if not hl.empty:
+                        st.dataframe(hl, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No location data available.")
 
                 with l2:
                     st.markdown("""<div style="font-weight:700; color:#1e3a8a; margin-bottom:0.25rem;">
@@ -1600,7 +1603,10 @@ def main():
                         <div style="font-size:0.8rem; color:#64748b; margin-bottom:0.5rem;">
                         Daytime (8 AM – 6 PM)</div>""", unsafe_allow_html=True)
                     wl = top_locations(df, work_mask, 3)
-                    st.dataframe(wl, use_container_width=True, hide_index=True) if not wl.empty else st.info("No location data.")
+                    if not wl.empty:
+                        st.dataframe(wl, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No location data available.")
 
                 with l3:
                     st.markdown("""<div style="font-weight:700; color:#1e3a8a; margin-bottom:0.25rem;">
@@ -1608,7 +1614,10 @@ def main():
                         <div style="font-size:0.8rem; color:#64748b; margin-bottom:0.5rem;">
                         Friday & Saturday</div>""", unsafe_allow_html=True)
                     el = top_locations(df, weekend_mask, 3)
-                    st.dataframe(el, use_container_width=True, hide_index=True) if not el.empty else st.info("No location data.")
+                    if not el.empty:
+                        st.dataframe(el, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No location data available.")
             else:
                 st.info("No location data available in this CDR file.")
 
@@ -1620,12 +1629,18 @@ def main():
                     st.markdown("""<div style="font-weight:700; color:#2563eb; margin-bottom:0.5rem;">
                         📤 Top 5 Sent SMS Contacts</div>""", unsafe_allow_html=True)
                     sms_out_df = top_sms_contacts(df, 'out', 5)
-                    st.dataframe(sms_out_df, use_container_width=True, hide_index=True) if not sms_out_df.empty else st.info("No sent SMS data.")
+                    if not sms_out_df.empty:
+                        st.dataframe(sms_out_df, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No sent SMS data available.")
                 with s2:
                     st.markdown("""<div style="font-weight:700; color:#16a34a; margin-bottom:0.5rem;">
                         📥 Top 5 Received SMS Contacts</div>""", unsafe_allow_html=True)
                     sms_in_df = top_sms_contacts(df, 'in', 5)
-                    st.dataframe(sms_in_df, use_container_width=True, hide_index=True) if not sms_in_df.empty else st.info("No received SMS data.")
+                    if not sms_in_df.empty:
+                        st.dataframe(sms_in_df, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No received SMS data available.")
             else:
                 st.info("No SMS data available in this CDR file.")
 
@@ -1636,12 +1651,18 @@ def main():
                 st.markdown("""<div style="font-weight:700; color:#2563eb; margin-bottom:0.5rem;">
                     📞 Top Contacts — Last 10 Days (MOC + MTC)</div>""", unsafe_allow_html=True)
                 last_calls = last_n_days_top_contacts(df, 10, 10)
-                st.dataframe(last_calls, use_container_width=True, hide_index=True) if not last_calls.empty else st.info("No data for last 10 days.")
+                if not last_calls.empty:
+                    st.dataframe(last_calls, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No data available for the last 10 days.")
             with ld2:
                 st.markdown("""<div style="font-weight:700; color:#7c3aed; margin-bottom:0.5rem;">
                     📍 Top Locations — Last 10 Days</div>""", unsafe_allow_html=True)
                 last_loc = last_n_days_top_locations(df, 10, 10)
-                st.dataframe(last_loc, use_container_width=True, hide_index=True) if not last_loc.empty else st.info("No location data for last 10 days.")
+                if not last_loc.empty:
+                    st.dataframe(last_loc, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No location data for the last 10 days.")
 
         # ── 7. Specific Number Analysis ──
         if target_number:
