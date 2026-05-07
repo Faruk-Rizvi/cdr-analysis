@@ -398,8 +398,37 @@ def fig_to_base64(fig):
 # ─────────────────────────────────────────────
 # LOAD & CLEAN
 # ─────────────────────────────────────────────
+def _try_fix_merged_row(row_series, expected_cols):
+    """
+    Try to detect and fix a row where data is merged into fewer cells.
+    Returns a fixed Series if fixable, else None.
+    """
+    vals = [str(v) for v in row_series.values if pd.notna(v) and str(v).strip() not in ('', 'nan')]
+    if len(vals) == 0:
+        return None
+
+    # Check if one cell contains multiple pipe/comma/tab separated values
+    for sep in ['|', '\t', ',,', ';']:
+        if any(sep in v for v in vals):
+            parts = []
+            for v in vals:
+                parts.extend([x.strip() for x in v.split(sep)])
+            if len(parts) >= len(expected_cols) - 2:
+                padded = (parts + [''] * len(expected_cols))[:len(expected_cols)]
+                return pd.Series(padded, index=expected_cols)
+
+    # If only 1 cell has all content but looks like CSV
+    if len(vals) == 1 and ',' in vals[0]:
+        parts = [x.strip() for x in vals[0].split(',')]
+        if len(parts) >= len(expected_cols) - 2:
+            padded = (parts + [''] * len(expected_cols))[:len(expected_cols)]
+            return pd.Series(padded, index=expected_cols)
+
+    return None
+
+
 def load_and_clean(file_bytes):
-    # Detect best sheet
+    # ── Detect best sheet ──
     xl = pd.ExcelFile(io.BytesIO(file_bytes))
     sheets = xl.sheet_names
     best_sheet, best_score = sheets[0], 0
@@ -418,7 +447,7 @@ def load_and_clean(file_bytes):
 
     df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=best_sheet, dtype=str)
 
-    # No header detection
+    # ── No header detection ──
     non_str_cols = [c for c in df.columns if not isinstance(c, str)]
     if non_str_cols:
         df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=best_sheet,
@@ -430,8 +459,26 @@ def load_and_clean(file_bytes):
                       else default_cols + [f'Extra_{i}' for i in range(len(df.columns)-len(default_cols))])
 
     total_raw = len(df)
+    expected_cols = df.columns.tolist()
 
-    # Rename columns
+    # ── Merged Cell Fix ──
+    # Detect rows where non-null count < 40% of expected columns (likely merged)
+    min_expected = max(3, int(len(expected_cols) * 0.4))
+    merged_mask = df.apply(
+        lambda r: r.notna().sum() < min_expected and
+                  any(str(v) for v in r.values if pd.notna(v) and len(str(v)) > 30),
+        axis=1
+    )
+    if merged_mask.sum() > 0:
+        fixed_rows = []
+        for idx in df[merged_mask].index:
+            fixed = _try_fix_merged_row(df.loc[idx], expected_cols)
+            if fixed is not None:
+                fixed_rows.append((idx, fixed))
+        for idx, fixed_row in fixed_rows:
+            df.loc[idx] = fixed_row
+
+    # ── Rename columns ──
     col_map = {}
     for key in COLUMN_ALIASES:
         found = detect_column(df.columns, key)
@@ -440,17 +487,17 @@ def load_and_clean(file_bytes):
     rename = {v: k for k, v in col_map.items()}
     df = df.rename(columns=rename)
 
-    # Parse datetime
+    # ── Parse datetime ──
     if 'start' in df.columns:
         df['start'] = pd.to_datetime(df['start'], errors='coerce')
         df = df.dropna(subset=['start'])
         df = df.sort_values('start').reset_index(drop=True)
 
-    # Parse duration
+    # ── Parse duration ──
     if 'duration' in df.columns:
         df['duration'] = pd.to_numeric(df['duration'], errors='coerce').fillna(0).astype(int)
 
-    # Fix Party B
+    # ── Fix Party B ──
     if 'party_b_original' in df.columns:
         pb_orig = df['party_b_original'].replace(['nan', 'None'], pd.NA)
         if pb_orig.notna().sum() > 0:
@@ -461,18 +508,24 @@ def load_and_clean(file_bytes):
     elif 'party_b' in df.columns:
         df['party_b_clean'] = df['party_b'].astype(str).str.strip()
 
+    # ── Mark anomalies (DO NOT REMOVE — keep for location analysis) ──
+    # is_anomaly = True means invalid party_b (service SMS, promo, short codes etc.)
+    # These rows are EXCLUDED from call/contact analysis
+    # but INCLUDED in location analysis (their BTS data is still valid)
     anomaly_count = 0
     if 'party_b_clean' in df.columns:
         anomaly_mask = ~df['party_b_clean'].apply(is_valid_number)
-        anomaly_count = anomaly_mask.sum()
-        df = df[~anomaly_mask].reset_index(drop=True)
+        anomaly_count = int(anomaly_mask.sum())
+        df['is_anomaly'] = anomaly_mask  # flag — do not remove row
+    else:
+        df['is_anomaly'] = False
 
     if 'party_a' in df.columns:
         df['party_a'] = df['party_a'].astype(str).str.strip()
     if 'usage_type' in df.columns:
         df['usage_type'] = df['usage_type'].astype(str).str.strip()
 
-    # Categorize
+    # ── Categorize ──
     ut = df['usage_type'].str.lower() if 'usage_type' in df.columns else pd.Series(['moc']*len(df))
     df['is_call_out'] = ut.isin(CALL_OUT_TYPES)
     df['is_call_in']  = ut.isin(CALL_IN_TYPES)
@@ -480,6 +533,13 @@ def load_and_clean(file_bytes):
     df['is_sms_in']   = ut.isin(SMS_IN_TYPES)
 
     return df, col_map, total_raw, anomaly_count, best_sheet
+
+
+def cdf(df):
+    """Return clean df (non-anomaly rows only) for call/contact/SMS analysis."""
+    if 'is_anomaly' in df.columns:
+        return df[~df['is_anomaly']].copy()
+    return df.copy()
 
 
 # ─────────────────────────────────────────────
@@ -503,16 +563,17 @@ def get_date_range(df):
     return 'N/A'
 
 def call_summary(df):
+    d = cdf(df)
     return pd.DataFrame({
         'Metric': ['Total Outgoing Calls','Total Incoming Calls',
                    'Total Sent SMS','Total Received SMS'],
-        'Value':  [int(df['is_call_out'].sum()), int(df['is_call_in'].sum()),
-                   int(df['is_sms_out'].sum()), int(df['is_sms_in'].sum())]
+        'Value':  [int(d['is_call_out'].sum()), int(d['is_call_in'].sum()),
+                   int(d['is_sms_out'].sum()), int(d['is_sms_in'].sum())]
     })
 
 def daily_call_count(df):
     if 'start' not in df.columns: return pd.DataFrame()
-    calls = df[df['is_call_out'] | df['is_call_in']].copy()
+    calls = cdf(df); calls = calls[calls['is_call_out'] | calls['is_call_in']].copy()
     calls['hour'] = calls['start'].dt.hour.astype(int)
     rows = []
     for name, h_start, h_end, interval in [
@@ -533,7 +594,7 @@ def daily_call_count(df):
 
 def weekly_call_count(df):
     if 'start' not in df.columns: return pd.DataFrame()
-    calls = df[df['is_call_out']|df['is_call_in']].copy()
+    calls = cdf(df); calls = calls[calls['is_call_out']|calls['is_call_in']].copy()
     calls['dow'] = calls['start'].dt.day_name()
     order = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
     rows = []
@@ -548,7 +609,7 @@ def weekly_call_count(df):
 
 def monthly_call_count(df):
     if 'start' not in df.columns: return pd.DataFrame()
-    calls = df[df['is_call_out']|df['is_call_in']].copy()
+    calls = cdf(df); calls = calls[calls['is_call_out']|calls['is_call_in']].copy()
     calls['month'] = calls['start'].dt.strftime('%B')
     calls['mnum']  = calls['start'].dt.month
     order = calls[['month','mnum']].drop_duplicates().sort_values('mnum')
@@ -564,16 +625,17 @@ def monthly_call_count(df):
 
 def contact_summary(df):
     if 'party_b_clean' not in df.columns: return pd.DataFrame()
-    all_c = df[df['is_call_out']|df['is_call_in']]
+    d = cdf(df)
+    all_c = d[d['is_call_out']|d['is_call_in']]
     mc_all = all_c['party_b_clean'].value_counts() if len(all_c) else pd.Series()
-    mc_out = df[df['is_call_out']]['party_b_clean'].value_counts() if df['is_call_out'].sum() else pd.Series()
-    mc_in  = df[df['is_call_in']]['party_b_clean'].value_counts()  if df['is_call_in'].sum()  else pd.Series()
-    dur    = all_c.groupby('party_b_clean')['duration'].sum() if 'duration' in df.columns and len(all_c) else pd.Series()
+    mc_out = d[d['is_call_out']]['party_b_clean'].value_counts() if d['is_call_out'].sum() else pd.Series()
+    mc_in  = d[d['is_call_in']]['party_b_clean'].value_counts()  if d['is_call_in'].sum()  else pd.Series()
+    dur    = all_c.groupby('party_b_clean')['duration'].sum() if 'duration' in d.columns and len(all_c) else pd.Series()
     return pd.DataFrame({
         'Metric': ['Total Unique Numbers','Most Called Number',
                    'Most Called Outgoing','Most Received Incoming',
                    'Most Total Call Time'],
-        'Value':  [df['party_b_clean'].nunique(),
+        'Value':  [d['party_b_clean'].nunique(),
                    f"{mc_all.index[0]}, {mc_all.iloc[0]} times" if not mc_all.empty else 'N/A',
                    f"{mc_out.index[0]}, {mc_out.iloc[0]} times" if not mc_out.empty else 'N/A',
                    f"{mc_in.index[0]},  {mc_in.iloc[0]} times"  if not mc_in.empty  else 'N/A',
@@ -582,7 +644,8 @@ def contact_summary(df):
 
 def top_contacts(df, direction='out', n=10):
     if 'party_b_clean' not in df.columns: return pd.DataFrame()
-    sub = df[df['is_call_out']] if direction=='out' else df[df['is_call_in']]
+    d = cdf(df)
+    sub = d[d['is_call_out']] if direction=='out' else d[d['is_call_in']]
     if len(sub)==0: return pd.DataFrame()
     c = sub['party_b_clean'].value_counts().head(n)
     return pd.DataFrame({'Party B': c.index,
@@ -591,7 +654,8 @@ def top_contacts(df, direction='out', n=10):
 
 def top_lengthy(df, direction='out', n=10):
     if 'party_b_clean' not in df.columns or 'duration' not in df.columns: return pd.DataFrame()
-    sub = df[df['is_call_out']] if direction=='out' else df[df['is_call_in']]
+    d = cdf(df)
+    sub = d[d['is_call_out']] if direction=='out' else d[d['is_call_in']]
     if len(sub)==0: return pd.DataFrame()
     g = sub.groupby('party_b_clean').agg(
         Total_Duration=('duration','sum'), Total_Calls=('duration','count')
@@ -670,9 +734,10 @@ def last_n_days_top_contacts(df, days=10, n=10):
     """Top contacts (MOC + MTC combined) in last N days."""
     if 'start' not in df.columns or 'party_b_clean' not in df.columns:
         return pd.DataFrame()
-    max_date = df['start'].max()
+    d = cdf(df)
+    max_date = d['start'].max()
     cutoff = max_date - pd.Timedelta(days=days)
-    recent = df[(df['start'] >= cutoff) & (df['is_call_out'] | df['is_call_in'])].copy()
+    recent = d[(d['start'] >= cutoff) & (d['is_call_out'] | d['is_call_in'])].copy()
     if len(recent) == 0:
         return pd.DataFrame()
     grouped = recent.groupby('party_b_clean').agg(
@@ -705,16 +770,16 @@ def specific_number_analysis(df, target_number):
     """Analyze interactions with a specific phone number (MOC, MTC, duration, SMS)."""
     if 'party_b_clean' not in df.columns or not target_number:
         return None
-    target = re.sub(r'\D', '', str(target_number).strip())
+    target = re.sub(r'[^0-9]', '', str(target_number).strip())
     if len(target) < 10:
         return None
-    # Match flexibly: 8801712345678 == 01712345678 == 1712345678
+    d = cdf(df)
     candidates = {target}
     if target.startswith('880'):  candidates.add('0' + target[3:])
     elif target.startswith('0'):  candidates.add('880' + target[1:])
     if target.startswith('880'):  candidates.add(target[3:])
     candidates.add(target.lstrip('0'))
-    sub = df[df['party_b_clean'].astype(str).isin(candidates)]
+    sub = d[d['party_b_clean'].astype(str).isin(candidates)]
     if len(sub) == 0:
         return None
     moc = int(sub.get('is_call_out', pd.Series([False]*len(sub))).sum())
@@ -740,7 +805,7 @@ def specific_number_analysis(df, target_number):
 # ─────────────────────────────────────────────
 def plot_hourly(df):
     if 'start' not in df.columns: return None
-    calls = df[df['is_call_out']|df['is_call_in']].copy()
+    calls = cdf(df); calls = calls[calls['is_call_out']|calls['is_call_in']].copy()
     calls['hour'] = calls['start'].dt.hour.astype(int)
     hourly = calls.groupby('hour').size().reindex(range(24), fill_value=0)
     fig, ax = plt.subplots(figsize=(12,4))
@@ -755,7 +820,7 @@ def plot_hourly(df):
 
 def plot_weekly(df):
     if 'start' not in df.columns: return None
-    calls = df[df['is_call_out']|df['is_call_in']].copy()
+    calls = cdf(df); calls = calls[calls['is_call_out']|calls['is_call_in']].copy()
     calls['dow'] = calls['start'].dt.day_name()
     order = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
     counts = calls['dow'].value_counts().reindex(order, fill_value=0)
@@ -768,7 +833,7 @@ def plot_weekly(df):
 
 def plot_monthly(df):
     if 'start' not in df.columns: return None
-    calls = df[df['is_call_out']|df['is_call_in']].copy()
+    calls = cdf(df); calls = calls[calls['is_call_out']|calls['is_call_in']].copy()
     calls['mp'] = calls['start'].dt.to_period('M')
     counts = calls.groupby('mp').size()
     fig, ax = plt.subplots(figsize=(max(8,len(counts)*2), 4))
@@ -782,7 +847,8 @@ def plot_monthly(df):
 
 def plot_contacts(df, direction='out', n=10, title='Top Contacts'):
     if 'party_b_clean' not in df.columns: return None
-    sub = df[df['is_call_out']] if direction=='out' else df[df['is_call_in']]
+    d = cdf(df)
+    sub = d[d['is_call_out']] if direction=='out' else d[d['is_call_in']]
     if len(sub)==0: return None
     c = sub['party_b_clean'].value_counts().head(n)
     fig, ax = plt.subplots(figsize=(12,5))
@@ -1282,50 +1348,98 @@ def main():
         return
 
     # ── Process ──
-    progress = st.progress(0, text="📥 ফাইল পড়ছি...")
+    progress = st.progress(0, text="📥 Reading file...")
 
     try:
         file_bytes = uploaded.read()
-        progress.progress(15, text="🔍 ডেটা বিশ্লেষণ করছি...")
+        progress.progress(15, text="🔍 Analyzing data structure...")
 
         df, col_map, total_raw, anomaly_count, sheet = load_and_clean(file_bytes)
-        progress.progress(35, text="📊 Report তৈরি করছি...")
+        df_clean = cdf(df)
+        progress.progress(35, text="📊 Generating report...")
 
-        phone     = get_phone(df)
-        operator  = get_operator(df)
-        date_range= get_date_range(df)
-        base_name = os.path.splitext(uploaded.name)[0]
+        phone      = get_phone(df)
+        operator   = get_operator(df)
+        date_range = get_date_range(df)
+        base_name  = os.path.splitext(uploaded.name)[0]
 
-        # ── Stats ──
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.markdown(f'<div class="stat-card"><div class="label">ফোন নম্বর</div><div class="value" style="font-size:1rem;">{phone}</div></div>', unsafe_allow_html=True)
-        with col2:
-            st.markdown(f'<div class="stat-card"><div class="label">Operator</div><div class="value">{operator}</div></div>', unsafe_allow_html=True)
-        with col3:
-            st.markdown(f'<div class="stat-card"><div class="label">মোট Records</div><div class="value">{total_raw:,}</div></div>', unsafe_allow_html=True)
-        with col4:
-            st.markdown(f'<div class="stat-card"><div class="label">বিশ্লেষিত Records</div><div class="value">{len(df):,}</div></div>', unsafe_allow_html=True)
+        # ── Result Header ──
+        st.markdown(f"""
+        <div style="background:white; border-radius:14px; padding:1.5rem 2rem;
+                    box-shadow:0 1px 3px rgba(0,0,0,0.05); margin-bottom:1.25rem;">
+            <div style="font-size:0.85rem; color:#64748b; font-weight:600;
+                        text-transform:uppercase; letter-spacing:0.5px; margin-bottom:0.75rem;">
+                📊 Analysis Results
+            </div>
+            <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:1rem;">
+                <div>
+                    <div style="font-size:0.78rem; color:#94a3b8; font-weight:600;
+                                text-transform:uppercase; letter-spacing:0.5px;">Phone Number</div>
+                    <div style="font-size:1.1rem; color:#0f172a; font-weight:700;
+                                margin-top:0.2rem;">{phone}</div>
+                </div>
+                <div>
+                    <div style="font-size:0.78rem; color:#94a3b8; font-weight:600;
+                                text-transform:uppercase; letter-spacing:0.5px;">Operator</div>
+                    <div style="font-size:1.1rem; color:#0f172a; font-weight:700;
+                                margin-top:0.2rem;">{operator}</div>
+                </div>
+                <div>
+                    <div style="font-size:0.78rem; color:#94a3b8; font-weight:600;
+                                text-transform:uppercase; letter-spacing:0.5px;">Total Records</div>
+                    <div style="font-size:1.5rem; color:#1e3a8a; font-weight:800;
+                                margin-top:0.2rem;">{total_raw:,}</div>
+                </div>
+                <div>
+                    <div style="font-size:0.78rem; color:#94a3b8; font-weight:600;
+                                text-transform:uppercase; letter-spacing:0.5px;">Records Analyzed</div>
+                    <div style="font-size:1.5rem; color:#16a34a; font-weight:800;
+                                margin-top:0.2rem;">{len(df_clean):,}</div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
+        # ── Anomaly Info Banner ──
         if anomaly_count > 0:
-            st.markdown(f'<div class="warning-box">⚠️ <strong>{anomaly_count:,} টি Anomaly</strong> (Service SMS / Invalid Numbers) সরানো হয়েছে।</div>', unsafe_allow_html=True)
+            st.markdown(f"""
+            <div style="background:#fffbeb; border-left:4px solid #f59e0b; border-radius:10px;
+                        padding:0.85rem 1.25rem; margin-bottom:1rem; display:flex;
+                        align-items:center; gap:0.75rem;">
+                <div style="font-size:1.3rem;">⚠️</div>
+                <div>
+                    <strong style="color:#92400e;">{anomaly_count:,} Anomalous Records Detected</strong>
+                    <div style="color:#b45309; font-size:0.88rem; margin-top:0.15rem;">
+                        Service messages, promotional SMS, and invalid numbers were excluded from
+                        call/contact analysis. However, their <strong>BTS location data is retained</strong>
+                        for location analysis.
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-        progress.progress(55, text="📄 HTML Report তৈরি করছি...")
+        progress.progress(55, text="📄 Generating HTML report...")
         html_content = build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number)
         html_bytes   = html_content.encode('utf-8')
 
-        progress.progress(80, text="📝 Word Report তৈরি করছি...")
+        progress.progress(80, text="📝 Generating Word report...")
         docx_bytes = build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number)
 
-        progress.progress(100, text="✅ সম্পন্ন!")
+        progress.progress(100, text="✅ Complete!")
 
-        st.markdown('<div class="success-box">✅ <strong>Report তৈরি হয়েছে!</strong> নিচের বাটনে ক্লিক করে Download করুন।</div>', unsafe_allow_html=True)
+        # ── Success + Download ──
+        st.markdown("""
+        <div style="background:#ecfdf5; border:1px solid #10b981; border-radius:10px;
+                    padding:1rem 1.5rem; margin:1rem 0; color:#065f46;">
+            ✅ <strong>Reports generated successfully!</strong>
+            Click the buttons below to download.
+        </div>
+        """, unsafe_allow_html=True)
 
-        # ── Download Buttons ──
         dl1, dl2 = st.columns(2)
         with dl1:
             st.download_button(
-                label="⬇️ HTML Report Download করুন",
+                label="⬇️ Download HTML Report",
                 data=html_bytes,
                 file_name=f"{base_name}_Report.html",
                 mime="text/html",
@@ -1333,195 +1447,223 @@ def main():
             )
         with dl2:
             st.download_button(
-                label="⬇️ Word Report Download করুন",
+                label="⬇️ Download Word Report",
                 data=docx_bytes,
                 file_name=f"{base_name}_Report.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 use_container_width=True
             )
 
-        st.markdown("---")
-        st.markdown("### 📋 Quick Preview")
+        # ── Section Divider ──
+        st.markdown("""
+        <div style="margin:1.5rem 0 1rem 0; display:flex; align-items:center; gap:1rem;">
+            <div style="height:2px; flex:1; background:linear-gradient(90deg,#2563eb,#e2e8f0);
+                        border-radius:2px;"></div>
+            <div style="font-size:1rem; font-weight:700; color:#0f172a; white-space:nowrap;">
+                📋 Quick Analysis Dashboard
+            </div>
+            <div style="height:2px; flex:1; background:linear-gradient(90deg,#e2e8f0,transparent);
+                        border-radius:2px;"></div>
+        </div>
+        """, unsafe_allow_html=True)
 
-        # ── 1. Call Analysis Summary + Device Info ──
-        with st.expander("📊 Call Analysis Summary", expanded=True):
-            st.markdown("#### 📱 Device Information")
+        # ── 1. Device Info + Call Summary ──
+        with st.expander("📊 Device Information & Call Analysis Summary", expanded=True):
             imei_list = sorted(df["imei"].dropna().unique().tolist()) if "imei" in df.columns else []
             imsi_list = sorted(df["imsi"].dropna().unique().tolist()) if "imsi" in df.columns else []
-            d1, d2, d3 = st.columns(3)
-            with d1:
-                st.markdown(f'<div class="stat-card"><div class="label">Phone Number</div><div class="value" style="font-size:0.95rem;">{phone}</div></div>', unsafe_allow_html=True)
-            with d2:
-                imei_val = ", ".join(str(i) for i in imei_list) if imei_list else "N/A"
-                st.markdown(f'<div class="stat-card"><div class="label">IMEI</div><div class="value" style="font-size:0.85rem;">{imei_val}</div></div>', unsafe_allow_html=True)
-            with d3:
-                imsi_val = ", ".join(str(i) for i in imsi_list) if imsi_list else "N/A"
-                st.markdown(f'<div class="stat-card"><div class="label">IMSI</div><div class="value" style="font-size:0.85rem;">{imsi_val}</div></div>', unsafe_allow_html=True)
-            st.markdown("---")
-            st.markdown("#### 📞 Call Analysis Summary")
-            cs = call_summary(df)
-            c1, c2, c3, c4 = st.columns(4)
-            cols_exp = [c1, c2, c3, c4]
-            for i, row in cs.iterrows():
-                with cols_exp[i]:
-                    st.markdown(f'''
-                    <div class="stat-card">
-                        <div class="label">{row["Metric"]}</div>
-                        <div class="value">{row["Value"]:,}</div>
-                    </div>''', unsafe_allow_html=True)
 
-        # ── 2. Top 10 Contacts Incoming & Outgoing ──
-        with st.expander("📞 Top 10 Contacts — Incoming & Outgoing", expanded=True):
+            st.markdown("""
+            <div style="font-size:0.9rem; font-weight:700; color:#475569;
+                        text-transform:uppercase; letter-spacing:0.5px; margin-bottom:0.75rem;">
+                📱 Device Information
+            </div>
+            """, unsafe_allow_html=True)
+
+            dev1, dev2, dev3, dev4 = st.columns(4)
+            with dev1:
+                st.markdown(f'<div class="stat-card"><div class="label">Phone Number</div><div class="value" style="font-size:0.95rem;">{phone}</div></div>', unsafe_allow_html=True)
+            with dev2:
+                st.markdown(f'<div class="stat-card"><div class="label">Operator</div><div class="value">{operator}</div></div>', unsafe_allow_html=True)
+            with dev3:
+                imei_val = imei_list[0] if imei_list else "N/A"
+                st.markdown(f'<div class="stat-card"><div class="label">IMEI</div><div class="value" style="font-size:0.85rem;">{imei_val}</div></div>', unsafe_allow_html=True)
+            with dev4:
+                imsi_val = imsi_list[0] if imsi_list else "N/A"
+                st.markdown(f'<div class="stat-card"><div class="label">IMSI</div><div class="value" style="font-size:0.85rem;">{imsi_val}</div></div>', unsafe_allow_html=True)
+
+            st.markdown("<hr style='margin:1rem 0; border-color:#f1f5f9;'>", unsafe_allow_html=True)
+            st.markdown("""
+            <div style="font-size:0.9rem; font-weight:700; color:#475569;
+                        text-transform:uppercase; letter-spacing:0.5px; margin-bottom:0.75rem;">
+                📞 Call Analysis Summary
+            </div>
+            """, unsafe_allow_html=True)
+
+            cs = call_summary(df)
+            ca1, ca2, ca3, ca4 = st.columns(4)
+            for i, (col_st, row) in enumerate(zip([ca1, ca2, ca3, ca4], cs.itertuples())):
+                with col_st:
+                    st.markdown(f'<div class="stat-card"><div class="label">{row.Metric}</div><div class="value">{row.Value:,}</div></div>', unsafe_allow_html=True)
+
+            st.markdown("<hr style='margin:1rem 0; border-color:#f1f5f9;'>", unsafe_allow_html=True)
+            st.markdown("""
+            <div style="font-size:0.9rem; font-weight:700; color:#475569;
+                        text-transform:uppercase; letter-spacing:0.5px; margin-bottom:0.75rem;">
+                📅 Analysis Period
+            </div>
+            """, unsafe_allow_html=True)
+            st.markdown(f"""
+            <div style="background:#f8fafc; border-radius:8px; padding:0.75rem 1rem;
+                        color:#334155; font-size:0.95rem;">
+                🗓️ <strong>{date_range}</strong>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # ── 2. Top 10 Contacts ──
+        with st.expander("📞 Top 10 Contacts — Outgoing & Incoming", expanded=True):
             t1, t2 = st.columns(2)
             with t1:
-                st.markdown("#### 📤 Outgoing (MOC)")
+                st.markdown("""<div style="font-weight:700; color:#2563eb; margin-bottom:0.5rem;">
+                    📤 Top 10 Outgoing Contacts (MOC)</div>""", unsafe_allow_html=True)
                 out_df = top_contacts(df, 'out', 10)
                 if not out_df.empty:
                     st.dataframe(out_df, use_container_width=True, hide_index=True)
                     fig = plot_contacts(df, 'out', 10, 'Top 10 Outgoing Contacts')
                     if fig: st.pyplot(fig)
                 else:
-                    st.info("ডেটা নেই")
+                    st.info("No outgoing call data available.")
             with t2:
-                st.markdown("#### 📥 Incoming (MTC)")
+                st.markdown("""<div style="font-weight:700; color:#16a34a; margin-bottom:0.5rem;">
+                    📥 Top 10 Incoming Contacts (MTC)</div>""", unsafe_allow_html=True)
                 in_df = top_contacts(df, 'in', 10)
                 if not in_df.empty:
                     st.dataframe(in_df, use_container_width=True, hide_index=True)
                     fig = plot_contacts(df, 'in', 10, 'Top 10 Incoming Contacts')
                     if fig: st.pyplot(fig)
                 else:
-                    st.info("ডেটা নেই")
+                    st.info("No incoming call data available.")
 
-        # ── 3. Top 10 Contacts by Call Duration ──
-        with st.expander("⏱️ Top 10 Contacts — Call Duration", expanded=True):
+        # ── 3. Top Contacts by Call Duration ──
+        with st.expander("⏱️ Top 10 Contacts by Call Duration", expanded=True):
             d1, d2 = st.columns(2)
             with d1:
-                st.markdown("#### 📤 Outgoing — সবচেয়ে বেশি কথা বলেছে")
+                st.markdown("""<div style="font-weight:700; color:#2563eb; margin-bottom:0.5rem;">
+                    📤 Outgoing — Longest Call Duration</div>""", unsafe_allow_html=True)
                 lo_df = top_lengthy(df, 'out', 10)
                 if not lo_df.empty:
-                    lo_df['Total_Duration_Min'] = (lo_df['Total_Duration'] / 60).round(1)
+                    lo_df['Duration (min)'] = (lo_df['Total_Duration'] / 60).round(1)
                     st.dataframe(
-                        lo_df[['Party B','Total_Calls','Total_Duration_Min','Pct_CallTime']].rename(columns={
-                            'Total_Calls':'Calls',
-                            'Total_Duration_Min':'Duration (min)',
-                            'Pct_CallTime':'% of Time'
-                        }),
-                        use_container_width=True, hide_index=True
-                    )
+                        lo_df[['Party B','Total_Calls','Duration (min)','Pct_CallTime']].rename(
+                            columns={'Total_Calls':'Calls','Pct_CallTime':'% of Time'}),
+                        use_container_width=True, hide_index=True)
                 else:
-                    st.info("ডেটা নেই")
+                    st.info("No outgoing call duration data available.")
             with d2:
-                st.markdown("#### 📥 Incoming — সবচেয়ে বেশি কথা বলেছে")
+                st.markdown("""<div style="font-weight:700; color:#16a34a; margin-bottom:0.5rem;">
+                    📥 Incoming — Longest Call Duration</div>""", unsafe_allow_html=True)
                 li_df = top_lengthy(df, 'in', 10)
                 if not li_df.empty:
-                    li_df['Total_Duration_Min'] = (li_df['Total_Duration'] / 60).round(1)
+                    li_df['Duration (min)'] = (li_df['Total_Duration'] / 60).round(1)
                     st.dataframe(
-                        li_df[['Party B','Total_Calls','Total_Duration_Min','Pct_CallTime']].rename(columns={
-                            'Total_Calls':'Calls',
-                            'Total_Duration_Min':'Duration (min)',
-                            'Pct_CallTime':'% of Time'
-                        }),
-                        use_container_width=True, hide_index=True
-                    )
+                        li_df[['Party B','Total_Calls','Duration (min)','Pct_CallTime']].rename(
+                            columns={'Total_Calls':'Calls','Pct_CallTime':'% of Time'}),
+                        use_container_width=True, hide_index=True)
                 else:
-                    st.info("ডেটা নেই")
+                    st.info("No incoming call duration data available.")
 
-        # ── 4. Top Stay Locations ──
+        # ── 4. Top Stay Locations (uses FULL df including anomalies for BTS data) ──
         with st.expander("📍 Top Stay Locations", expanded=True):
             if 'address' in df.columns:
                 home_mask    = df['start'].dt.hour.astype(int).isin(list(range(0,6))+list(range(22,24))) if 'start' in df.columns else None
                 work_mask    = (df['start'].dt.hour.astype(int)>=8)&(df['start'].dt.hour.astype(int)<18) if 'start' in df.columns else None
                 weekend_mask = df['start'].dt.dayofweek.astype(int).isin([4,5])                         if 'start' in df.columns else None
 
+                st.markdown("""
+                <div style="background:#eff6ff; border-radius:8px; padding:0.6rem 1rem;
+                            margin-bottom:1rem; font-size:0.85rem; color:#1e40af;">
+                    ℹ️ Location analysis includes <strong>all records</strong> (including service messages)
+                    to ensure complete BTS coverage data.
+                </div>""", unsafe_allow_html=True)
+
                 l1, l2, l3 = st.columns(3)
                 with l1:
-                    st.markdown("#### 🏠 Probable Home Location")
-                    st.caption("রাত ১০টা – সকাল ৬টা")
+                    st.markdown("""<div style="font-weight:700; color:#1e3a8a; margin-bottom:0.25rem;">
+                        🏠 Probable Home Location</div>
+                        <div style="font-size:0.8rem; color:#64748b; margin-bottom:0.5rem;">
+                        Night (10 PM – 6 AM)</div>""", unsafe_allow_html=True)
                     hl = top_locations(df, home_mask, 3)
-                    if not hl.empty:
-                        st.dataframe(hl, use_container_width=True, hide_index=True)
-                    else:
-                        st.info("Location ডেটা নেই")
+                    st.dataframe(hl, use_container_width=True, hide_index=True) if not hl.empty else st.info("No location data.")
 
                 with l2:
-                    st.markdown("#### 🏢 Probable Work Location")
-                    st.caption("সকাল ৮টা – সন্ধ্যা ৬টা")
+                    st.markdown("""<div style="font-weight:700; color:#1e3a8a; margin-bottom:0.25rem;">
+                        🏢 Probable Work Location</div>
+                        <div style="font-size:0.8rem; color:#64748b; margin-bottom:0.5rem;">
+                        Daytime (8 AM – 6 PM)</div>""", unsafe_allow_html=True)
                     wl = top_locations(df, work_mask, 3)
-                    if not wl.empty:
-                        st.dataframe(wl, use_container_width=True, hide_index=True)
-                    else:
-                        st.info("Location ডেটা নেই")
+                    st.dataframe(wl, use_container_width=True, hide_index=True) if not wl.empty else st.info("No location data.")
 
                 with l3:
-                    st.markdown("#### 🕌 Probable Weekend Location")
-                    st.caption("শুক্র ও শনিবার")
+                    st.markdown("""<div style="font-weight:700; color:#1e3a8a; margin-bottom:0.25rem;">
+                        🕌 Probable Weekend Location</div>
+                        <div style="font-size:0.8rem; color:#64748b; margin-bottom:0.5rem;">
+                        Friday & Saturday</div>""", unsafe_allow_html=True)
                     el = top_locations(df, weekend_mask, 3)
-                    if not el.empty:
-                        st.dataframe(el, use_container_width=True, hide_index=True)
-                    else:
-                        st.info("Location ডেটা নেই")
+                    st.dataframe(el, use_container_width=True, hide_index=True) if not el.empty else st.info("No location data.")
             else:
-                st.info("এই CDR ফাইলে Location ডেটা নেই।")
+                st.info("No location data available in this CDR file.")
 
         # ── 5. Top 5 SMS Contacts ──
         with st.expander("💬 Top 5 SMS Contacts", expanded=True):
             if "is_sms_out" in df.columns and "party_b_clean" in df.columns:
                 s1, s2 = st.columns(2)
                 with s1:
-                    st.markdown("#### 📤 Sent SMS — সবচেয়ে বেশি SMS পাঠিয়েছে")
+                    st.markdown("""<div style="font-weight:700; color:#2563eb; margin-bottom:0.5rem;">
+                        📤 Top 5 Sent SMS Contacts</div>""", unsafe_allow_html=True)
                     sms_out_df = top_sms_contacts(df, 'out', 5)
-                    if not sms_out_df.empty:
-                        st.dataframe(sms_out_df, use_container_width=True, hide_index=True)
-                    else:
-                        st.info("Sent SMS ডেটা নেই")
+                    st.dataframe(sms_out_df, use_container_width=True, hide_index=True) if not sms_out_df.empty else st.info("No sent SMS data.")
                 with s2:
-                    st.markdown("#### 📥 Received SMS — সবচেয়ে বেশি SMS এসেছে")
+                    st.markdown("""<div style="font-weight:700; color:#16a34a; margin-bottom:0.5rem;">
+                        📥 Top 5 Received SMS Contacts</div>""", unsafe_allow_html=True)
                     sms_in_df = top_sms_contacts(df, 'in', 5)
-                    if not sms_in_df.empty:
-                        st.dataframe(sms_in_df, use_container_width=True, hide_index=True)
-                    else:
-                        st.info("Received SMS ডেটা নেই")
+                    st.dataframe(sms_in_df, use_container_width=True, hide_index=True) if not sms_in_df.empty else st.info("No received SMS data.")
             else:
-                st.info("এই CDR ফাইলে SMS ডেটা নেই।")
+                st.info("No SMS data available in this CDR file.")
 
         # ── 6. Last 10 Days Analysis ──
-        with st.expander("📅 Last 10 Days Analysis", expanded=True):
+        with st.expander("📅 Last 10 Days Activity", expanded=True):
             ld1, ld2 = st.columns(2)
             with ld1:
-                st.markdown("#### 📞 Top Contacts — Last 10 Days (MOC + MTC)")
+                st.markdown("""<div style="font-weight:700; color:#2563eb; margin-bottom:0.5rem;">
+                    📞 Top Contacts — Last 10 Days (MOC + MTC)</div>""", unsafe_allow_html=True)
                 last_calls = last_n_days_top_contacts(df, 10, 10)
-                if not last_calls.empty:
-                    st.dataframe(last_calls, use_container_width=True, hide_index=True)
-                else:
-                    st.info("শেষ ১০ দিনের ডেটা নেই")
+                st.dataframe(last_calls, use_container_width=True, hide_index=True) if not last_calls.empty else st.info("No data for last 10 days.")
             with ld2:
-                st.markdown("#### 📍 Top Locations — Last 10 Days")
+                st.markdown("""<div style="font-weight:700; color:#7c3aed; margin-bottom:0.5rem;">
+                    📍 Top Locations — Last 10 Days</div>""", unsafe_allow_html=True)
                 last_loc = last_n_days_top_locations(df, 10, 10)
-                if not last_loc.empty:
-                    st.dataframe(last_loc, use_container_width=True, hide_index=True)
-                else:
-                    st.info("শেষ ১০ দিনের Location ডেটা নেই")
+                st.dataframe(last_loc, use_container_width=True, hide_index=True) if not last_loc.empty else st.info("No location data for last 10 days.")
 
-        # ── 7. Specific Number Analysis (if target_number provided) ──
+        # ── 7. Specific Number Analysis ──
         if target_number:
             with st.expander(f"🎯 Specific Number Analysis — {target_number}", expanded=True):
                 res = specific_number_analysis(df, target_number)
                 if res is None:
-                    st.warning(f"⚠️ **{target_number}** নম্বরের সাথে কোনো communication পাওয়া যায়নি।")
+                    st.warning(f"⚠️ No communication found with **{target_number}** in this CDR.")
                 else:
                     sn1, sn2, sn3, sn4 = st.columns(4)
                     with sn1:
-                        st.markdown(f'<div class="stat-card"><div class="label">MOC</div><div class="value">{res["moc"]}</div></div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="stat-card"><div class="label">Outgoing Calls (MOC)</div><div class="value">{res["moc"]}</div></div>', unsafe_allow_html=True)
                     with sn2:
-                        st.markdown(f'<div class="stat-card"><div class="label">MTC</div><div class="value">{res["mtc"]}</div></div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="stat-card"><div class="label">Incoming Calls (MTC)</div><div class="value">{res["mtc"]}</div></div>', unsafe_allow_html=True)
                     with sn3:
-                        st.markdown(f'<div class="stat-card"><div class="label">Total Duration</div><div class="value" style="font-size:1.1rem;">{res["total_duration_min"]} min</div></div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="stat-card"><div class="label">Total Call Duration</div><div class="value" style="font-size:1.1rem;">{res["total_duration_min"]} min</div></div>', unsafe_allow_html=True)
                     with sn4:
                         st.markdown(f'<div class="stat-card"><div class="label">Total SMS</div><div class="value">{res["total_sms"]}</div></div>', unsafe_allow_html=True)
                     st.markdown("")
                     detail_df = pd.DataFrame({
-                        'Metric': ['Sent SMS', 'Received SMS', 'First Contact', 'Last Contact'],
-                        'Value':  [res['sms_sent'], res['sms_received'], res['first_contact'], res['last_contact']]
+                        'Metric': ['Total Calls','Sent SMS','Received SMS','First Contact','Last Contact'],
+                        'Value':  [res['total_calls'], res['sms_sent'], res['sms_received'],
+                                   res['first_contact'], res['last_contact']]
                     })
                     st.dataframe(detail_df, use_container_width=True, hide_index=True)
 
@@ -1529,7 +1671,7 @@ def main():
         st.error(f"❌ Error: {str(e)}")
         st.code(str(e))
 
-    # ── Footer (always shown after upload too) ──
+    # ── Footer ──
     st.markdown("""
     <div class="footer">
         🛡️ Developed By <span class="dev-name">Md. Omar Faruk Mazumder</span>
