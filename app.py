@@ -398,31 +398,80 @@ def fig_to_base64(fig):
 # ─────────────────────────────────────────────
 # LOAD & CLEAN
 # ─────────────────────────────────────────────
+def normalize_number(val):
+    """
+    Normalize a Bangladesh mobile number to last-10-digit form (internal key).
+    880XXXXXXXXXX / 0XXXXXXXXXX / XXXXXXXXXX → last 10 digits
+    Used for grouping/matching — not for display.
+    """
+    s = str(val).strip()
+    digits = re.sub(r'[^0-9]', '', s)
+    if len(digits) >= 10:
+        return digits[-10:]
+    return s
+
+
+def display_number(val):
+    """
+    Format a number for display as 11-digit Bangladesh format: 01XXXXXXXXX
+    8801XXXXXXXXX → 01XXXXXXXXX
+    1XXXXXXXXX (10 digits) → 01XXXXXXXXX
+    01XXXXXXXXX → 01XXXXXXXXX (unchanged)
+    Non-mobile values returned as-is.
+    """
+    s = str(val).strip()
+    digits = re.sub(r'[^0-9]', '', s)
+    if len(digits) == 13 and digits.startswith('880'):
+        return '0' + digits[3:]        # 8801XXXXXXXXX → 01XXXXXXXXX
+    if len(digits) == 10:
+        return '0' + digits            # 1XXXXXXXXX → 01XXXXXXXXX
+    if len(digits) == 11 and digits.startswith('0'):
+        return digits                  # already 01XXXXXXXXX
+    return s                           # non-mobile (service names etc.)
+
+
+def _extract_merged_rows(merged_val, cols):
+    """
+    Extract multiple hidden rows from a single merged cell value.
+    Handles: tab-separated columns, _x000D_ row separators.
+    Returns list of dicts, each dict = one recovered row.
+    """
+    # Split by _x000D_ (Excel carriage-return encoding) with optional newline
+    raw_lines = re.split(r'_x000D_\r?\n?', merged_val)
+    raw_lines = [l.strip() for l in raw_lines if l.strip()]
+
+    recovered = []
+    for line in raw_lines:
+        parts = line.split('\t')
+        # Pad missing cells with '-'
+        if len(parts) < len(cols):
+            parts = parts + ['-'] * (len(cols) - len(parts))
+        elif len(parts) > len(cols):
+            parts = parts[:len(cols)]
+        recovered.append(dict(zip(cols, parts)))
+
+    return recovered
+
+
 def _try_fix_merged_row(row_series, expected_cols):
     """
     Try to detect and fix a row where data is merged into fewer cells.
-    Returns a fixed Series if fixable, else None.
+    Returns fixed Series if fixable (simple case), else None.
+    (Complex _x000D_ cases are handled separately in load_and_clean.)
     """
     vals = [str(v) for v in row_series.values if pd.notna(v) and str(v).strip() not in ('', 'nan')]
     if len(vals) == 0:
         return None
 
-    # Check if one cell contains multiple pipe/comma/tab separated values
-    for sep in ['|', '\t', ',,', ';']:
+    # Simple pipe/semicolon separated single-row merges
+    for sep in ['|', ';;']:
         if any(sep in v for v in vals):
             parts = []
             for v in vals:
                 parts.extend([x.strip() for x in v.split(sep)])
             if len(parts) >= len(expected_cols) - 2:
-                padded = (parts + [''] * len(expected_cols))[:len(expected_cols)]
+                padded = (parts + ['-'] * len(expected_cols))[:len(expected_cols)]
                 return pd.Series(padded, index=expected_cols)
-
-    # If only 1 cell has all content but looks like CSV
-    if len(vals) == 1 and ',' in vals[0]:
-        parts = [x.strip() for x in vals[0].split(',')]
-        if len(parts) >= len(expected_cols) - 2:
-            padded = (parts + [''] * len(expected_cols))[:len(expected_cols)]
-            return pd.Series(padded, index=expected_cols)
 
     return None
 
@@ -462,21 +511,48 @@ def load_and_clean(file_bytes):
     expected_cols = df.columns.tolist()
 
     # ── Merged Cell Fix ──
-    # Detect rows where non-null count < 40% of expected columns (likely merged)
-    min_expected = max(3, int(len(expected_cols) * 0.4))
-    merged_mask = df.apply(
-        lambda r: r.notna().sum() < min_expected and
-                  any(str(v) for v in r.values if pd.notna(v) and len(str(v)) > 30),
-        axis=1
-    )
-    if merged_mask.sum() > 0:
-        fixed_rows = []
-        for idx in df[merged_mask].index:
-            fixed = _try_fix_merged_row(df.loc[idx], expected_cols)
+    # Detect rows where any cell contains _x000D_ (multi-row merge) or tab-separated data
+    all_rows_out = []
+    merged_fixed_count = 0
+
+    for i, row in df.iterrows():
+        found_merge = False
+        for col in expected_cols:
+            val = str(row.get(col, ''))
+            if '_x000D_' in val and '\t' in val and len(val) > 100:
+                # Multi-row merged cell: extract all hidden rows
+                found_merge = True
+                merged_fixed_count += 1
+
+                # Build the first partial row from columns before the merged cell
+                first_row = {}
+                for c in expected_cols:
+                    if c == col:
+                        break
+                    first_row[c] = str(row.get(c, '-'))
+
+                # Extract hidden rows from merged cell
+                recovered = _extract_merged_rows(val, expected_cols)
+
+                # Merge first_row prefix into first recovered row
+                if recovered:
+                    for k, v in first_row.items():
+                        recovered[0][k] = v
+                    all_rows_out.extend(recovered)
+                else:
+                    all_rows_out.append(row.to_dict())
+                break
+
+        if not found_merge:
+            # Simple merge check (pipe/semicolon)
+            fixed = _try_fix_merged_row(row, expected_cols)
             if fixed is not None:
-                fixed_rows.append((idx, fixed))
-        for idx, fixed_row in fixed_rows:
-            df.loc[idx] = fixed_row
+                all_rows_out.append(fixed.to_dict())
+            else:
+                all_rows_out.append(row.to_dict())
+
+    if merged_fixed_count > 0:
+        df = pd.DataFrame(all_rows_out, columns=expected_cols).reset_index(drop=True)
 
     # ── Rename columns ──
     col_map = {}
@@ -508,6 +584,15 @@ def load_and_clean(file_bytes):
     elif 'party_b' in df.columns:
         df['party_b_clean'] = df['party_b'].astype(str).str.strip()
 
+    # ── Normalize phone numbers: 880XXXXXXXXXX / 0XXXXXXXXXX / XXXXXXXXXX → last 10 digits ──
+    # This ensures the same number stored differently is treated as one contact
+    if 'party_b_clean' in df.columns:
+        df['party_b_norm'] = df['party_b_clean'].apply(
+            lambda v: normalize_number(v) if is_valid_number(v) else v
+        )
+    if 'party_a' in df.columns:
+        df['party_a'] = df['party_a'].astype(str).str.strip()
+
     # ── Mark anomalies (DO NOT REMOVE — keep for location analysis) ──
     # is_anomaly = True means invalid party_b (service SMS, promo, short codes etc.)
     # These rows are EXCLUDED from call/contact analysis
@@ -520,8 +605,6 @@ def load_and_clean(file_bytes):
     else:
         df['is_anomaly'] = False
 
-    if 'party_a' in df.columns:
-        df['party_a'] = df['party_a'].astype(str).str.strip()
     if 'usage_type' in df.columns:
         df['usage_type'] = df['usage_type'].astype(str).str.strip()
 
@@ -536,10 +619,16 @@ def load_and_clean(file_bytes):
 
 
 def cdf(df):
-    """Return clean df (non-anomaly rows only) for call/contact/SMS analysis."""
-    if 'is_anomaly' in df.columns:
-        return df[~df['is_anomaly']].copy()
-    return df.copy()
+    """Return clean df (non-anomaly rows only) for call/contact/SMS analysis.
+    Also ensures party_b_norm exists (last-10-digit normalized number).
+    """
+    d = df[~df['is_anomaly']].copy() if 'is_anomaly' in df.columns else df.copy()
+    # Ensure party_b_norm exists
+    if 'party_b_norm' not in d.columns and 'party_b_clean' in d.columns:
+        d['party_b_norm'] = d['party_b_clean'].apply(
+            lambda v: normalize_number(v) if is_valid_number(v) else v
+        )
+    return d
 
 
 # ─────────────────────────────────────────────
@@ -584,7 +673,7 @@ def daily_call_count(df):
         mask = (calls['hour']>=h_start)&(calls['hour']<h_end) if h_end<=24 \
                else (calls['hour']>=22)|(calls['hour']<5)
         sub = calls[mask]
-        mc = sub['party_b_clean'].value_counts() if 'party_b_clean' in sub.columns and len(sub) else pd.Series()
+        mc = sub['party_b_norm'].value_counts() if 'party_b_norm' in sub.columns and len(sub) else pd.Series()
         mv = sub['address'].dropna().value_counts() if 'address' in sub.columns and len(sub) else pd.Series()
         rows.append({'Time of day': name, 'Interval': interval,
                      'Total calls': len(sub),
@@ -627,15 +716,15 @@ def contact_summary(df):
     if 'party_b_clean' not in df.columns: return pd.DataFrame()
     d = cdf(df)
     all_c = d[d['is_call_out']|d['is_call_in']]
-    mc_all = all_c['party_b_clean'].value_counts() if len(all_c) else pd.Series()
-    mc_out = d[d['is_call_out']]['party_b_clean'].value_counts() if d['is_call_out'].sum() else pd.Series()
-    mc_in  = d[d['is_call_in']]['party_b_clean'].value_counts()  if d['is_call_in'].sum()  else pd.Series()
-    dur    = all_c.groupby('party_b_clean')['duration'].sum() if 'duration' in d.columns and len(all_c) else pd.Series()
+    mc_all = all_c['party_b_norm'].value_counts() if 'party_b_norm' in all_c.columns else all_c['party_b_clean'].value_counts() if len(all_c) else pd.Series()
+    mc_out = d[d['is_call_out']]['party_b_norm'].value_counts() if 'party_b_norm' in d.columns else d[d['is_call_out']]['party_b_clean'].value_counts() if d['is_call_out'].sum() else pd.Series()
+    mc_in  = d[d['is_call_in']]['party_b_norm'].value_counts() if 'party_b_norm' in d.columns else d[d['is_call_in']]['party_b_clean'].value_counts()  if d['is_call_in'].sum()  else pd.Series()
+    dur    = all_c.groupby('party_b_norm' if 'party_b_norm' in all_c.columns else 'party_b_clean')['duration'].sum() if 'duration' in d.columns and len(all_c) else pd.Series()
     return pd.DataFrame({
         'Metric': ['Total Unique Numbers','Most Called Number',
                    'Most Called Outgoing','Most Received Incoming',
                    'Most Total Call Time'],
-        'Value':  [d['party_b_clean'].nunique(),
+        'Value':  [d['party_b_norm'].nunique() if 'party_b_norm' in d.columns else d['party_b_clean'].nunique(),
                    f"{mc_all.index[0]}, {mc_all.iloc[0]} times" if not mc_all.empty else 'N/A',
                    f"{mc_out.index[0]}, {mc_out.iloc[0]} times" if not mc_out.empty else 'N/A',
                    f"{mc_in.index[0]},  {mc_in.iloc[0]} times"  if not mc_in.empty  else 'N/A',
@@ -647,8 +736,9 @@ def top_contacts(df, direction='out', n=10):
     d = cdf(df)
     sub = d[d['is_call_out']] if direction=='out' else d[d['is_call_in']]
     if len(sub)==0: return pd.DataFrame()
-    c = sub['party_b_clean'].value_counts().head(n)
-    return pd.DataFrame({'Party B': c.index,
+    col = 'party_b_norm' if 'party_b_norm' in sub.columns else 'party_b_clean'
+    c = sub[col].value_counts().head(n)
+    return pd.DataFrame({'Party B': [display_number(x) for x in c.index],
                          'Total Calls': c.values,
                          'Percentage': (c.values/len(sub)*100).round(2)})
 
@@ -657,12 +747,15 @@ def top_lengthy(df, direction='out', n=10):
     d = cdf(df)
     sub = d[d['is_call_out']] if direction=='out' else d[d['is_call_in']]
     if len(sub)==0: return pd.DataFrame()
-    g = sub.groupby('party_b_clean').agg(
+    gcol = 'party_b_norm' if 'party_b_norm' in sub.columns else 'party_b_clean'
+    g = sub.groupby(gcol).agg(
         Total_Duration=('duration','sum'), Total_Calls=('duration','count')
     ).sort_values('Total_Duration', ascending=False).head(n)
     td = sub['duration'].sum()
     g['Pct_CallTime'] = (g['Total_Duration']/td*100).round(2) if td>0 else 0
-    return g.reset_index().rename(columns={'party_b_clean':'Party B'})
+    g = g.reset_index().rename(columns={gcol:'Party B'})
+    g['Party B'] = g['Party B'].apply(display_number)
+    return g
 
 def top_locations(df, mask=None, n=10):
     if 'address' not in df.columns: return pd.DataFrame()
@@ -727,7 +820,8 @@ def top_sms_contacts(df, direction='out', n=5):
     if len(sub) == 0:
         return pd.DataFrame()
     counts = sub['party_b_clean'].value_counts().head(n)
-    return pd.DataFrame({'Party B': counts.index, 'SMS Count': counts.values})
+    return pd.DataFrame({'Party B': [display_number(x) for x in counts.index],
+                         'SMS Count': counts.values})
 
 
 def last_n_days_top_contacts(df, days=10, n=10):
@@ -740,7 +834,8 @@ def last_n_days_top_contacts(df, days=10, n=10):
     recent = d[(d['start'] >= cutoff) & (d['is_call_out'] | d['is_call_in'])].copy()
     if len(recent) == 0:
         return pd.DataFrame()
-    grouped = recent.groupby('party_b_clean').agg(
+    gcol = 'party_b_norm' if 'party_b_norm' in recent.columns else 'party_b_clean'
+    grouped = recent.groupby(gcol).agg(
         moc=('is_call_out', 'sum'),
         mtc=('is_call_in', 'sum'),
         total_duration=('duration', 'sum')
@@ -748,9 +843,11 @@ def last_n_days_top_contacts(df, days=10, n=10):
     grouped['total_calls'] = grouped['moc'] + grouped['mtc']
     grouped = grouped.sort_values('total_calls', ascending=False).head(n).reset_index()
     grouped['Duration (min)'] = (grouped['total_duration'] / 60).round(1)
-    return grouped[['party_b_clean', 'moc', 'mtc', 'total_calls', 'Duration (min)']].rename(
-        columns={'party_b_clean': 'Party B', 'moc': 'MOC',
+    result = grouped[[gcol, 'moc', 'mtc', 'total_calls', 'Duration (min)']].rename(
+        columns={gcol: 'Party B', 'moc': 'MOC',
                  'mtc': 'MTC', 'total_calls': 'Total Calls'})
+    result['Party B'] = result['Party B'].apply(display_number)
+    return result
 
 
 def last_n_days_top_locations(df, days=10, n=10):
@@ -779,7 +876,12 @@ def specific_number_analysis(df, target_number):
     elif target.startswith('0'):  candidates.add('880' + target[1:])
     if target.startswith('880'):  candidates.add(target[3:])
     candidates.add(target.lstrip('0'))
-    sub = d[d['party_b_clean'].astype(str).isin(candidates)]
+    # Match using normalized last-10-digit form
+    norm_target = normalize_number(target)
+    if 'party_b_norm' in d.columns:
+        sub = d[d['party_b_norm'].astype(str) == norm_target]
+    else:
+        sub = d[d['party_b_clean'].astype(str).isin(candidates)]
     if len(sub) == 0:
         return None
     moc = int(sub.get('is_call_out', pd.Series([False]*len(sub))).sum())
@@ -789,7 +891,7 @@ def specific_number_analysis(df, target_number):
     call_mask = sub.get('is_call_out', False) | sub.get('is_call_in', False)
     total_dur = int(sub.loc[call_mask, 'duration'].sum()) if 'duration' in sub.columns else 0
     return {
-        'number': target_number,
+        'number': display_number(target_number),
         'moc': moc, 'mtc': mtc,
         'total_calls': moc + mtc,
         'total_duration_sec': total_dur,
