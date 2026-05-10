@@ -336,7 +336,8 @@ st.markdown("""
 COLUMN_ALIASES = {
     'start':            ['start', 'datetime', 'date', 'timestamp', 'call_date',
                          'call date', 'date/time', 'date time', 'starttime',
-                         'start time', 'start_datetime'],
+                         'start time', 'start_datetime', 'start_dttime', 'startdttime',
+                         'call_datetime', 'calldatetime', 'datetime_start'],
     'operator':         ['operator', 'network', 'telco', 'carrier',
                          'provider name', 'provider_name', 'service provider'],
     'party_a':          ['party a', 'party_a', 'a_number', 'msisdn_a', 'a-number',
@@ -565,7 +566,22 @@ def load_and_clean(file_bytes):
 
     # ── Parse datetime ──
     if 'start' in df.columns:
-        df['start'] = pd.to_datetime(df['start'], errors='coerce')
+        raw = df['start'].astype(str).str.strip()
+
+        # Try YYYYMMDDHHMMSS (14 digit compact format: 20260220092533)
+        compact_mask = raw.str.match(r'^\d{14}$')
+        if compact_mask.sum() > len(df) * 0.5:
+            df['start'] = pd.to_datetime(raw, format='%Y%m%d%H%M%S', errors='coerce')
+        # Try YYYYMMDD (8 digit date only)
+        elif raw.str.match(r'^\d{8}$').sum() > len(df) * 0.5:
+            df['start'] = pd.to_datetime(raw, format='%Y%m%d', errors='coerce')
+        else:
+            # Standard formats: ISO, DD/MM/YYYY, etc.
+            df['start'] = pd.to_datetime(raw, errors='coerce', dayfirst=False)
+            # Try dayfirst if too many failed
+            if df['start'].isna().sum() > len(df) * 0.3:
+                df['start'] = pd.to_datetime(raw, errors='coerce', dayfirst=True)
+
         df = df.dropna(subset=['start'])
         df = df.sort_values('start').reset_index(drop=True)
 
