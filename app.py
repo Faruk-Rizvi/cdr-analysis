@@ -1068,66 +1068,90 @@ def _work_district(df):
     return None
 
 
+def _is_valid_address(addr):
+    """Check if BTS address is meaningful (not just dashes, commas, or empty)."""
+    if not addr or pd.isna(addr):
+        return False
+    s = str(addr).strip()
+    # Remove common invalid patterns: -, -,, --,  nan, empty
+    cleaned = s.replace('-', '').replace(',', '').replace('.', '').replace(' ', '')
+    return len(cleaned) >= 5  # must have at least 5 meaningful chars
+
+
 def movement_pattern_analysis(df):
     """
     Detect out-of-home-district travel and network disconnection gaps.
-    Returns dict with:
-      - home_district
-      - work_district
-      - trips: list of {district, start_date, end_date, days, addresses}
-      - gaps:  list of {gap_start, gap_end, days} where >4 days no activity
-      - total_days: date range span
-      - out_of_home_days: count
+    Rules:
+      - Only count valid BTS addresses (no -, -,, empty cells)
+      - Only count as a trip if person is outside home/work district for >1 consecutive day
+      - Passing through (1 day) is ignored
     """
     if 'address' not in df.columns or 'start' not in df.columns:
         return None
 
-    df_loc = df[df['address'].notna() & (df['address'].astype(str).str.strip() != '')].copy()
+    # Filter valid addresses only
+    df_loc = df[
+        df['address'].notna() &
+        df['address'].apply(_is_valid_address)
+    ].copy()
     df_loc = df_loc.sort_values('start').reset_index(drop=True)
 
     if df_loc.empty:
         return None
 
-    home_dist  = _home_district(df)
-    work_dist  = _work_district(df)
+    home_dist  = _home_district(df_loc)
+    work_dist  = _work_district(df_loc)
     base_dists = set(filter(None, [home_dist, work_dist]))
     if not base_dists:
-        base_dists = {'Dhaka'}  # fallback
+        base_dists = {'Dhaka'}
 
     # Add date and district columns
     df_loc['date']     = df_loc['start'].dt.date
     df_loc['district'] = df_loc['address'].apply(_extract_district)
 
-    # Daily dominant district
+    # Remove rows where district could not be extracted
+    df_loc = df_loc[df_loc['district'].notna()]
+
+    # Daily dominant district (most frequent district per day)
     daily = (df_loc.groupby('date')['district']
-             .apply(lambda x: x.dropna().value_counts().index[0]
-                    if x.dropna().any() else None)
+             .apply(lambda x: x.value_counts().index[0] if len(x) > 0 else None)
              .reset_index())
     daily.columns = ['date', 'district']
-    daily = daily[daily['district'].notna()]
+    daily = daily[daily['district'].notna()].reset_index(drop=True)
 
-    # Detect out-of-home trips
+    # Detect out-of-home trips (>1 consecutive day outside base districts)
     trips = []
     i = 0
     while i < len(daily):
-        row = daily.iloc[i]
-        dist = row['district']
+        dist = daily.iloc[i]['district']
         if dist and dist not in base_dists:
-            # Start of an out-of-home trip
+            # Collect consecutive out-of-home days
             j = i
             trip_dates = []
+            trip_districts = []
             while j < len(daily) and daily.iloc[j]['district'] not in base_dists:
                 trip_dates.append(daily.iloc[j]['date'])
+                trip_districts.append(daily.iloc[j]['district'])
                 j += 1
-            if trip_dates:
-                start_d = trip_dates[0]
-                end_d   = trip_dates[-1]
-                days    = (pd.Timestamp(end_d) - pd.Timestamp(start_d)).days + 1
-                # Get distinct addresses for this trip
-                mask = (df_loc['date'] >= start_d) & (df_loc['date'] <= end_d)
-                addrs = df_loc[mask]['address'].dropna().value_counts().head(3).index.tolist()
+
+            # Only count if MORE than 1 consecutive calendar day
+            if len(trip_dates) > 1:
+                start_d   = trip_dates[0]
+                end_d     = trip_dates[-1]
+                days      = (pd.Timestamp(end_d) - pd.Timestamp(start_d)).days + 1
+                # Most frequent district in this trip
+                main_dist = pd.Series(trip_districts).value_counts().index[0]
+                # Get top addresses for this trip (valid only)
+                mask  = (df_loc['date'] >= start_d) & (df_loc['date'] <= end_d)
+                addrs = (df_loc[mask]['address']
+                         .dropna()
+                         .apply(lambda a: a if _is_valid_address(a) else None)
+                         .dropna()
+                         .value_counts()
+                         .head(3)
+                         .index.tolist())
                 trips.append({
-                    'district':   dist,
+                    'district':   main_dist,
                     'start_date': str(start_d),
                     'end_date':   str(end_d),
                     'days':       days,
@@ -1137,7 +1161,7 @@ def movement_pattern_analysis(df):
         else:
             i += 1
 
-    # Detect network gaps (>4 days with no CDR activity)
+    # Detect network gaps (>4 consecutive days with no CDR activity)
     all_dates = sorted(df['start'].dt.date.unique())
     gaps = []
     for k in range(len(all_dates) - 1):
@@ -1151,7 +1175,6 @@ def movement_pattern_analysis(df):
                 'days':      gap_days
             })
 
-    # Total stats
     total_days = (pd.Timestamp(all_dates[-1]) - pd.Timestamp(all_dates[0])).days + 1 if all_dates else 0
     out_days   = sum(t['days'] for t in trips)
 
@@ -1229,7 +1252,7 @@ def _movement_html(mv):
             f"""<span style="background:#fef3c7; color:#92400e; border:1px solid #fde68a;
                 border-radius:20px; padding:0.4rem 1rem; font-size:0.85rem; font-weight:600;
                 white-space:nowrap;">
-                ⚠ {t['district']} — {t['start_date']} to {t['end_date']} ({t['days']} days)
+                {t['district']} — {t['start_date']} to {t['end_date']} ({t['days']} days)
             </span>"""
             for t in mv['trips']
         ])
@@ -1237,7 +1260,7 @@ def _movement_html(mv):
         <div style="background:#fffbeb; border-left:4px solid #f59e0b; border-radius:10px;
                     padding:1rem 1.5rem; margin-bottom:1rem;">
             <div style="font-weight:700; color:#92400e; margin-bottom:0.75rem;">
-                ⚠ Out-of-Home District Travel Detected —
+                Out-of-Home District Travel Detected
             </div>
             <div style="display:flex; flex-wrap:wrap; gap:0.5rem;">{tags}</div>
         </div>"""
@@ -1275,7 +1298,7 @@ def _movement_html(mv):
     else:
         trips_html = """<div style="background:#ecfdf5; border-left:4px solid #10b981;
                     border-radius:10px; padding:1rem 1.5rem; margin-bottom:1rem; color:#065f46;">
-            ✅ No out-of-home-district travel detected within the analysis period.
+            No out-of-home-district travel detected within the analysis period.
         </div>"""
 
     # Network gaps section
@@ -1294,7 +1317,7 @@ def _movement_html(mv):
         ])
         gaps_html = f"""
         <div style="font-weight:700; color:#dc2626; margin:1rem 0 0.5rem 0;">
-            📵 Network Disconnection (No Activity &gt; 4 Days)
+            Network Disconnection (No Activity &gt; 4 Days)
         </div>
         <table style="width:100%; border-collapse:collapse; border:1px solid #fecaca;
                       border-radius:10px; overflow:hidden;">
@@ -1310,7 +1333,7 @@ def _movement_html(mv):
     else:
         gaps_html = """<div style="background:#ecfdf5; border-left:4px solid #10b981;
                     border-radius:10px; padding:0.75rem 1.25rem; color:#065f46; margin-top:1rem;">
-            ✅ No network disconnection gaps detected (&gt;4 days).
+            No network disconnection gaps detected (&gt;4 days).
         </div>"""
 
     return cards_html + trips_html + gaps_html
@@ -2138,7 +2161,7 @@ def main():
                 if mv['trips']:
                     st.markdown("""<div style="background:#fffbeb; border-left:4px solid #f59e0b;
                         border-radius:8px; padding:0.75rem 1.25rem; color:#92400e; margin-bottom:0.75rem;">
-                        ⚠️ <strong>Out-of-Home District Travel Detected</strong></div>""",
+                        <strong>Out-of-Home District Travel Detected</strong></div>""",
                         unsafe_allow_html=True)
                     trip_df = pd.DataFrame([{
                         'District': t['district'],
