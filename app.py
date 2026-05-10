@@ -1003,6 +1003,319 @@ def fig_to_html_img(fig):
     return f'<img src="data:image/png;base64,{fig_to_base64(fig)}">'
 
 
+
+# ─────────────────────────────────────────────
+# MOVEMENT PATTERN ANALYSIS
+# ─────────────────────────────────────────────
+
+def _extract_district(address_str):
+    """Extract district name from BTS address string."""
+    if not address_str or str(address_str).strip() in ('', 'nan', '-'):
+        return None
+    addr = str(address_str).upper()
+
+    # Bangladesh districts
+    districts = [
+        'DHAKA','CHITTAGONG','CHATTOGRAM','RAJSHAHI','KHULNA','SYLHET',
+        'BARISHAL','BARISAL','MYMENSINGH','RANGPUR','COMILLA','CUMILLA',
+        'GAZIPUR','NARAYANGANJ','NARSINGDI','MANIKGANJ','MUNSHIGANJ',
+        'TANGAIL','KISHOREGANJ','NETROKONA','JAMALPUR','SHERPUR',
+        'FARIDPUR','GOPALGANJ','MADARIPUR','SHARIATPUR','RAJBARI',
+        'BOGURA','BOGRA','JOYPURHAT','NAOGAON','NATORE','CHAPAINAWABGANJ',
+        'SIRAJGANJ','PABNA','KURIGRAM','LALMONIRHAT','NILPHAMARI',
+        'GAIBANDHA','THAKURGAON','DINAJPUR','PANCHAGARH','RANGPUR',
+        'CHUADANGA','JHENAIDAH','JESSORE','JASHORE','MAGURA','NARAIL',
+        'SATKHIRA','BAGERHAT','KHULNA','KUSHTIA','MEHERPUR',
+        'SUNAMGANJ','MOULVIBAZAR','HABIGANJ','BRAHMANBARIA',
+        'CHANDPUR','LAKSHMIPUR','NOAKHALI','FENI','COX\'S BAZAR',
+        "COX'S BAZAR",'BANDARBAN','RANGAMATI','KHAGRACHHARI',
+        'PIROJPUR','JHALOKATHI','BARGUNA','PATUAKHALI','BHOLA','BARISAL',
+        'NETRAKONA','MYMENSINGH','COX'
+    ]
+    for d in districts:
+        if d in addr:
+            return d.title()
+    return None
+
+
+def _home_district(df):
+    """Detect home district from night-time BTS addresses."""
+    if 'address' not in df.columns or 'start' not in df.columns:
+        return None
+    night = df[df['start'].dt.hour.astype(int).isin(list(range(0,6))+list(range(22,24)))]
+    if night.empty:
+        night = df  # fallback
+    addr_counts = night['address'].dropna().value_counts()
+    for addr in addr_counts.index:
+        d = _extract_district(addr)
+        if d:
+            return d
+    return None
+
+
+def _work_district(df):
+    """Detect work district from daytime BTS addresses."""
+    if 'address' not in df.columns or 'start' not in df.columns:
+        return None
+    day = df[(df['start'].dt.hour.astype(int) >= 8) & (df['start'].dt.hour.astype(int) < 18)]
+    if day.empty:
+        return None
+    addr_counts = day['address'].dropna().value_counts()
+    for addr in addr_counts.index:
+        d = _extract_district(addr)
+        if d:
+            return d
+    return None
+
+
+def movement_pattern_analysis(df):
+    """
+    Detect out-of-home-district travel and network disconnection gaps.
+    Returns dict with:
+      - home_district
+      - work_district
+      - trips: list of {district, start_date, end_date, days, addresses}
+      - gaps:  list of {gap_start, gap_end, days} where >4 days no activity
+      - total_days: date range span
+      - out_of_home_days: count
+    """
+    if 'address' not in df.columns or 'start' not in df.columns:
+        return None
+
+    df_loc = df[df['address'].notna() & (df['address'].astype(str).str.strip() != '')].copy()
+    df_loc = df_loc.sort_values('start').reset_index(drop=True)
+
+    if df_loc.empty:
+        return None
+
+    home_dist  = _home_district(df)
+    work_dist  = _work_district(df)
+    base_dists = set(filter(None, [home_dist, work_dist]))
+    if not base_dists:
+        base_dists = {'Dhaka'}  # fallback
+
+    # Add date and district columns
+    df_loc['date']     = df_loc['start'].dt.date
+    df_loc['district'] = df_loc['address'].apply(_extract_district)
+
+    # Daily dominant district
+    daily = (df_loc.groupby('date')['district']
+             .apply(lambda x: x.dropna().value_counts().index[0]
+                    if x.dropna().any() else None)
+             .reset_index())
+    daily.columns = ['date', 'district']
+    daily = daily[daily['district'].notna()]
+
+    # Detect out-of-home trips
+    trips = []
+    i = 0
+    while i < len(daily):
+        row = daily.iloc[i]
+        dist = row['district']
+        if dist and dist not in base_dists:
+            # Start of an out-of-home trip
+            j = i
+            trip_dates = []
+            while j < len(daily) and daily.iloc[j]['district'] not in base_dists:
+                trip_dates.append(daily.iloc[j]['date'])
+                j += 1
+            if trip_dates:
+                start_d = trip_dates[0]
+                end_d   = trip_dates[-1]
+                days    = (pd.Timestamp(end_d) - pd.Timestamp(start_d)).days + 1
+                # Get distinct addresses for this trip
+                mask = (df_loc['date'] >= start_d) & (df_loc['date'] <= end_d)
+                addrs = df_loc[mask]['address'].dropna().value_counts().head(3).index.tolist()
+                trips.append({
+                    'district':   dist,
+                    'start_date': str(start_d),
+                    'end_date':   str(end_d),
+                    'days':       days,
+                    'addresses':  addrs
+                })
+            i = j
+        else:
+            i += 1
+
+    # Detect network gaps (>4 days with no CDR activity)
+    all_dates = sorted(df['start'].dt.date.unique())
+    gaps = []
+    for k in range(len(all_dates) - 1):
+        d1 = pd.Timestamp(all_dates[k])
+        d2 = pd.Timestamp(all_dates[k+1])
+        gap_days = (d2 - d1).days - 1
+        if gap_days > 4:
+            gaps.append({
+                'gap_start': str(all_dates[k]),
+                'gap_end':   str(all_dates[k+1]),
+                'days':      gap_days
+            })
+
+    # Total stats
+    total_days = (pd.Timestamp(all_dates[-1]) - pd.Timestamp(all_dates[0])).days + 1 if all_dates else 0
+    out_days   = sum(t['days'] for t in trips)
+
+    return {
+        'home_district':    home_dist,
+        'work_district':    work_dist,
+        'base_districts':   list(base_dists),
+        'trips':            trips,
+        'gaps':             gaps,
+        'total_days':       total_days,
+        'out_of_home_days': out_days,
+        'total_records':    len(df),
+        'date_from':        str(all_dates[0])  if all_dates else 'N/A',
+        'date_to':          str(all_dates[-1]) if all_dates else 'N/A',
+    }
+
+
+
+def _movement_html(mv):
+    """Generate HTML for movement pattern section."""
+    if not mv:
+        return '<p style="color:#64748b;">Location data insufficient for movement analysis.</p>'
+
+    # Summary cards
+    trip_count = len(mv['trips'])
+    gap_count  = len(mv['gaps'])
+    cards_html = f"""
+    <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:1rem; margin-bottom:1.5rem;">
+        <div style="background:white; border-top:4px solid #2563eb; border-radius:10px;
+                    padding:1rem; box-shadow:0 1px 3px rgba(0,0,0,0.06);">
+            <div style="font-size:0.75rem; color:#94a3b8; font-weight:600;
+                        text-transform:uppercase;">Total Records</div>
+            <div style="font-size:1.8rem; font-weight:800; color:#0f172a;
+                        margin:0.3rem 0;">{mv['total_records']:,}</div>
+            <div style="font-size:0.8rem; color:#64748b;">Call + SMS | {mv['total_days']} days</div>
+        </div>
+        <div style="background:white; border-top:4px solid #16a34a; border-radius:10px;
+                    padding:1rem; box-shadow:0 1px 3px rgba(0,0,0,0.06);">
+            <div style="font-size:0.75rem; color:#94a3b8; font-weight:600;
+                        text-transform:uppercase;">Estimated Home</div>
+            <div style="font-size:1.1rem; font-weight:800; color:#0f172a;
+                        margin:0.3rem 0;">{mv['home_district'] or 'N/A'}</div>
+            <div style="font-size:0.78rem; color:#16a34a;">Based on night activity</div>
+        </div>
+        <div style="background:white; border-top:4px solid #f59e0b; border-radius:10px;
+                    padding:1rem; box-shadow:0 1px 3px rgba(0,0,0,0.06);">
+            <div style="font-size:0.75rem; color:#94a3b8; font-weight:600;
+                        text-transform:uppercase;">Estimated Work</div>
+            <div style="font-size:1.1rem; font-weight:800; color:#0f172a;
+                        margin:0.3rem 0;">{mv['work_district'] or 'N/A'}</div>
+            <div style="font-size:0.78rem; color:#f59e0b;">Based on daytime activity</div>
+        </div>
+        <div style="background:white; border-top:4px solid #dc2626; border-radius:10px;
+                    padding:1rem; box-shadow:0 1px 3px rgba(0,0,0,0.06);">
+            <div style="font-size:0.75rem; color:#94a3b8; font-weight:600;
+                        text-transform:uppercase;">Network Gaps</div>
+            <div style="font-size:1.8rem; font-weight:800; color:#dc2626;
+                        margin:0.3rem 0;">{gap_count}</div>
+            <div style="font-size:0.8rem; color:#64748b;">Disconnected &gt;4 days</div>
+        </div>
+        <div style="background:white; border-top:4px solid #7c3aed; border-radius:10px;
+                    padding:1rem; box-shadow:0 1px 3px rgba(0,0,0,0.06);">
+            <div style="font-size:0.75rem; color:#94a3b8; font-weight:600;
+                        text-transform:uppercase;">Out-of-Home Trips</div>
+            <div style="font-size:1.8rem; font-weight:800; color:#7c3aed;
+                        margin:0.3rem 0;">{trip_count}</div>
+            <div style="font-size:0.8rem; color:#64748b;">{mv['out_of_home_days']} days total</div>
+        </div>
+    </div>"""
+
+    # Trips section
+    trips_html = ''
+    if mv['trips']:
+        tags = ' '.join([
+            f"""<span style="background:#fef3c7; color:#92400e; border:1px solid #fde68a;
+                border-radius:20px; padding:0.4rem 1rem; font-size:0.85rem; font-weight:600;
+                white-space:nowrap;">
+                ⚠ {t['district']} — {t['start_date']} to {t['end_date']} ({t['days']} days)
+            </span>"""
+            for t in mv['trips']
+        ])
+        trips_html = f"""
+        <div style="background:#fffbeb; border-left:4px solid #f59e0b; border-radius:10px;
+                    padding:1rem 1.5rem; margin-bottom:1rem;">
+            <div style="font-weight:700; color:#92400e; margin-bottom:0.75rem;">
+                ⚠ Out-of-Home District Travel Detected —
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:0.5rem;">{tags}</div>
+        </div>"""
+
+        # Detail table
+        rows = ''.join([
+            f"""<tr style="background:{'#f8fafc' if i%2==0 else 'white'};">
+                <td style="padding:0.7rem 1rem; font-weight:600;">{t['district']}</td>
+                <td style="padding:0.7rem 1rem;">{t['start_date']}</td>
+                <td style="padding:0.7rem 1rem;">{t['end_date']}</td>
+                <td style="padding:0.7rem 1rem; text-align:center;">
+                    <span style="background:#dbeafe; color:#1e40af; border-radius:12px;
+                                 padding:0.2rem 0.6rem; font-weight:700;">{t['days']}</span>
+                </td>
+                <td style="padding:0.7rem 1rem; font-size:0.85rem; color:#475569;">
+                    {'; '.join(str(a)[:60] for a in t['addresses'][:2])}
+                </td>
+            </tr>"""
+            for i, t in enumerate(mv['trips'])
+        ])
+        trips_html += f"""
+        <table style="width:100%; border-collapse:collapse; margin-bottom:1rem;
+                      border:1px solid #e2e8f0; border-radius:10px; overflow:hidden;">
+            <thead>
+                <tr style="background:#1e3a8a; color:white;">
+                    <th style="padding:0.7rem 1rem; text-align:left;">District</th>
+                    <th style="padding:0.7rem 1rem; text-align:left;">From</th>
+                    <th style="padding:0.7rem 1rem; text-align:left;">To</th>
+                    <th style="padding:0.7rem 1rem; text-align:center;">Days</th>
+                    <th style="padding:0.7rem 1rem; text-align:left;">BTS Location</th>
+                </tr>
+            </thead>
+            <tbody>{rows}</tbody>
+        </table>"""
+    else:
+        trips_html = """<div style="background:#ecfdf5; border-left:4px solid #10b981;
+                    border-radius:10px; padding:1rem 1.5rem; margin-bottom:1rem; color:#065f46;">
+            ✅ No out-of-home-district travel detected within the analysis period.
+        </div>"""
+
+    # Network gaps section
+    gaps_html = ''
+    if mv['gaps']:
+        gap_rows = ''.join([
+            f"""<tr style="background:{'#fff1f2' if i%2==0 else 'white'};">
+                <td style="padding:0.7rem 1rem;">{g['gap_start']}</td>
+                <td style="padding:0.7rem 1rem;">{g['gap_end']}</td>
+                <td style="padding:0.7rem 1rem; text-align:center;">
+                    <span style="background:#fee2e2; color:#dc2626; border-radius:12px;
+                                 padding:0.2rem 0.7rem; font-weight:700;">{g['days']} days</span>
+                </td>
+            </tr>"""
+            for i, g in enumerate(mv['gaps'])
+        ])
+        gaps_html = f"""
+        <div style="font-weight:700; color:#dc2626; margin:1rem 0 0.5rem 0;">
+            📵 Network Disconnection (No Activity &gt; 4 Days)
+        </div>
+        <table style="width:100%; border-collapse:collapse; border:1px solid #fecaca;
+                      border-radius:10px; overflow:hidden;">
+            <thead>
+                <tr style="background:#dc2626; color:white;">
+                    <th style="padding:0.7rem 1rem; text-align:left;">Last Seen</th>
+                    <th style="padding:0.7rem 1rem; text-align:left;">Next Seen</th>
+                    <th style="padding:0.7rem 1rem; text-align:center;">Gap Duration</th>
+                </tr>
+            </thead>
+            <tbody>{gap_rows}</tbody>
+        </table>"""
+    else:
+        gaps_html = """<div style="background:#ecfdf5; border-left:4px solid #10b981;
+                    border-radius:10px; padding:0.75rem 1.25rem; color:#065f46; margin-top:1rem;">
+            ✅ No network disconnection gaps detected (&gt;4 days).
+        </div>"""
+
+    return cards_html + trips_html + gaps_html
+
+
 def _target_number_html(df, target_number):
     if not target_number:
         return ''
@@ -1087,6 +1400,11 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
     <h2>12. Last 10 Days Analysis</h2>
     <h3>12.1 Top Contacts in Last 10 Days (MOC + MTC)</h3>{df_to_html(last_n_days_top_contacts(df, 10, 10))}
     <h3>12.2 Top Locations in Last 10 Days</h3>{df_to_html(last_n_days_top_locations(df, 10, 10))}
+
+
+    <h2>13. Movement Pattern Analysis</h2>
+    <p>Analysis of movement outside estimated home/work district and network disconnection periods.</p>
+    {_movement_html(movement_pattern_analysis(df))}
 
     {_target_number_html(df, target_number)}
 
@@ -1241,8 +1559,38 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
     add_h('12.2 Top Locations in Last 10 Days',2)
     add_df_table(last_n_days_top_locations(df, 10, 10))
 
+    # Movement Pattern section
+    add_h('13. Movement Pattern Analysis')
+    mv = movement_pattern_analysis(df)
+    if mv:
+        mv_summary = pd.DataFrame({
+            'Metric': ['Home District','Work District','Total Days',
+                       'Out-of-Home Trips','Out-of-Home Days','Network Gaps (>4 days)'],
+            'Value':  [mv['home_district'] or 'N/A', mv['work_district'] or 'N/A',
+                       str(mv['total_days']), str(len(mv['trips'])),
+                       str(mv['out_of_home_days']), str(len(mv['gaps']))]
+        })
+        add_df_table(mv_summary)
+        if mv['trips']:
+            add_h('13.1 Out-of-Home District Travel', 2)
+            trip_df = pd.DataFrame([{
+                'District': t['district'], 'From': t['start_date'],
+                'To': t['end_date'], 'Days': t['days'],
+                'BTS Location': '; '.join(str(a)[:60] for a in t['addresses'][:2])
+            } for t in mv['trips']])
+            add_df_table(trip_df)
+        if mv['gaps']:
+            add_h('13.2 Network Disconnection Periods', 2)
+            gap_df = pd.DataFrame([{
+                'Last Seen': g['gap_start'], 'Next Seen': g['gap_end'],
+                'Gap (days)': g['days']
+            } for g in mv['gaps']])
+            add_df_table(gap_df)
+    else:
+        doc.add_paragraph('Insufficient location data for movement analysis.')
+
     if target_number:
-        add_h('13. Specific Number Analysis')
+        add_h('14. Specific Number Analysis')
         res = specific_number_analysis(df, target_number)
         if res is None:
             doc.add_paragraph(f'Target Number: {target_number}')
@@ -1746,7 +2094,78 @@ def main():
             else:
                 st.info("No SMS data available in this CDR file.")
 
-        # ── 6. Last 10 Days Analysis ──
+        # ── 6. Movement Pattern Analysis ──
+        with st.expander("🗺️ Movement Pattern Analysis", expanded=True):
+            mv = movement_pattern_analysis(df)
+            if mv:
+                # Summary cards
+                mv1, mv2, mv3, mv4, mv5 = st.columns(5)
+                with mv1:
+                    st.markdown(f'''<div class="stat-card" style="border-left-color:#2563eb;">
+                        <div class="label">Total Records</div>
+                        <div class="value">{mv["total_records"]:,}</div>
+                        <div style="font-size:0.75rem;color:#94a3b8;">{mv["total_days"]} days</div>
+                    </div>''', unsafe_allow_html=True)
+                with mv2:
+                    st.markdown(f'''<div class="stat-card" style="border-left-color:#16a34a;">
+                        <div class="label">Estimated Home</div>
+                        <div class="value" style="font-size:1rem;">{mv["home_district"] or "N/A"}</div>
+                        <div style="font-size:0.75rem;color:#94a3b8;">Night activity</div>
+                    </div>''', unsafe_allow_html=True)
+                with mv3:
+                    st.markdown(f'''<div class="stat-card" style="border-left-color:#f59e0b;">
+                        <div class="label">Estimated Work</div>
+                        <div class="value" style="font-size:1rem;">{mv["work_district"] or "N/A"}</div>
+                        <div style="font-size:0.75rem;color:#94a3b8;">Daytime activity</div>
+                    </div>''', unsafe_allow_html=True)
+                with mv4:
+                    gap_color = "#dc2626" if mv["gaps"] else "#16a34a"
+                    st.markdown(f'''<div class="stat-card" style="border-left-color:{gap_color};">
+                        <div class="label">Network Gaps</div>
+                        <div class="value" style="color:{gap_color};">{len(mv["gaps"])}</div>
+                        <div style="font-size:0.75rem;color:#94a3b8;">&gt;4 days offline</div>
+                    </div>''', unsafe_allow_html=True)
+                with mv5:
+                    st.markdown(f'''<div class="stat-card" style="border-left-color:#7c3aed;">
+                        <div class="label">Out-of-Home Trips</div>
+                        <div class="value" style="color:#7c3aed;">{len(mv["trips"])}</div>
+                        <div style="font-size:0.75rem;color:#94a3b8;">{mv["out_of_home_days"]} days total</div>
+                    </div>''', unsafe_allow_html=True)
+
+                st.markdown("")
+
+                # Trips
+                if mv['trips']:
+                    st.markdown("""<div style="background:#fffbeb; border-left:4px solid #f59e0b;
+                        border-radius:8px; padding:0.75rem 1.25rem; color:#92400e; margin-bottom:0.75rem;">
+                        ⚠️ <strong>Out-of-Home District Travel Detected</strong></div>""",
+                        unsafe_allow_html=True)
+                    trip_df = pd.DataFrame([{
+                        'District': t['district'],
+                        'From': t['start_date'], 'To': t['end_date'],
+                        'Days': t['days'],
+                        'BTS Location': "; ".join(str(a)[:50] for a in t['addresses'][:2])
+                    } for t in mv['trips']])
+                    st.dataframe(trip_df, use_container_width=True, hide_index=True)
+                else:
+                    st.success("✅ No out-of-home-district travel detected.")
+
+                # Network gaps
+                if mv['gaps']:
+                    st.markdown("""<div style="font-weight:700; color:#dc2626; margin-top:1rem;">
+                        📵 Network Disconnection Periods (>4 Days)</div>""", unsafe_allow_html=True)
+                    gap_df = pd.DataFrame([{
+                        'Last Seen': g['gap_start'],
+                        'Next Seen': g['gap_end'],
+                        'Gap Duration (days)': g['days']
+                    } for g in mv['gaps']])
+                    st.dataframe(gap_df, use_container_width=True, hide_index=True)
+                else:
+                    st.success("✅ No network disconnection gaps (>4 days) detected.")
+            else:
+                st.info("Location data insufficient for movement analysis.")
+
+        # ── 7. Last 10 Days Analysis ──
         with st.expander("📅 Last 10 Days Activity", expanded=True):
             ld1, ld2 = st.columns(2)
             with ld1:
