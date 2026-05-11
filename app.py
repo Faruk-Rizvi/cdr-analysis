@@ -819,16 +819,25 @@ def top_sms_contacts(df, direction='out', n=5):
         return pd.DataFrame()
 
     def is_real_mobile(val):
+        """
+        Strict Bangladesh mobile number filter.
+        Valid formats:
+          - 8801XXXXXXXXX  → 13 digits, starts with 8801
+          - 01XXXXXXXXX    → 11 digits, starts with 01
+          - 1XXXXXXXXX     → 10 digits, starts with 1 (bare BD number)
+        All other patterns (service codes, intl shortcodes) are excluded.
+        """
         s = str(val).strip()
         if not s.isdigit():
             return False
-        # Bangladesh mobile: 8801XXXXXXXXX (13 digits) or 01XXXXXXXXX (11 digits)
-        if s.startswith('8801') and len(s) == 13:
+        # 13 digits: must start with 8801
+        if len(s) == 13 and s.startswith('8801'):
             return True
-        if s.startswith('01') and len(s) == 11:
+        # 11 digits: must start with 01
+        if len(s) == 11 and s.startswith('01'):
             return True
-        # International mobile: 10-15 digits, NOT starting with 0 or 88 (with non-1 third digit)
-        if 10 <= len(s) <= 15 and not s.startswith('0') and not s.startswith('880'):
+        # 10 digits: must start with 1 (bare Bangladesh number)
+        if len(s) == 10 and s.startswith('1'):
             return True
         return False
 
@@ -1355,6 +1364,113 @@ def _movement_html(mv):
     return cards_html + trips_html + gaps_html
 
 
+
+def imsi_change_analysis(df):
+    """
+    Track IMSI changes over time.
+    Only considers IMSI numbers starting with '470' (Bangladesh).
+    Returns list of {imsi, from_date, to_date, days, records} or None.
+    """
+    if 'imsi' not in df.columns or 'start' not in df.columns:
+        return None
+
+    # Filter valid Bangladesh IMSI (starts with 470)
+    df_imsi = df[
+        df['imsi'].notna() &
+        df['imsi'].astype(str).str.strip().str.startswith('470')
+    ].copy()
+
+    if df_imsi.empty:
+        return None
+
+    unique_imsi = df_imsi['imsi'].astype(str).str.strip().unique()
+    if len(unique_imsi) <= 1:
+        return None   # Only one IMSI — no change
+
+    # Sort by time and detect transitions
+    df_imsi = df_imsi.sort_values('start').reset_index(drop=True)
+    df_imsi['imsi_clean'] = df_imsi['imsi'].astype(str).str.strip()
+
+    periods = []
+    current_imsi  = df_imsi.iloc[0]['imsi_clean']
+    period_start  = df_imsi.iloc[0]['start']
+    period_end    = df_imsi.iloc[0]['start']
+    period_count  = 1
+
+    for _, row in df_imsi.iloc[1:].iterrows():
+        imsi = row['imsi_clean']
+        ts   = row['start']
+        if imsi == current_imsi:
+            period_end  = ts
+            period_count += 1
+        else:
+            # IMSI changed
+            days = max(1, (period_end - period_start).days + 1)
+            periods.append({
+                'IMSI':        current_imsi,
+                'From':        str(period_start)[:19],
+                'To':          str(period_end)[:19],
+                'Days Active': days,
+                'Records':     period_count,
+            })
+            current_imsi = imsi
+            period_start = ts
+            period_end   = ts
+            period_count = 1
+
+    # Last period
+    days = max(1, (period_end - period_start).days + 1)
+    periods.append({
+        'IMSI':        current_imsi,
+        'From':        str(period_start)[:19],
+        'To':          str(period_end)[:19],
+        'Days Active': days,
+        'Records':     period_count,
+    })
+
+    return periods if len(periods) > 1 else None
+
+
+def _imsi_change_html(df):
+    """Generate HTML section for IMSI change tracking."""
+    periods = imsi_change_analysis(df)
+    if not periods:
+        return ''   # No change — skip section entirely
+
+    rows = ''.join([
+        f"""<tr style="background:{'#f8fafc' if i%2==0 else 'white'};">
+            <td style="padding:0.7rem 1rem; font-family:monospace; font-weight:600;">{p['IMSI']}</td>
+            <td style="padding:0.7rem 1rem;">{p['From']}</td>
+            <td style="padding:0.7rem 1rem;">{p['To']}</td>
+            <td style="padding:0.7rem 1rem; text-align:center;">
+                <span style="background:#dbeafe; color:#1e40af; border-radius:12px;
+                             padding:0.2rem 0.7rem; font-weight:700;">{p['Days Active']}</span>
+            </td>
+            <td style="padding:0.7rem 1rem; text-align:center;">{p['Records']}</td>
+        </tr>"""
+        for i, p in enumerate(periods)
+    ])
+
+    return f"""
+    <h2>2a. IMSI Change Analysis</h2>
+    <div style="background:#fef3c7; border-left:4px solid #f59e0b; border-radius:8px;
+                padding:0.75rem 1.25rem; margin-bottom:1rem; color:#92400e;">
+        <strong>Multiple IMSI Detected!</strong> This SIM was used in {len(periods)} different
+        IMSI periods — indicating possible SIM swap or dual-SIM activity.
+    </div>
+    <table style="width:100%; border-collapse:collapse; border:1px solid #e2e8f0; border-radius:10px; overflow:hidden;">
+        <thead>
+            <tr style="background:#1e3a8a; color:white;">
+                <th style="padding:0.7rem 1rem; text-align:left;">IMSI Number</th>
+                <th style="padding:0.7rem 1rem; text-align:left;">Active From</th>
+                <th style="padding:0.7rem 1rem; text-align:left;">Active To</th>
+                <th style="padding:0.7rem 1rem; text-align:center;">Days</th>
+                <th style="padding:0.7rem 1rem; text-align:center;">Records</th>
+            </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+    </table>"""
+
 def _target_number_html(df, target_number):
     if not target_number:
         return ''
@@ -1404,6 +1520,7 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
     <tr><td>IMEI</td><td>{', '.join(str(i) for i in imei) if imei else 'N/A'}</td></tr>
     <tr><td>IMSI</td><td>{', '.join(str(i) for i in imsi) if imsi else 'N/A'}</td></tr>
     <tr><td>Phone Number</td><td>{phone}</td></tr></table>
+    {_imsi_change_html(df)}
     <h2>7. Call Analysis</h2>
     <h3>7.1 Call Analysis Summary</h3>{df_to_html(call_summary(df))}
     <h2>8. Call Count Analysis</h2>
@@ -1417,10 +1534,8 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
     <h3>9.1 Contact Summary</h3>{df_to_html(contact_summary(df))}
     <h3>9.2 Top 10 Frequent Outgoing</h3>{df_to_html(top_contacts(df,'out',10))}
     <h3>9.3 Top 10 Frequent Incoming</h3>{df_to_html(top_contacts(df,'in',10))}
-    <h3>9.4 Frequent Call Graph</h3>{fig_to_html_img(plot_contacts(df,'out',10,'Top 10 Outgoing Contacts'))}
     <h3>9.5 Top 10 Lengthy Outgoing</h3>{df_to_html(top_lengthy(df,'out',10))}
     <h3>9.6 Top 10 Lengthy Incoming</h3>{df_to_html(top_lengthy(df,'in',10))}
-    <h3>9.7 Lengthy Call Graph</h3>{fig_to_html_img(plot_contacts(df,'out',10,'Top 10 Lengthy Contacts'))}
     <h2>10. Location Analysis</h2>
     <h3>10.1 Location Summary</h3>{df_to_html(location_summary(df))}
     <h3>10.2 Top 10 Frequent Locations</h3>{df_to_html(top_locations(df,None,10))}
@@ -1561,6 +1676,16 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
     work_mask    = (df['start'].dt.hour.astype(int)>=8)&(df['start'].dt.hour.astype(int)<18)       if 'start' in df.columns else None
     weekend_mask = df['start'].dt.dayofweek.astype(int).isin([4,5])                               if 'start' in df.columns else None
 
+    # IMSI Change section
+    imsi_periods = imsi_change_analysis(df)
+    if imsi_periods:
+        add_h('2a. IMSI Change Analysis')
+        doc.add_paragraph(
+            f'Multiple IMSI Detected! This SIM was used in {len(imsi_periods)} '
+            f'different IMSI periods — indicating possible SIM swap or dual-SIM activity.'
+        )
+        add_df_table(pd.DataFrame(imsi_periods))
+
     add_h('7. Call Analysis'); add_h('7.1 Call Analysis Summary',2); add_df_table(call_summary(df))
     add_h('8. Call Count Analysis')
     add_h('8.1 Daily Call Count',2);      add_df_table(daily_call_count(df))
@@ -1573,10 +1698,8 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
     add_h('9.1 Contact Summary',2);       add_df_table(contact_summary(df))
     add_h('9.2 Top 10 Outgoing',2);       add_df_table(top_contacts(df,'out',10))
     add_h('9.3 Top 10 Incoming',2);       add_df_table(top_contacts(df,'in',10))
-    add_h('9.4 Frequent Call Graph',2);   add_fig(plot_contacts(df,'out',10,'Top 10 Outgoing'))
     add_h('9.5 Lengthy Outgoing',2);      add_df_table(top_lengthy(df,'out',10))
     add_h('9.6 Lengthy Incoming',2);      add_df_table(top_lengthy(df,'in',10))
-    add_h('9.7 Lengthy Call Graph',2);    add_fig(plot_contacts(df,'out',10,'Top 10 Lengthy'))
     add_h('10. Location Analysis')
     add_h('10.1 Location Summary',2);     add_df_table(location_summary(df))
     add_h('10.2 Frequent Locations',2);   add_df_table(top_locations(df,None,10))
@@ -1993,6 +2116,20 @@ def main():
             for i, (col_st, row) in enumerate(zip([ca1, ca2, ca3, ca4], cs.itertuples())):
                 with col_st:
                     st.markdown(f'<div class="stat-card"><div class="label">{row.Metric}</div><div class="value">{row.Value:,}</div></div>', unsafe_allow_html=True)
+
+            st.markdown("<hr style='margin:1rem 0; border-color:#f1f5f9;'>", unsafe_allow_html=True)
+
+            # IMSI Change Detection
+            imsi_periods = imsi_change_analysis(df)
+            if imsi_periods:
+                st.markdown("""
+                <div style="background:#fef3c7; border-left:4px solid #f59e0b;
+                            border-radius:8px; padding:0.75rem 1.25rem; margin-bottom:0.75rem; color:#92400e;">
+                    <strong>Multiple IMSI Detected!</strong>
+                    Possible SIM swap or dual-SIM activity found.
+                </div>""", unsafe_allow_html=True)
+                imsi_df = pd.DataFrame(imsi_periods)
+                st.dataframe(imsi_df, use_container_width=True, hide_index=True)
 
             st.markdown("<hr style='margin:1rem 0; border-color:#f1f5f9;'>", unsafe_allow_html=True)
             st.markdown("""
