@@ -765,12 +765,16 @@ def top_lengthy(df, direction='out', n=10):
     if len(sub)==0: return pd.DataFrame()
     gcol = 'party_b_norm' if 'party_b_norm' in sub.columns else 'party_b_clean'
     g = sub.groupby(gcol).agg(
-        Total_Duration=('duration','sum'), Total_Calls=('duration','count')
-    ).sort_values('Total_Duration', ascending=False).head(n)
+        Duration_Sec=('duration','sum'), Total_Calls=('duration','count')
+    ).sort_values('Duration_Sec', ascending=False).head(n)
     td = sub['duration'].sum()
-    g['Pct_CallTime'] = (g['Total_Duration']/td*100).round(2) if td>0 else 0
+    g['Duration (min)'] = (g['Duration_Sec'] / 60).round(2)
+    g['% of Call Time'] = (g['Duration_Sec']/td*100).round(2) if td>0 else 0
+    g = g.drop(columns=['Duration_Sec'])
     g = g.reset_index().rename(columns={gcol:'Party B'})
     g['Party B'] = g['Party B'].apply(display_number)
+    # Reorder columns
+    g = g[['Party B', 'Total_Calls', 'Duration (min)', '% of Call Time']]
     return g
 
 def top_locations(df, mask=None, n=10):
@@ -1496,8 +1500,17 @@ def _target_number_html(df, target_number):
     {df_to_html(table_df)}'''
 
 def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None):
-    imei = sorted(df['imei'].dropna().unique().tolist()) if 'imei' in df.columns else []
-    imsi = sorted(df['imsi'].dropna().unique().tolist()) if 'imsi' in df.columns else []
+    import re as _re_html
+    def _clean_id(series):
+        result = []
+        for val in series.dropna().unique():
+            digits = _re_html.sub(r'[^0-9]', '', str(val).strip())
+            if len(digits) >= 10:
+                result.append(digits)
+        return sorted(set(result))
+
+    imei = _clean_id(df['imei']) if 'imei' in df.columns else []
+    imsi = _clean_id(df['imsi']) if 'imsi' in df.columns else []
 
     home_mask    = df['start'].dt.hour.astype(int).isin(list(range(0,6))+list(range(22,24))) if 'start' in df.columns else None
     work_mask    = (df['start'].dt.hour.astype(int)>=8)&(df['start'].dt.hour.astype(int)<18)       if 'start' in df.columns else None
@@ -1521,6 +1534,14 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
     <tr><td>IMSI</td><td>{', '.join(str(i) for i in imsi) if imsi else 'N/A'}</td></tr>
     <tr><td>Phone Number</td><td>{phone}</td></tr></table>
     {_imsi_change_html(df)}
+    <h2>3. Suspect Information</h2>
+    <p>N/A</p>
+    <h2>4. Case Information</h2>
+    <p>N/A</p>
+    <h2>5. Investigation Authority</h2>
+    <p>N/A</p>
+    <h2>6. Analysis Duration</h2>
+    <p>{date_range}</p>
     <h2>7. Call Analysis</h2>
     <h3>7.1 Call Analysis Summary</h3>{df_to_html(call_summary(df))}
     <h2>8. Call Count Analysis</h2>
@@ -1657,8 +1678,17 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
         tbl.rows[i].cells[1].paragraphs[0].runs[0].font.size=Pt(9)
     doc.add_paragraph()
 
-    imei=sorted(df['imei'].dropna().unique().tolist()) if 'imei' in df.columns else []
-    imsi=sorted(df['imsi'].dropna().unique().tolist()) if 'imsi' in df.columns else []
+    def _clean_id_list_d(series):
+        import re as _re2
+        result = []
+        for val in series.dropna().unique():
+            s = str(val).strip()
+            digits = _re2.sub(r'[^0-9]', '', s)
+            if len(digits) >= 10:
+                result.append(digits)
+        return sorted(set(result))
+    imei=_clean_id_list_d(df['imei']) if 'imei' in df.columns else []
+    imsi=_clean_id_list_d(df['imsi']) if 'imsi' in df.columns else []
     add_h('2. Device Information')
     dev=[('IMEI',', '.join(str(i) for i in imei) if imei else 'N/A'),
          ('IMSI',', '.join(str(i) for i in imsi) if imsi else 'N/A'),
@@ -2081,8 +2111,17 @@ def main():
 
         # ── 1. Device Info + Call Summary ──
         with st.expander("📊 Device Information & Call Analysis Summary", expanded=True):
-            imei_list = sorted(df["imei"].dropna().unique().tolist()) if "imei" in df.columns else []
-            imsi_list = sorted(df["imsi"].dropna().unique().tolist()) if "imsi" in df.columns else []
+            import re as _re_ui
+            def _clean_ids(col):
+                result = []
+                for val in df[col].dropna().unique():
+                    s = str(val).strip()
+                    digits = _re_ui.sub(r'[^0-9]', '', s)
+                    if len(digits) >= 10:
+                        result.append(digits)
+                return sorted(set(result))
+            imei_list = _clean_ids("imei") if "imei" in df.columns else []
+            imsi_list = _clean_ids("imsi") if "imsi" in df.columns else []
 
             st.markdown("""
             <div style="font-size:0.9rem; font-weight:700; color:#475569;
