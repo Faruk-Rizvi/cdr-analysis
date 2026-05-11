@@ -1480,10 +1480,10 @@ def _target_number_html(df, target_number):
         return ''
     res = specific_number_analysis(df, target_number)
     if not res:
-        return f'''<h2>13. Specific Number Analysis</h2>
+        return f'''<h2>10. Specific Number Analysis</h2>
         <div class="info-box">
         <strong>Target Number:</strong> {target_number}<br>
-        <span class="warning">⚠️ এই নম্বরের সাথে কোনো communication পাওয়া যায়নি।</span>
+        <span class="warning">No communication found with this number.</span>
         </div>'''
     table_df = pd.DataFrame({
         'Metric': ['Target Number','Outgoing Calls (MOC)','Incoming Calls (MTC)',
@@ -1496,7 +1496,7 @@ def _target_number_html(df, target_number):
                    res['first_contact'], res['last_contact']]
     })
     return f'''<h2>13. Specific Number Analysis</h2>
-    <p>এই section-এ <strong>{target_number}</strong> নম্বরের সাথে subscriber-এর সকল communication-এর সারসংক্ষেপ।</p>
+    <p>Communication summary between the subscriber and <strong>{target_number}</strong>.</p>
     {df_to_html(table_df)}'''
 
 def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None):
@@ -1534,57 +1534,49 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
     <tr><td>IMSI</td><td>{', '.join(str(i) for i in imsi) if imsi else 'N/A'}</td></tr>
     <tr><td>Phone Number</td><td>{phone}</td></tr></table>
     {_imsi_change_html(df)}
-    <h2>3. Suspect Information</h2>
-    <p>N/A</p>
-    <h2>4. Case Information</h2>
-    <p>N/A</p>
-    <h2>5. Investigation Authority</h2>
-    <p>N/A</p>
-    <h2>6. Analysis Duration</h2>
-    <p>{date_range}</p>
-    <h2>7. Call Analysis</h2>
-    <h3>7.1 Call Analysis Summary</h3>{df_to_html(call_summary(df))}
-    <h2>8. Call Count Analysis</h2>
-    <h3>8.1 Daily Call Count</h3>{df_to_html(daily_call_count(df))}
-    <h3>8.2 Hourly Call Count Graph</h3>{fig_to_html_img(plot_hourly(df))}
-    <h3>8.3 Weekly Call Count</h3>{df_to_html(weekly_call_count(df))}
-    <h3>8.3a Weekly Graph</h3>{fig_to_html_img(plot_weekly(df))}
-    <h3>8.4 Monthly Call Count</h3>{df_to_html(monthly_call_count(df))}
-    <h3>8.4a Monthly Graph</h3>{fig_to_html_img(plot_monthly(df))}
-    <h2>9. Contact Analysis</h2>
-    <h3>9.1 Contact Summary</h3>{df_to_html(contact_summary(df))}
-    <h3>9.2 Top 10 Frequent Outgoing</h3>{df_to_html(top_contacts(df,'out',10))}
-    <h3>9.3 Top 10 Frequent Incoming</h3>{df_to_html(top_contacts(df,'in',10))}
-    <h3>9.5 Top 10 Lengthy Outgoing</h3>{df_to_html(top_lengthy(df,'out',10))}
-    <h3>9.6 Top 10 Lengthy Incoming</h3>{df_to_html(top_lengthy(df,'in',10))}
-    <h2>10. Location Analysis</h2>
-    <h3>10.1 Location Summary</h3>{df_to_html(location_summary(df))}
-    <h3>10.2 Top 10 Frequent Locations</h3>{df_to_html(top_locations(df,None,10))}
-    <h3>10.3 Frequent Locations Graph</h3>{fig_to_html_img(plot_locations(df,None,'Frequent Locations'))}
-    <h3>10.4 Possible Home Locations</h3>{df_to_html(top_locations(df,home_mask,10))}
-    <h3>10.5 Home Locations Graph</h3>{fig_to_html_img(plot_locations(df,home_mask,'Home Locations'))}
-    <h3>10.5 Possible Work Locations</h3>{df_to_html(top_locations(df,work_mask,10))}
-    <h3>10.6 Work Locations Graph</h3>{fig_to_html_img(plot_locations(df,work_mask,'Work Locations'))}
-    <h3>10.5 Possible Weekend Locations</h3>{df_to_html(top_locations(df,weekend_mask,10))}
-    <h3>10.6 Weekend Locations Graph</h3>{fig_to_html_img(plot_locations(df,weekend_mask,'Weekend Locations'))}
+    <h2>3. Call Analysis</h2>
+    <h3>3.1 Call Analysis Summary</h3>{df_to_html(call_summary(df))}
+    <h2>4. Call Count Analysis</h2>
+    <h3>4.1 Daily Call Count</h3>{df_to_html(daily_call_count(df))}
+    <h3>4.2 Hourly Call Count Graph</h3>{fig_to_html_img(plot_hourly(df))}
+    <h3>4.3 Weekly Call Count</h3>{df_to_html(weekly_call_count(df))}
+    <h3>4.3a Weekly Graph</h3>{fig_to_html_img(plot_weekly(df))}
+    <h3>4.4 Monthly Call Count</h3>{df_to_html(monthly_call_count(df))}
+    <h3>4.4a Monthly Graph</h3>{fig_to_html_img(plot_monthly(df))}
+    <h2>5. Contact Analysis</h2>
+    <h3>5.1 Contact Summary</h3>{df_to_html(contact_summary(df))}
+    <h3>5.2 Top 10 Frequent Outgoing</h3>{df_to_html(top_contacts(df,'out',10))}
+    <h3>5.3 Top 10 Frequent Incoming</h3>{df_to_html(top_contacts(df,'in',10))}
+    <h3>5.4 Top 10 Lengthy Outgoing</h3>{df_to_html(top_lengthy(df,'out',10))}
+    <h3>5.5 Top 10 Lengthy Incoming</h3>{df_to_html(top_lengthy(df,'in',10))}
+    <h2>6. Location Analysis</h2>
+    <h3>6.1 Location Summary</h3>{df_to_html(location_summary(df))}
+    <h3>6.2 Top 10 Frequent Locations</h3>{df_to_html(top_locations(df,None,10))}
+    <h3>6.3 Frequent Locations Graph</h3>{fig_to_html_img(plot_locations(df,None,'Frequent Locations'))}
+    <h3>6.4 Possible Home Locations</h3>{df_to_html(top_locations(df,home_mask,10))}
+    <h3>6.5 Home Locations Graph</h3>{fig_to_html_img(plot_locations(df,home_mask,'Home Locations'))}
+    <h3>6.6 Possible Work Locations</h3>{df_to_html(top_locations(df,work_mask,10))}
+    <h3>6.7 Work Locations Graph</h3>{fig_to_html_img(plot_locations(df,work_mask,'Work Locations'))}
+    <h3>6.8 Possible Weekend Locations</h3>{df_to_html(top_locations(df,weekend_mask,10))}
+    <h3>6.9 Weekend Locations Graph</h3>{fig_to_html_img(plot_locations(df,weekend_mask,'Weekend Locations'))}
 
-    <h2>11. SMS Contact Analysis</h2>
-    <h3>11.1 Top 5 Sent SMS Contacts</h3>{df_to_html(top_sms_contacts(df,'out',5))}
-    <h3>11.2 Top 5 Received SMS Contacts</h3>{df_to_html(top_sms_contacts(df,'in',5))}
+    <h2>7. SMS Contact Analysis</h2>
+    <h3>7.1 Top 5 Sent SMS Contacts</h3>{df_to_html(top_sms_contacts(df,'out',5))}
+    <h3>7.2 Top 5 Received SMS Contacts</h3>{df_to_html(top_sms_contacts(df,'in',5))}
 
-    <h2>12. Last 10 Days Analysis</h2>
-    <h3>12.1 Top Contacts in Last 10 Days (MOC + MTC)</h3>{df_to_html(last_n_days_top_contacts(df, 10, 10))}
-    <h3>12.2 Top Locations in Last 10 Days</h3>{df_to_html(last_n_days_top_locations(df, 10, 10))}
+    <h2>8. Last 10 Days Analysis</h2>
+    <h3>8.1 Top Contacts in Last 10 Days (MOC + MTC)</h3>{df_to_html(last_n_days_top_contacts(df, 10, 10))}
+    <h3>8.2 Top Locations in Last 10 Days</h3>{df_to_html(last_n_days_top_locations(df, 10, 10))}
 
 
-    <h2>13. Movement Pattern Analysis</h2>
+    <h2>9. Movement Pattern Analysis</h2>
     <p>Analysis of movement outside estimated home/work district and network disconnection periods.</p>
     {_movement_html(movement_pattern_analysis(df))}
 
     {_target_number_html(df, target_number)}
 
-    <h2>Overall Comment</h2><p>N/A</p>
-    <h2>Recommendation</h2><p>N/A</p>
+    <h2>10. Overall Comment</h2><p>N/A</p>
+    <h2>11. Recommendation</h2><p>N/A</p>
     <hr><p style="text-align:center;color:gray;font-size:11px;">
     Report generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | CDR Analysis Tool v1.0</p>
     </body></html>"""
@@ -1716,43 +1708,43 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
         )
         add_df_table(pd.DataFrame(imsi_periods))
 
-    add_h('7. Call Analysis'); add_h('7.1 Call Analysis Summary',2); add_df_table(call_summary(df))
-    add_h('8. Call Count Analysis')
-    add_h('8.1 Daily Call Count',2);      add_df_table(daily_call_count(df))
-    add_h('8.2 Hourly Graph',2);          add_fig(plot_hourly(df))
-    add_h('8.3 Weekly Call Count',2);     add_df_table(weekly_call_count(df))
-    add_h('8.3a Weekly Graph',2);         add_fig(plot_weekly(df))
-    add_h('8.4 Monthly Call Count',2);    add_df_table(monthly_call_count(df))
-    add_h('8.4a Monthly Graph',2);        add_fig(plot_monthly(df))
-    add_h('9. Contact Analysis')
-    add_h('9.1 Contact Summary',2);       add_df_table(contact_summary(df))
-    add_h('9.2 Top 10 Outgoing',2);       add_df_table(top_contacts(df,'out',10))
-    add_h('9.3 Top 10 Incoming',2);       add_df_table(top_contacts(df,'in',10))
-    add_h('9.5 Lengthy Outgoing',2);      add_df_table(top_lengthy(df,'out',10))
-    add_h('9.6 Lengthy Incoming',2);      add_df_table(top_lengthy(df,'in',10))
-    add_h('10. Location Analysis')
-    add_h('10.1 Location Summary',2);     add_df_table(location_summary(df))
-    add_h('10.2 Frequent Locations',2);   add_df_table(top_locations(df,None,10))
-    add_h('10.3 Locations Graph',2);      add_fig(plot_locations(df,None,'Frequent Locations'))
-    add_h('10.4 Home Locations',2);       add_df_table(top_locations(df,home_mask,10))
-    add_h('10.5 Home Graph',2);           add_fig(plot_locations(df,home_mask,'Home Locations'))
-    add_h('10.5 Work Locations',2);       add_df_table(top_locations(df,work_mask,10))
-    add_h('10.6 Work Graph',2);           add_fig(plot_locations(df,work_mask,'Work Locations'))
-    add_h('10.5 Weekend Locations',2);    add_df_table(top_locations(df,weekend_mask,10))
-    add_h('10.6 Weekend Graph',2);        add_fig(plot_locations(df,weekend_mask,'Weekend Locations'))
+    add_h('3. Call Analysis'); add_h('3.1 Call Analysis Summary',2); add_df_table(call_summary(df))
+    add_h('4. Call Count Analysis')
+    add_h('4.1 Daily Call Count',2);      add_df_table(daily_call_count(df))
+    add_h('4.2 Hourly Graph',2);          add_fig(plot_hourly(df))
+    add_h('4.3 Weekly Call Count',2);     add_df_table(weekly_call_count(df))
+    add_h('4.3a Weekly Graph',2);         add_fig(plot_weekly(df))
+    add_h('4.4 Monthly Call Count',2);    add_df_table(monthly_call_count(df))
+    add_h('4.4a Monthly Graph',2);        add_fig(plot_monthly(df))
+    add_h('5. Contact Analysis')
+    add_h('5.1 Contact Summary',2);       add_df_table(contact_summary(df))
+    add_h('5.2 Top 10 Outgoing',2);       add_df_table(top_contacts(df,'out',10))
+    add_h('5.3 Top 10 Incoming',2);       add_df_table(top_contacts(df,'in',10))
+    add_h('5.4 Lengthy Outgoing',2);      add_df_table(top_lengthy(df,'out',10))
+    add_h('5.5 Lengthy Incoming',2);      add_df_table(top_lengthy(df,'in',10))
+    add_h('6. Location Analysis')
+    add_h('6.1 Location Summary',2);     add_df_table(location_summary(df))
+    add_h('6.2 Frequent Locations',2);   add_df_table(top_locations(df,None,10))
+    add_h('6.3 Locations Graph',2);      add_fig(plot_locations(df,None,'Frequent Locations'))
+    add_h('6.4 Home Locations',2);       add_df_table(top_locations(df,home_mask,10))
+    add_h('6.5 Home Graph',2);           add_fig(plot_locations(df,home_mask,'Home Locations'))
+    add_h('6.6 Work Locations',2);       add_df_table(top_locations(df,work_mask,10))
+    add_h('6.7 Work Graph',2);           add_fig(plot_locations(df,work_mask,'Work Locations'))
+    add_h('6.8 Weekend Locations',2);    add_df_table(top_locations(df,weekend_mask,10))
+    add_h('6.9 Weekend Graph',2);        add_fig(plot_locations(df,weekend_mask,'Weekend Locations'))
 
-    add_h('11. SMS Contact Analysis')
-    add_h('11.1 Top 5 Sent SMS Contacts',2);     add_df_table(top_sms_contacts(df,'out',5))
-    add_h('11.2 Top 5 Received SMS Contacts',2); add_df_table(top_sms_contacts(df,'in',5))
+    add_h('7. SMS Contact Analysis')
+    add_h('7.1 Top 5 Sent SMS Contacts',2);     add_df_table(top_sms_contacts(df,'out',5))
+    add_h('7.2 Top 5 Received SMS Contacts',2); add_df_table(top_sms_contacts(df,'in',5))
 
-    add_h('12. Last 10 Days Analysis')
-    add_h('12.1 Top Contacts in Last 10 Days (MOC + MTC)',2)
+    add_h('8. Last 10 Days Analysis')
+    add_h('8.1 Top Contacts in Last 10 Days (MOC + MTC)',2)
     add_df_table(last_n_days_top_contacts(df, 10, 10))
-    add_h('12.2 Top Locations in Last 10 Days',2)
+    add_h('8.2 Top Locations in Last 10 Days',2)
     add_df_table(last_n_days_top_locations(df, 10, 10))
 
     # Movement Pattern section
-    add_h('13. Movement Pattern Analysis')
+    add_h('9. Movement Pattern Analysis')
     mv = movement_pattern_analysis(df)
     if mv:
         mv_summary = pd.DataFrame({
@@ -1782,13 +1774,13 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
         doc.add_paragraph('Insufficient location data for movement analysis.')
 
     if target_number:
-        add_h('14. Specific Number Analysis')
+        add_h('10. Specific Number Analysis')
         res = specific_number_analysis(df, target_number)
         if res is None:
             doc.add_paragraph(f'Target Number: {target_number}')
-            doc.add_paragraph('⚠️ এই নম্বরের সাথে কোনো communication পাওয়া যায়নি।')
+            doc.add_paragraph(f'No communication found with target number: {target_number}.')
         else:
-            doc.add_paragraph(f'এই section-এ {target_number} নম্বরের সাথে subscriber-এর সকল communication-এর সারসংক্ষেপ।')
+            doc.add_paragraph(f'Communication summary between the subscriber and {target_number}.')
             target_df = pd.DataFrame({
                 'Metric': ['Target Number','Outgoing Calls (MOC)','Incoming Calls (MTC)',
                            'Total Calls','Total Call Duration (sec)','Total Call Duration (min)',
@@ -1801,8 +1793,8 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
             })
             add_df_table(target_df)
 
-    add_h('Overall Comment');             doc.add_paragraph('N/A')
-    add_h('Recommendation');              doc.add_paragraph('N/A')
+    add_h('11. Overall Comment');          doc.add_paragraph('N/A')
+    add_h('12. Recommendation');           doc.add_paragraph('N/A')
 
     fp=doc.add_paragraph(f'Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} | CDR Analysis Tool v1.0')
     fp.alignment=WD_ALIGN_PARAGRAPH.CENTER
@@ -2216,11 +2208,7 @@ def main():
                     📤 Outgoing — Longest Call Duration</div>""", unsafe_allow_html=True)
                 lo_df = top_lengthy(df, 'out', 10)
                 if not lo_df.empty:
-                    lo_df['Duration (min)'] = (lo_df['Total_Duration'] / 60).round(1)
-                    st.dataframe(
-                        lo_df[['Party B','Total_Calls','Duration (min)','Pct_CallTime']].rename(
-                            columns={'Total_Calls':'Calls','Pct_CallTime':'% of Time'}),
-                        use_container_width=True, hide_index=True)
+                    st.dataframe(lo_df, use_container_width=True, hide_index=True)
                 else:
                     st.info("No outgoing call duration data available.")
             with d2:
@@ -2228,11 +2216,7 @@ def main():
                     📥 Incoming — Longest Call Duration</div>""", unsafe_allow_html=True)
                 li_df = top_lengthy(df, 'in', 10)
                 if not li_df.empty:
-                    li_df['Duration (min)'] = (li_df['Total_Duration'] / 60).round(1)
-                    st.dataframe(
-                        li_df[['Party B','Total_Calls','Duration (min)','Pct_CallTime']].rename(
-                            columns={'Total_Calls':'Calls','Pct_CallTime':'% of Time'}),
-                        use_container_width=True, hide_index=True)
+                    st.dataframe(li_df, use_container_width=True, hide_index=True)
                 else:
                     st.info("No incoming call duration data available.")
 
@@ -2405,7 +2389,7 @@ def main():
             with st.expander(f"🎯 Specific Number Analysis — {target_number}", expanded=True):
                 res = specific_number_analysis(df, target_number)
                 if res is None:
-                    st.warning(f"⚠️ No communication found with **{target_number}** in this CDR.")
+                    st.warning(f"No communication found with {target_number} in this CDR.")
                 else:
                     sn1, sn2, sn3, sn4 = st.columns(4)
                     with sn1:
