@@ -741,10 +741,10 @@ def contact_summary(df):
                    'Most Called Outgoing','Most Received Incoming',
                    'Most Total Call Time'],
         'Value':  [d['party_b_norm'].nunique() if 'party_b_norm' in d.columns else d['party_b_clean'].nunique(),
-                   f"{mc_all.index[0]}, {mc_all.iloc[0]} times" if not mc_all.empty else 'N/A',
-                   f"{mc_out.index[0]}, {mc_out.iloc[0]} times" if not mc_out.empty else 'N/A',
-                   f"{mc_in.index[0]},  {mc_in.iloc[0]} times"  if not mc_in.empty  else 'N/A',
-                   f"{dur.idxmax()}, {round(dur.max()/60,1)} min" if not dur.empty else 'N/A']
+                   f"{display_number(mc_all.index[0])}, {mc_all.iloc[0]} times" if not mc_all.empty else 'N/A',
+                   f"{display_number(mc_out.index[0])}, {mc_out.iloc[0]} times" if not mc_out.empty else 'N/A',
+                   f"{display_number(mc_in.index[0])}, {mc_in.iloc[0]} times"   if not mc_in.empty  else 'N/A',
+                   f"{display_number(dur.idxmax())}, {round(dur.max()/60,1)} min" if not dur.empty else 'N/A']
     })
 
 def top_contacts(df, direction='out', n=10):
@@ -1475,6 +1475,111 @@ def _imsi_change_html(df):
         <tbody>{rows}</tbody>
     </table>"""
 
+
+def imei_change_analysis(df):
+    """
+    Track IMEI changes over time.
+    Only considers IMEI numbers with more than 8 digits.
+    Returns list of {imei, from_date, to_date, days, records} or None.
+    """
+    if 'imei' not in df.columns or 'start' not in df.columns:
+        return None
+
+    # Filter valid IMEI (digits only, more than 8 digits)
+    df_imei = df[
+        df['imei'].notna() &
+        df['imei'].astype(str).str.strip().str.match(r'^\d{9,}$')
+    ].copy()
+
+    if df_imei.empty:
+        return None
+
+    unique_imei = df_imei['imei'].astype(str).str.strip().unique()
+    if len(unique_imei) <= 1:
+        return None   # Only one IMEI — no change
+
+    df_imei = df_imei.sort_values('start').reset_index(drop=True)
+    df_imei['imei_clean'] = df_imei['imei'].astype(str).str.strip()
+
+    periods = []
+    current_imei  = df_imei.iloc[0]['imei_clean']
+    period_start  = df_imei.iloc[0]['start']
+    period_end    = df_imei.iloc[0]['start']
+    period_count  = 1
+
+    for _, row in df_imei.iloc[1:].iterrows():
+        imei = row['imei_clean']
+        ts   = row['start']
+        if imei == current_imei:
+            period_end   = ts
+            period_count += 1
+        else:
+            days = max(1, (period_end - period_start).days + 1)
+            periods.append({
+                'IMEI':        current_imei,
+                'From':        str(period_start)[:19],
+                'To':          str(period_end)[:19],
+                'Days Active': days,
+                'Records':     period_count,
+            })
+            current_imei = imei
+            period_start = ts
+            period_end   = ts
+            period_count = 1
+
+    days = max(1, (period_end - period_start).days + 1)
+    periods.append({
+        'IMEI':        current_imei,
+        'From':        str(period_start)[:19],
+        'To':          str(period_end)[:19],
+        'Days Active': days,
+        'Records':     period_count,
+    })
+
+    return periods if len(periods) > 1 else None
+
+
+def _imei_change_html(df):
+    """Generate HTML section for IMEI change tracking (section 2b)."""
+    periods = imei_change_analysis(df)
+    if not periods:
+        return ''
+
+    rows = ''.join([
+        f"""<tr style="background:{'#f8fafc' if i%2==0 else 'white'};">
+            <td style="padding:0.7rem 1rem; font-family:monospace; font-weight:600;">{p['IMEI']}</td>
+            <td style="padding:0.7rem 1rem;">{p['From']}</td>
+            <td style="padding:0.7rem 1rem;">{p['To']}</td>
+            <td style="padding:0.7rem 1rem; text-align:center;">
+                <span style="background:#dbeafe; color:#1e40af; border-radius:12px;
+                             padding:0.2rem 0.7rem; font-weight:700;">{p['Days Active']}</span>
+            </td>
+            <td style="padding:0.7rem 1rem; text-align:center;">{p['Records']}</td>
+        </tr>"""
+        for i, p in enumerate(periods)
+    ])
+
+    return f"""
+    <h2>2b. IMEI Change Analysis</h2>
+    <div style="background:#fef3c7; border-left:4px solid #f59e0b; border-radius:8px;
+                padding:0.75rem 1.25rem; margin-bottom:1rem; color:#92400e;">
+        <strong>Multiple IMEI Detected!</strong> This number was used in {len(periods)} different
+        devices — indicating possible handset change.
+    </div>
+    <table style="width:100%; border-collapse:collapse; border:1px solid #e2e8f0;
+                  border-radius:10px; overflow:hidden;">
+        <thead>
+            <tr style="background:#1e3a8a; color:white;">
+                <th style="padding:0.7rem 1rem; text-align:left;">IMEI Number</th>
+                <th style="padding:0.7rem 1rem; text-align:left;">Active From</th>
+                <th style="padding:0.7rem 1rem; text-align:left;">Active To</th>
+                <th style="padding:0.7rem 1rem; text-align:center;">Days</th>
+                <th style="padding:0.7rem 1rem; text-align:center;">Records</th>
+            </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+    </table>"""
+
 def _target_number_html(df, target_number):
     if not target_number:
         return ''
@@ -1534,6 +1639,7 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
     <tr><td>IMSI</td><td>{', '.join(str(i) for i in imsi) if imsi else 'N/A'}</td></tr>
     <tr><td>Phone Number</td><td>{phone}</td></tr></table>
     {_imsi_change_html(df)}
+    {_imei_change_html(df)}
     <h2>3. Call Analysis</h2>
     <h3>3.1 Call Analysis Summary</h3>{df_to_html(call_summary(df))}
     <h2>4. Call Count Analysis</h2>
@@ -1707,6 +1813,16 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
             f'different IMSI periods — indicating possible SIM swap or dual-SIM activity.'
         )
         add_df_table(pd.DataFrame(imsi_periods))
+
+    # IMEI Change section
+    imei_periods = imei_change_analysis(df)
+    if imei_periods:
+        add_h('2b. IMEI Change Analysis')
+        doc.add_paragraph(
+            f'Multiple IMEI Detected! This number was used in {len(imei_periods)} '
+            f'different devices — indicating possible handset change.'
+        )
+        add_df_table(pd.DataFrame(imei_periods))
 
     add_h('3. Call Analysis'); add_h('3.1 Call Analysis Summary',2); add_df_table(call_summary(df))
     add_h('4. Call Count Analysis')
@@ -2156,11 +2272,23 @@ def main():
                 st.markdown("""
                 <div style="background:#fef3c7; border-left:4px solid #f59e0b;
                             border-radius:8px; padding:0.75rem 1.25rem; margin-bottom:0.75rem; color:#92400e;">
-                    <strong>Multiple IMSI Detected!</strong>
+                    <strong>2a. Multiple IMSI Detected!</strong>
                     Possible SIM swap or dual-SIM activity found.
                 </div>""", unsafe_allow_html=True)
                 imsi_df = pd.DataFrame(imsi_periods)
                 st.dataframe(imsi_df, use_container_width=True, hide_index=True)
+
+            # IMEI Change Detection
+            imei_periods = imei_change_analysis(df)
+            if imei_periods:
+                st.markdown("""
+                <div style="background:#ffe4e6; border-left:4px solid #f43f5e;
+                            border-radius:8px; padding:0.75rem 1.25rem; margin-bottom:0.75rem; color:#881337;">
+                    <strong>2b. Multiple IMEI Detected!</strong>
+                    Possible device/handset change found.
+                </div>""", unsafe_allow_html=True)
+                imei_df = pd.DataFrame(imei_periods)
+                st.dataframe(imei_df, use_container_width=True, hide_index=True)
 
             st.markdown("<hr style='margin:1rem 0; border-color:#f1f5f9;'>", unsafe_allow_html=True)
             st.markdown("""
