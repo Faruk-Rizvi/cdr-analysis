@@ -339,25 +339,37 @@ COLUMN_ALIASES = {
                          'start time', 'start_datetime', 'start_dttime', 'startdttime',
                          'call_datetime', 'calldatetime', 'datetime_start'],
     'operator':         ['operator', 'network', 'telco', 'carrier',
-                         'provider name', 'provider_name', 'service provider'],
+                         'provider name', 'provider_name', 'service provider',
+                         # Banglalink CDR
+                         'providername'],
     'party_a':          ['party a', 'party_a', 'a_number', 'msisdn_a', 'a-number',
                          'caller', 'originating', 'a number', 'partya', 'msisdn',
-                         'aparty', 'a party', 'a_party'],
+                         'aparty', 'a party', 'a_party',
+                         # Banglalink CDR
+                         'aparty'],
     'party_b':          ['party b', 'party_b', 'b_number', 'msisdn_b', 'b-number',
                          'called', 'terminating', 'b number', 'partyb', 'callee',
-                         'bparty', 'b party', 'b_party'],
+                         'bparty', 'b party', 'b_party',
+                         # Banglalink CDR
+                         'bparty'],
     'party_b_original': ['party b original', 'party_b_original', 'original_b',
                          'b_original', 'partyb_original'],
     'duration':         ['call duration', 'call_duration', 'duration',
-                         'call_length', 'duration_sec', 'duration(sec)'],
+                         'call_length', 'duration_sec', 'duration(sec)',
+                         # Banglalink CDR
+                         'callduration'],
     'usage_type':       ['usage type', 'usage_type', 'call_type', 'call type',
-                         'type', 'direction', 'service_type'],
+                         'type', 'direction', 'service_type',
+                         # Banglalink CDR
+                         'usagetype'],
     'cell_type':        ['cell type', 'cell_type', 'network_type', 'network type',
-                         'technology', 'rat'],
+                         'technology', 'rat',
+                         # Banglalink CDR
+                         'networktype'],
     'lac':              ['lac id', 'lac_id', 'lac', 'location_area_code',
                          'lacstarta', 'lacstart'],
     'cell_id':          ['cell id', 'cell_id', 'cell', 'bts_id', 'bts id',
-                         'site_id', 'tower_id', 'cistarta'],
+                         'site_id', 'tower_id', 'cistarta', 'cisstarta'],
     'imei':             ['imei', 'device_id', 'handset_id'],
     'imsi':             ['imsi', 'subscriber_id', 'imsia'],
     'address':          ['address', 'location', 'tower_location', 'tower location',
@@ -367,8 +379,12 @@ COLUMN_ALIASES = {
 
 CALL_OUT_TYPES = ['moc', 'mo', 'outgoing', 'out', 'call-mo', 'call_mo', 'callmo']
 CALL_IN_TYPES  = ['mtc', 'mt', 'incoming', 'in', 'call-mt', 'call_mt', 'callmt']
-SMS_OUT_TYPES  = ['mo-sms', 'sms-mo', 'smsmo', 'sms_mo', 'sms-mo', 'sms out']
-SMS_IN_TYPES   = ['mt-sms', 'sms-mt', 'smsmt', 'sms_mt', 'sms-mt', 'sms in']
+SMS_OUT_TYPES  = ['mo-sms', 'sms-mo', 'smsmo', 'sms_mo', 'sms-mo', 'sms out',
+                  # Banglalink CDR
+                  'smsmo']
+SMS_IN_TYPES   = ['mt-sms', 'sms-mt', 'smsmt', 'sms_mt', 'sms-mt', 'sms in',
+                  # Banglalink CDR
+                  'smsmt']
 
 
 # ─────────────────────────────────────────────
@@ -776,6 +792,66 @@ def top_lengthy(df, direction='out', n=10):
     # Reorder columns
     g = g[['Party B', 'Total_Calls', 'Duration (min)', '% of Call Time']]
     return g
+
+def top_call_overall(df, n=10):
+    """Combined MOC + MTC table with Duration (Min) for all CDR types."""
+    if 'party_b_clean' not in df.columns: return pd.DataFrame()
+    d = cdf(df)
+    gcol = 'party_b_norm' if 'party_b_norm' in d.columns else 'party_b_clean'
+    out_df = d[d['is_call_out']]
+    in_df  = d[d['is_call_in']]
+    all_df = d[d['is_call_out'] | d['is_call_in']]
+    if all_df.empty: return pd.DataFrame()
+    moc = out_df.groupby(gcol).size().rename('MOC')
+    mtc = in_df.groupby(gcol).size().rename('MTC')
+    dur = all_df.groupby(gcol)['duration'].sum().rename('_dur') if 'duration' in all_df.columns else pd.Series(dtype=float)
+    g = pd.concat([moc, mtc], axis=1).fillna(0).astype(int)
+    g['Total Calls'] = g.get('MOC', 0) + g.get('MTC', 0)
+    if not dur.empty:
+        g = g.join(dur)
+        g['Duration (Min)'] = (g['_dur'] / 60).round(1)
+        g = g.drop(columns=['_dur'])
+    else:
+        g['Duration (Min)'] = 0.0
+    g = g.sort_values('Total Calls', ascending=False).head(n).reset_index()
+    g = g.rename(columns={gcol: 'Party B'})
+    g['Party B'] = g['Party B'].apply(display_number)
+    cols = ['Party B', 'MOC', 'MTC', 'Total Calls', 'Duration (Min)']
+    return g[[c for c in cols if c in g.columns]]
+
+def plot_top_call_overall(df, n=10):
+    import matplotlib.ticker as ticker
+    t = top_call_overall(df, n)
+    if t.empty: return None
+    fig, ax = plt.subplots(figsize=(14, 6))
+    x      = list(range(len(t)))
+    w      = 0.25
+    labels = t['Party B'].tolist()
+    moc_v  = t['MOC'].tolist()          if 'MOC'    in t.columns else [0]*len(t)
+    mtc_v  = t['MTC'].tolist()          if 'MTC'    in t.columns else [0]*len(t)
+    tot_v  = t['Total Calls'].tolist()
+    ax.bar([i - w for i in x], moc_v, width=w, label='MOC (Outgoing)', color='#2196F3', zorder=3)
+    ax.bar([i     for i in x], mtc_v, width=w, label='MTC (Incoming)', color='#4CAF50', zorder=3)
+    ax.bar([i + w for i in x], tot_v, width=w, label='Total Calls',    color='#FF9800', zorder=3)
+    ax2 = ax.twinx()
+    if 'Duration (Min)' in t.columns:
+        ax2.plot(x, t['Duration (Min)'].tolist(),
+                 color='#E91E63', marker='o', linewidth=2, label='Duration (Min)', zorder=4)
+        ax2.set_ylabel('Duration (Min)', fontsize=11, color='#E91E63')
+        ax2.tick_params(axis='y', labelcolor='#E91E63')
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=30, ha='right', fontsize=9)
+    ax.set_xlabel('Phone Number', fontsize=11)
+    ax.set_ylabel('Call Count', fontsize=11)
+    ax.set_title('5.6 Top Call Overall (MOC + MTC + Duration)', fontsize=13, fontweight='bold', pad=12)
+    ax.yaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+    ax.grid(axis='y', linestyle='--', alpha=0.4, zorder=0)
+    ax.set_axisbelow(True)
+    lines1, labels1 = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(lines1 + lines2, labels1 + labels2, loc='upper right', fontsize=9)
+    plt.tight_layout()
+    return fig
 
 def top_locations(df, mask=None, n=10):
     if 'address' not in df.columns: return pd.DataFrame()
@@ -1655,6 +1731,8 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
     <h3>5.3 Top 10 Frequent Incoming</h3>{df_to_html(top_contacts(df,'in',10))}
     <h3>5.4 Top 10 Lengthy Outgoing</h3>{df_to_html(top_lengthy(df,'out',10))}
     <h3>5.5 Top 10 Lengthy Incoming</h3>{df_to_html(top_lengthy(df,'in',10))}
+    <h3>5.6 Top Call Overall</h3>{df_to_html(top_call_overall(df,10))}
+    <h3>5.6a Top Call Overall Chart</h3>{fig_to_html_img(plot_top_call_overall(df,10))}
     <h2>6. Location Analysis</h2>
     <h3>6.1 Location Summary</h3>{df_to_html(location_summary(df))}
     <h3>6.2 Top 10 Frequent Locations</h3>{df_to_html(top_locations(df,None,10))}
@@ -1838,6 +1916,8 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
     add_h('5.3 Top 10 Incoming',2);       add_df_table(top_contacts(df,'in',10))
     add_h('5.4 Lengthy Outgoing',2);      add_df_table(top_lengthy(df,'out',10))
     add_h('5.5 Lengthy Incoming',2);      add_df_table(top_lengthy(df,'in',10))
+    add_h('5.6 Top Call Overall',2);      add_df_table(top_call_overall(df,10))
+    add_h('5.6a Top Call Overall Chart',2); add_fig(plot_top_call_overall(df,10))
     add_h('6. Location Analysis')
     add_h('6.1 Location Summary',2);     add_df_table(location_summary(df))
     add_h('6.2 Frequent Locations',2);   add_df_table(top_locations(df,None,10))
