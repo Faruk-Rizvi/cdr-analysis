@@ -1921,6 +1921,9 @@ def movement_pattern_analysis(df):
         "lalbagh":"Lalbagh","sutrapur":"Sutrapur","kotwali":"Kotwali",
         "kakrail":"Dhaka Sadar","shahbag":"Dhaka Sadar","segunbagicha":"Dhaka Sadar",
         "rajarbag":"Dhaka Sadar","purana paltan":"Dhaka Sadar",
+        # Islampur Dhaka (old town area) — different from Islampur Jamalpur
+        "islampur road":"Kotwali","kumartuli":"Kotwali","islampur, dhaka":"Kotwali",
+        "islampur dhaka":"Kotwali","islampur,dhaka":"Kotwali",
         # Gazipur
         "gazipur sadar":"Gazipur Sadar","tongi":"Tongi","kaliakair":"Kaliakair",
         "sreepur":"Sreepur","kapasia":"Kapasia",
@@ -2145,8 +2148,24 @@ def movement_pattern_analysis(df):
     def get_coord(upa, dist):
         """
         Look up coordinates for a upazila/district.
-        Tries: exact upazila → exact dist sadar → district prefix match → district in UPA_NORM coords.
+        Uses district context to disambiguate same-name upazilas in different districts.
+        e.g. Islampur in Dhaka (old town) vs Islampur in Jamalpur district.
         """
+        # District-aware upazila disambiguation
+        DIST_UPA_OVERRIDE = {
+            # (upazila_lower, district_lower): canonical upazila name with correct coords
+            ("islampur", "dhaka"):      "Kotwali",       # Islampur old Dhaka → Kotwali coords
+            ("islampur", ""):           "Kotwali",       # if dist unknown but addr says Dhaka
+        }
+
+        if upa and dist:
+            key = (upa.lower(), dist.lower())
+            if key in DIST_UPA_OVERRIDE:
+                upa = DIST_UPA_OVERRIDE[key]
+        elif upa:
+            # Check if address context helps (e.g. "Islampur" only used as Dhaka old town)
+            pass
+
         if upa:
             if upa in BD_COORDS: return BD_COORDS[upa]
             # Try case-insensitive
@@ -2188,13 +2207,9 @@ def movement_pattern_analysis(df):
         home_coord = (25.5964, 89.7662)  # fallback Rowmari
         home_label = "Rowmari"
 
-    HOME_KM=35.0; TRANSIT_H=6
+    HOME_KM=35.0; TRANSIT_H=4; MIN_HOME_STAY_H=5
 
     # ── Enrich rows with distance from home ──
-    # KEY FIX: When coord lookup fails for a record, we do NOT set km=0
-    # (which falsely marks it as "home" and breaks the trip session).
-    # Instead we carry forward the last known km. Records at the START
-    # with no coord default to 0.0 (home) since we have no information.
     rows_e=[]
     last_known_km = 0.0
     last_known_coord = home_coord
@@ -2206,7 +2221,6 @@ def movement_pattern_analysis(df):
             last_known_km=km
             last_known_coord=coord
         else:
-            # Coord unknown: keep last known km so we don't falsely break a session
             km=last_known_km
             coord=last_known_coord
         rows_e.append({"ts":row["start"],"address":row["address"],
@@ -2215,37 +2229,59 @@ def movement_pattern_analysis(df):
     df_e["away"]=df_e["km"]>=HOME_KM
 
     # ── Group consecutive away runs into sessions ──
-    # A session ends ONLY when we see a CONFIRMED home location (km < HOME_KM
-    # AND the coord was successfully resolved — not just carried forward).
-    # We track whether each row has a confirmed coord or is using the fallback.
-    confirmed_home_mask = []
-    last_was_resolved = True
-    prev_km = 0.0
-    for _, row in df_e.iterrows():
-        # A row is "confirmed home" only if km < HOME_KM AND the distance
-        # changed from the previous row (meaning coord was freshly resolved).
-        # Simpler heuristic: mark as confirmed home only if km < HOME_KM
-        # AND km <= HOME_KM * 0.5 (clearly home, not borderline).
-        confirmed_home_mask.append(row["km"] < HOME_KM and row["km"] < HOME_KM * 0.8)
-    df_e["confirmed_home"] = confirmed_home_mask
+    # Session breaks ONLY on a CONFIRMED overnight home return:
+    #   - km < HOME_KM (clearly home area)
+    #   - AND consecutive home records span >= MIN_HOME_STAY_H hours
+    # Brief daytime visits to home area do NOT break the trip.
+
+    def _is_real_home_return(chunk_ts_list):
+        """Return True if home buffer spans >= MIN_HOME_STAY_H hours (real overnight return)."""
+        if not chunk_ts_list:
+            return False
+        span_h = (chunk_ts_list[-1] - chunk_ts_list[0]).total_seconds() / 3600
+        return span_h >= MIN_HOME_STAY_H
 
     sessions=[]
-    sess_rows=[]; in_sess=False
+    sess_rows=[]
+    in_sess=False
+    home_buffer=[]   # accumulate consecutive home rows to check if real return
+
     for idx, r in df_e.iterrows():
         if r["away"]:
-            in_sess=True; sess_rows.append(r)
+            # Flush home buffer — was it a real return or brief visit?
+            if home_buffer and in_sess:
+                if _is_real_home_return([x["ts"] for x in home_buffer]):
+                    # Real home return — end current session
+                    if sess_rows:
+                        sessions.append(sess_rows)
+                    sess_rows=[]
+                    in_sess=False
+                else:
+                    # Brief visit — fold home buffer into ongoing session
+                    sess_rows.extend(home_buffer)
+            home_buffer=[]
+            in_sess=True
+            sess_rows.append(r)
         else:
-            # Only break the session if this is a CONFIRMED home return
-            # (not just a coord-lookup failure that defaulted to last known km)
-            if r["confirmed_home"]:
-                if in_sess and sess_rows:
-                    sessions.append(sess_rows)
-                sess_rows=[]; in_sess=False
+            if r["km"] < HOME_KM:
+                home_buffer.append(r)
             else:
-                # Ambiguous location: if already in a session, keep it going
+                # Unknown coord carrying forward away km — keep in session
+                if home_buffer and in_sess:
+                    sess_rows.extend(home_buffer)
+                    home_buffer=[]
                 if in_sess:
                     sess_rows.append(r)
-    if in_sess and sess_rows: sessions.append(sess_rows)
+
+    # Trailing home buffer
+    if home_buffer and in_sess:
+        if _is_real_home_return([x["ts"] for x in home_buffer]):
+            if sess_rows: sessions.append(sess_rows)
+        else:
+            sess_rows.extend(home_buffer)
+            if sess_rows: sessions.append(sess_rows)
+    elif in_sess and sess_rows:
+        sessions.append(sess_rows)
 
     trips=[]
     for sess in sessions:
@@ -2253,29 +2289,40 @@ def movement_pattern_analysis(df):
         s_start=sdf["ts"].min(); s_end=sdf["ts"].max()
         s_days=(s_end.date()-s_start.date()).days+1
 
-        # Sub-group by location change
+        # Sub-group by district (not upazila) to avoid over-fragmentation
         loc_groups=[]; cur_key=None; cur_rows=[]
         for _,r in sdf.iterrows():
-            lk=(r["upazila"] or "",r["district"] or "")
-            if lk!=cur_key:
-                if cur_rows: loc_groups.append((cur_key,cur_rows))
+            # Group by district only — same district = same location group
+            lk = r["district"] or r["upazila"] or ""
+            if lk != cur_key:
+                if cur_rows: loc_groups.append((cur_key, cur_rows))
                 cur_key=lk; cur_rows=[r]
-            else: cur_rows.append(r)
-        if cur_rows: loc_groups.append((cur_key,cur_rows))
+            else:
+                cur_rows.append(r)
+        if cur_rows: loc_groups.append((cur_key, cur_rows))
 
         stay_locs=[]
-        for (upa_k,dist_k),grp in loc_groups:
+        for dist_k, grp in loc_groups:
             gdf=pd.DataFrame(grp)
             hrs=(gdf["ts"].max()-gdf["ts"].min()).total_seconds()/3600
-            if hrs>=TRANSIT_H or len(loc_groups)==1:
+            max_km=round(gdf["km"].max(),1)
+            # Best upazila for this district group (most frequent non-null)
+            upa_vals = gdf["upazila"].dropna()
+            upa_k = upa_vals.value_counts().index[0] if not upa_vals.empty else None
+            # Best address sample
+            best_addr = gdf["address"].value_counts().index[0] if not gdf.empty else ""
+            # Include if: stayed >= TRANSIT_H OR only location OR far enough
+            if hrs>=TRANSIT_H or len(loc_groups)==1 or max_km>=HOME_KM*1.5:
                 stay_locs.append({
-                    "upazila":(upa_k if upa_k and str(upa_k).lower()!="nan" else None),"district":dist_k or None,
-                    "km":round(gdf["km"].max(),1),"hours":round(hrs,1),
-                    "first":gdf["ts"].min(),"last":gdf["ts"].max(),
-                    "sample_addr":gdf["address"].value_counts().index[0] if not gdf.empty else "",
+                    "upazila": upa_k,
+                    "district": dist_k or None,
+                    "km": max_km, "hours": round(hrs,1),
+                    "first": gdf["ts"].min(), "last": gdf["ts"].max(),
+                    "sample_addr": str(best_addr)[:80],
                 })
         if not stay_locs: continue
 
+        # Show the farthest district as the main trip destination
         dest=max(stay_locs,key=lambda x:x["km"])
         dest_label=(dest["upazila"] if dest["upazila"] and str(dest["upazila"]).strip().lower()!="nan" else None) or dest["district"] or "Unknown"
         dist_label=dest["district"] or "Unknown"
