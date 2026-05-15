@@ -1470,70 +1470,614 @@ def movement_pattern_analysis(df):
 
     import math
 
+    # ── Comprehensive Bangladesh coordinates (all 64 districts + key upazilas) ──
     BD_COORDS = {
+        # Kurigram
         "Rowmari":(25.5964,89.7662),"Chilmari":(25.5555,89.6836),
         "Rajibpur":(25.6580,89.8401),"Ulipur":(25.6717,89.5718),
         "Nageshwari":(25.9711,89.7039),"Bhurungamari":(26.0688,89.7164),
         "Rajarhat":(25.7594,89.4952),"Phulbari":(25.8654,89.4620),
         "Kurigram Sadar":(25.8057,89.6360),
+        # Gaibandha
         "Sundarganj":(25.3810,89.4670),"Sadullapur":(25.1580,89.4887),
         "Gaibandha Sadar":(25.3288,89.5288),"Gobindaganj":(25.1175,89.3590),
         "Palashbari":(25.2116,89.3918),"Fulchhari":(25.1780,89.5420),
+        # Rangpur
         "Rangpur Sadar":(25.7439,89.2752),"Pirganj":(25.8538,89.0346),
         "Pirgacha":(25.7011,89.3840),"Mahiganj":(25.7671,89.2387),
         "Gangachara":(25.7208,89.2019),"Kaunia":(25.6452,89.2884),
         "Mithapukur":(25.6046,89.1961),"Badarganj":(25.6754,89.0548),
         "Taraganj":(25.9302,89.1630),
+        # Lalmonirhat
         "Lalmonirhat Sadar":(25.9923,89.2847),"Aditmari":(25.9042,89.3521),
         "Kaliganj":(25.8622,89.4014),"Hatibandha":(26.0551,89.4688),
         "Patgram":(26.1800,89.5127),
+        # Nilphamari
         "Nilphamari Sadar":(25.9315,88.8560),"Saidpur":(25.7778,88.8879),
         "Jaldhaka":(25.8596,89.0196),"Domar":(25.9963,88.9601),
+        "Kishoreganj Nilphamari":(25.9992,88.8773),"Dimla":(25.9167,88.9931),
+        # Dinajpur
         "Dinajpur Sadar":(25.6279,88.6333),"Birampur":(25.4857,88.6987),
-        "Bogura Sadar":(24.8465,89.3776),"Joypurhat Sadar":(25.0964,89.0222),
-        "Sirajganj Sadar":(24.4534,89.7006),"Pabna Sadar":(24.0063,89.2372),
-        "Naogaon Sadar":(24.9131,88.7527),"Rajshahi Sadar":(24.3745,88.6042),
-        "Chapainawabganj Sadar":(24.5965,88.2787),
-        "Tangail Sadar":(24.2512,89.9167),"Jamalpur Sadar":(24.8966,89.9441),
+        "Birganj":(25.8344,88.7248),"Bochaganj":(25.5519,88.6993),
+        "Chirirbandar":(25.6719,88.5633),"Ghoraghat":(25.3456,88.9993),
+        "Hakimpur":(25.5248,88.9333),"Kaharole":(25.7256,88.5867),
+        "Khansama":(25.9024,88.7122),"Nawabganj Dinajpur":(24.5972,88.2819),
+        "Parbatipur":(25.6496,88.9140),"Phulbari Dinajpur":(25.1982,88.6349),
+        "Fulbari":(25.1982,88.6349),
+        # Thakurgaon
+        "Thakurgaon Sadar":(26.0318,88.4582),"Baliadangi":(26.1500,88.3750),
+        "Haripur":(26.2073,88.4300),"Pirganj Thakurgaon":(26.0167,88.3500),
+        "Ranisankail":(26.0706,88.6500),
+        # Panchagarh
+        "Panchagarh Sadar":(26.3406,88.5549),"Atwari":(26.5833,88.5667),
+        "Boda":(26.3167,88.7333),"Debiganj":(26.0333,88.5333),
+        "Tetulia":(26.6337,88.6303),
+        # Rajshahi
+        "Rajshahi Sadar":(24.3745,88.6042),"Bagha":(24.3167,88.8333),
+        "Bagmara":(24.4500,88.6833),"Charghat":(24.2667,88.7833),
+        "Durgapur":(24.8500,88.7500),"Godagari":(24.4833,88.3833),
+        "Mohanpur":(24.3500,88.6833),"Paba":(24.3667,88.5833),
+        "Puthia":(24.3667,88.8500),"Tanore":(24.5333,88.5667),
+        # Chapainawabganj
+        "Chapainawabganj Sadar":(24.5965,88.2787),"Bholahat":(24.6667,88.2833),
+        "Gomastapur":(24.8500,88.2000),"Nachole":(24.7333,88.3000),
+        "Shibganj Chapai":(24.7667,88.1500),
+        # Naogaon
+        "Naogaon Sadar":(24.9131,88.7527),"Atrai":(24.6000,88.9000),
+        "Badalgachhi":(25.0167,88.6833),"Dhamoirhat":(25.2167,88.7833),
+        "Manda":(24.7667,88.8500),"Mahadebpur":(25.0167,88.5833),
+        "Mohadevpur":(25.0167,88.5833),"Niamatpur":(24.9667,88.5000),
+        "Patnitala":(25.0833,88.6333),"Porsha":(25.2333,88.5833),
+        "Raninagar":(24.6833,88.6833),"Sapahar":(25.0667,88.4167),
+        # Natore
+        "Natore Sadar":(24.4200,89.0019),"Bagatipara":(24.3833,89.2500),
+        "Baraigram":(24.4167,89.1833),"Gurudaspur":(24.2833,89.0333),
+        "Lalpur":(24.1500,89.0167),"Singra":(24.4667,89.1500),
+        # Sirajganj
+        "Sirajganj Sadar":(24.4534,89.7006),"Belkuchi":(24.5333,89.5833),
+        "Chauhali":(24.3167,89.8667),"Kamarkhanda":(24.4333,89.5333),
+        "Kazipur":(24.6167,89.7000),"Raiganj":(24.5833,89.8167),
+        "Shahjadpur":(24.2167,89.6500),"Tarash":(24.2333,89.4833),
+        "Ullahpara":(24.3333,89.5333),
+        # Pabna
+        "Pabna Sadar":(24.0063,89.2372),"Atgharia":(24.0833,89.3667),
+        "Bera":(24.0833,89.6667),"Bhangura":(24.2500,89.2500),
+        "Chatmohar":(24.1500,89.3167),"Faridpur Pabna":(24.1667,89.1833),
+        "Ishwardi":(24.1333,89.0667),"Santhia":(24.1167,89.3500),
+        "Sujanagar":(23.9000,89.3833),
+        # Joypurhat
+        "Joypurhat Sadar":(25.0964,89.0222),"Akkelpur":(25.0333,89.0500),
+        "Kalai":(25.0833,88.9333),"Khetlal":(25.0000,89.1500),
+        "Panchbibi":(25.1833,88.9500),
+        # Bogura
+        "Bogura Sadar":(24.8465,89.3776),"Adamdighi":(24.9167,89.4667),
+        "Dhunat":(24.7000,89.5167),"Dhupchanchia":(24.9000,89.2500),
+        "Gabtali":(24.8500,89.5833),"Kahaloo":(24.9500,89.1833),
+        "Nandigram":(24.7833,89.4333),"Sarial":(24.9833,89.4667),
+        "Sariakandi":(24.9167,89.6000),"Shajahanpur":(24.8667,89.3000),
+        "Sherpur Bogura":(24.9167,89.5167),"Shibganj Bogura":(25.0167,89.1833),
+        "Sonatala":(25.0167,89.6000),
+        # Tangail
+        "Tangail Sadar":(24.2512,89.9167),"Basail":(24.2167,90.0500),
+        "Bhuapur":(24.5333,89.8833),"Delduar":(24.1667,89.9667),
+        "Ghatail":(24.4500,89.9667),"Gopalpur":(24.5167,90.0833),
+        "Kalihati":(24.3167,89.9833),"Madhupur":(24.6333,90.0333),
+        "Mirzapur":(24.0833,90.0500),"Nagarpur":(24.1333,89.8333),
+        "Sakhipur":(24.2500,90.1833),"Dhanbari":(24.5000,90.1500),
+        # Jamalpur
+        "Jamalpur Sadar":(24.8966,89.9441),"Bakshiganj":(25.0667,89.7333),
+        "Dewanganj":(25.0500,89.7833),"Islampur":(24.9333,89.7000),
+        "Madarganj":(24.8833,89.7333),"Melandaha":(24.9833,89.8667),
+        "Sarishabari":(24.6500,89.6500),
+        # Mymensingh
         "Mymensingh Sadar":(24.7471,90.4203),"Trishal":(24.5469,90.3455),
-        "Bhaluka":(24.4005,90.3715),"Netrokona Sadar":(24.8704,90.7270),
-        "Kishoreganj Sadar":(24.4449,90.7766),
-        "Mirpur":(23.8223,90.3654),"Savar":(23.8580,90.2664),
-        "Dhanmondi":(23.7461,90.3742),"Uttara":(23.8759,90.3795),
-        "Motijheel":(23.7272,90.4093),"Dhaka Sadar":(23.7104,90.4074),
-        "Gazipur Sadar":(23.9999,90.4203),"Narayanganj Sadar":(23.6238,90.4998),
-        "Cumilla Sadar":(23.4607,91.1809),"Chittagong Sadar":(22.3569,91.7832),
-        "Sylhet Sadar":(24.8949,91.8687),"Khulna Sadar":(22.8456,89.5403),
+        "Bhaluka":(24.4005,90.3715),"Gaffargaon":(24.4667,90.5333),
+        "Gauripur":(24.7962,90.2638),"Gouripur":(24.7962,90.2638),
+        "Haluaghat":(25.0667,90.5833),"Ishwarganj":(24.5667,90.6667),
+        "Iswarganj":(24.5667,90.6667),"Ishwargonj":(24.5667,90.6667),
+        "Muktagacha":(24.7667,90.2667),"Nandail":(24.4667,90.7500),
+        "Phulbaria":(24.7833,90.2500),"Phulpur":(25.0000,90.5333),
+        "Fulbaria":(24.7833,90.2500),
+        # Netrokona
+        "Netrokona Sadar":(24.8704,90.7270),"Atpara":(24.9500,91.0167),
+        "Barhatta":(24.9500,90.8500),"Durgapur":(25.0833,90.6000),
+        "Khaliajuri":(24.7000,91.0833),"Kalmakanda":(25.0167,91.1500),
+        "Kendua":(24.7167,90.9667),"Kolmakanda":(25.0167,91.1500),
+        "Madan":(24.6500,90.9333),"Mohanganj":(24.6667,91.0333),
+        "Purbadhala":(24.9167,90.8500),"Chandua":(24.7167,90.9667),
+        # Kishoreganj
+        "Kishoreganj Sadar":(24.4449,90.7766),"Austagram":(24.3333,91.0167),
+        "Bajitpur":(24.2167,90.9500),"Bhairab":(24.0667,90.9833),
+        "Hossainpur":(24.4333,90.6167),"Itna":(24.5500,91.1167),
+        "Karimganj":(24.5667,90.9667),"Katiadi":(24.3500,90.7667),
+        "Kuliarchar":(24.3000,90.7000),"Mithamain":(24.6500,91.1333),
+        "Nikli":(24.3500,90.9667),"Pakundia":(24.3667,90.6500),
+        "Tarail":(24.4667,90.6333),
+        # Dhaka + surroundings
+        "Dhaka Sadar":(23.7104,90.4074),"Mirpur":(23.8223,90.3654),
+        "Savar":(23.8580,90.2664),"Dhanmondi":(23.7461,90.3742),
+        "Uttara":(23.8759,90.3795),"Motijheel":(23.7272,90.4093),
+        "Demra":(23.7167,90.4833),"Jatrabari":(23.6951,90.4494),
+        "Lalbag":(23.7167,90.3833),"Mohammadpur":(23.7667,90.3500),
+        "Tejgaon":(23.7500,90.3833),"Rayer Bazar":(23.7333,90.3500),
+        "Kamrangirchar":(23.7000,90.3833),"Keraniganj":(23.6833,90.3667),
+        "Nawabganj Dhaka":(23.6500,90.2500),"Dohar":(23.5667,90.1500),
+        "Dhamrai":(23.9000,90.2000),"Kalatia":(23.7167,90.3833),
+        "Badda":(23.7833,90.4333),"Gulshan":(23.7833,90.4167),
+        "Banani":(23.7946,90.4028),"Wari":(23.7167,90.4167),
+        "Sutrapur":(23.7167,90.4167),"Kotwali":(23.7167,90.4167),
+        "Ramna":(23.7333,90.4000),"Lalbagh":(23.7167,90.3833),
+        "Adabor":(23.7667,90.3500),"Khilkhet":(23.8333,90.4167),
+        "Cantonment":(23.7667,90.3833),"Pallabi":(23.8333,90.3667),
+        "Turag":(23.8667,90.3667),"Shyampur":(23.7000,90.4500),
+        "Kadamtoli":(23.7000,90.4333),"Sabujbagh":(23.7333,90.4500),
+        "Airport":(23.8500,90.4000),
+        # Gazipur
+        "Gazipur Sadar":(23.9999,90.4203),"Kaliakair":(24.0833,90.2333),
+        "Kaliganj Gazipur":(24.0000,90.5000),"Kapasia":(24.1333,90.5833),
+        "Sreepur":(24.1833,90.4833),"Tongi":(23.8833,90.3833),
+        # Narayanganj
+        "Narayanganj Sadar":(23.6238,90.4998),"Araihazar":(23.7333,90.6333),
+        "Bandar":(23.5833,90.5667),"Rupganj":(23.7667,90.5833),
+        "Sonargaon":(23.6500,90.6167),
+        # Narsingdi
+        "Narsingdi Sadar":(23.9167,90.7167),"Belabo":(24.0000,90.8333),
+        "Monohardi":(24.0667,90.7000),"Palash":(23.8333,90.6833),
+        "Raipura":(23.8833,90.8833),"Shibpur":(24.0167,90.6167),
+        # Manikganj
+        "Manikganj Sadar":(23.8667,90.0167),"Daulatpur":(23.9333,89.9167),
+        "Ghior":(23.9000,90.0333),"Harirampur":(23.6833,89.8167),
+        "Saturia":(23.9167,90.0833),"Shivalaya":(23.7667,89.9000),
+        "Singair":(23.8333,90.1333),
+        # Munshiganj
+        "Munshiganj Sadar":(23.5500,90.5333),"Gazaria":(23.5000,90.5833),
+        "Lohajang":(23.4833,90.4167),"Sirajdikhan":(23.5000,90.4000),
+        "Sreenagar":(23.5833,90.3667),"Tongibari":(23.4500,90.5833),
+        # Faridpur
+        "Faridpur Sadar":(23.6069,89.8431),"Alfadanga":(23.4000,89.7167),
+        "Bhanga":(23.3833,90.0000),"Boalmari":(23.5000,89.7833),
+        "Char Bhadrasan":(23.4500,89.5833),"Madhukhali":(23.5167,89.7333),
+        "Nagarkanda":(23.5167,89.7000),"Sadarpur":(23.5333,89.7000),
+        "Saltha":(23.5000,89.9500),
+        # Gopalganj
+        "Gopalganj Sadar":(23.0056,89.8264),"Kashiani":(23.1333,89.7167),
+        "Kotalipara":(22.9667,90.0333),"Muksudpur":(23.2167,89.7000),
+        "Tungipara":(23.0500,89.9833),
+        # Madaripur
+        "Madaripur Sadar":(23.1621,90.2012),"Kalkini":(22.9833,90.3000),
+        "Rajoir":(23.1333,90.1167),"Shibchar":(23.1833,90.3333),
+        # Shariatpur
+        "Shariatpur Sadar":(23.2431,90.4361),"Bhedarganj":(23.1667,90.5833),
+        "Damudhya":(23.2833,90.4000),"Gosairhat":(23.1333,90.5000),
+        "Jajira":(23.4333,90.3333),"Naria":(23.3167,90.5333),
+        "Zanjira":(23.4333,90.3333),
+        # Rajbari
+        "Rajbari Sadar":(23.7578,89.6414),"Baliakandi":(23.5667,89.8167),
+        "Goalandaghat":(23.7000,90.0000),"Kalukhali":(23.6667,89.7167),
+        "Pangsha":(23.6167,89.7000),
+        # Cumilla/Comilla
+        "Cumilla Sadar":(23.4607,91.1809),"Barura":(23.3667,91.0500),
+        "Brahmanpara":(23.7000,91.1500),"Burichang":(23.5667,91.2000),
+        "Chandina":(23.5500,90.9833),"Chauddagram":(23.3000,91.2500),
+        "Daudkandi":(23.5500,90.9167),"Debidwar":(23.6833,91.0833),
+        "Homna":(23.6333,90.8667),"Laksam":(23.2333,91.1167),
+        "Lalmai":(23.3500,91.1000),"Meghna":(23.5500,90.8167),
+        "Muradnagar":(23.7500,91.0500),"Nangalkot":(23.2667,91.3167),
+        "Titas":(23.5667,90.8833),
+        # Brahmanbaria
+        "Brahmanbaria Sadar":(23.9602,91.1095),"Akhaura":(23.8833,91.2167),
+        "Ashuganj":(24.0667,90.9833),"Banchharampur":(23.7333,90.9333),
+        "Bijoynagar":(23.8000,91.2333),"Kasba":(23.8333,91.1500),
+        "Nabinagar":(23.8833,91.0000),"Nasirnagar":(24.0667,91.2167),
+        "Sarail":(24.0333,91.1833),
+        # Chandpur
+        "Chandpur Sadar":(23.2333,90.6667),"Faridganj":(23.1000,90.7333),
+        "Haimchar":(23.1500,90.7667),"Haziganj":(23.3500,90.8333),
+        "Kachua":(23.3333,91.0000),"Matlab North":(23.4833,90.7000),
+        "Matlab South":(23.4167,90.7167),"Shahrasti":(23.2167,91.0333),
+        # Lakshmipur
+        "Lakshmipur Sadar":(22.9431,90.8278),"Kamalnagar":(22.8000,90.7000),
+        "Raipur Lakshmipur":(22.9167,90.9833),"Ramganj":(23.0667,90.8167),
+        "Ramgati":(22.8000,90.8500),
+        # Noakhali
+        "Noakhali Sadar":(22.8696,91.0996),"Begumganj":(22.9167,91.1333),
+        "Chatkhil":(22.8833,91.2667),"Companiganj Noakhali":(22.7000,91.2333),
+        "Hatiya":(22.4167,91.1167),"Kabirhat":(22.9667,91.2167),
+        "Senbagh":(22.8500,91.2000),"Sonaimuri":(23.0167,91.0833),
+        "Subarnachar":(22.7167,91.1500),
+        # Feni
+        "Feni Sadar":(23.0167,91.3967),"Chhagalnaiya":(23.1167,91.3167),
+        "Daganbhuiyan":(23.1667,91.3500),"Fulgazi":(22.9667,91.4167),
+        "Parshuram":(22.9333,91.4000),"Sonagazi":(22.9167,91.4000),
+        # Chittagong/Chattogram
+        "Chittagong Sadar":(22.3569,91.7832),"Anwara":(22.2167,91.8667),
+        "Banshkhali":(22.0500,92.0167),"Boalkhali":(22.3333,91.9833),
+        "Chandanaish":(22.2333,92.0167),"Fatikchhari":(22.6833,91.7500),
+        "Hathazari":(22.5000,91.8333),"Karnaphuli":(22.3000,91.8333),
+        "Lohagara":(22.0833,92.0833),"Mirsarai":(22.7500,91.5833),
+        "Patiya":(22.2833,91.9667),"Rangunia":(22.4667,92.1000),
+        "Raozan":(22.4167,91.9167),"Sandwip":(22.4833,91.6333),
+        "Sitakunda":(22.6667,91.6667),"Satkania":(22.1167,92.0500),
+        # Cox's Bazar
+        "Cox'S Bazar Sadar":(21.4272,92.0058),"Chakaria":(21.7333,92.0833),
+        "Cutubdia":(21.7500,91.8667),"Kutubdia":(21.7500,91.8667),
+        "Maheshkhali":(21.6167,91.9833),"Pekua":(21.8167,91.9667),
+        "Ramu":(21.4500,92.1000),"Teknaf":(20.8667,92.3000),
+        "Ukhia":(21.1000,92.2000),
+        # Bandarban
+        "Bandarban Sadar":(22.1933,92.2183),"Alikadam":(21.5167,92.4333),
+        "Lama":(21.8833,92.3000),"Naikhangchhari":(21.1167,92.3000),
+        "Rowangchhari":(22.0000,92.3333),"Ruma":(22.0167,92.3500),
+        "Thanchi":(21.7167,92.3667),
+        # Rangamati
+        "Rangamati Sadar":(22.6333,92.2000),"Baghaichhari":(22.7833,92.2667),
+        "Barkal":(22.8667,92.5333),"Belaichhari":(22.6500,92.4333),
+        "Juraichhari":(22.8833,92.2833),"Kaptai":(22.5000,92.2833),
+        "Kaukhali Rangamati":(22.5833,92.1833),"Langadu":(23.1667,92.2333),
+        "Naniarchar":(22.5667,92.2167),"Rajasthali":(22.5000,92.3333),
+        # Khagrachhari
+        "Khagrachhari Sadar":(23.1193,91.9847),"Dighinala":(23.2500,92.0167),
+        "Guimara":(23.0167,91.9167),"Lakshmichhari":(22.9500,92.0500),
+        "Mahalchhari":(23.0167,92.0000),"Manikchhari":(22.8500,91.8833),
+        "Matiranga":(23.0167,91.8333),"Panchhari":(23.2833,92.1167),
+        "Ramgarh":(22.8167,91.9833),
+        # Sylhet
+        "Sylhet Sadar":(24.8949,91.8687),"Beanibazar":(24.7000,92.0167),
+        "Bishwanath":(24.7833,91.7833),"Companiganj Sylhet":(25.1000,91.7667),
+        "Dakshin Surma":(24.8333,91.8000),"Fenchuganj":(24.6833,91.9833),
+        "Golapganj":(24.6667,92.0000),"Gowainghat":(25.0500,92.0500),
+        "Jaintiapur":(24.9833,92.1833),"Kanaighat":(24.9833,92.2833),
+        "Osmani Nagar":(24.8000,91.9500),"Zakiganj":(24.6667,92.3000),
+        # Moulvibazar
+        "Moulvibazar Sadar":(24.4833,91.7833),"Barlekha":(24.5667,92.1500),
+        "Juri":(24.4000,92.1000),"Kamalganj":(24.3167,91.9167),
+        "Kulaura":(24.5167,92.0333),"Rajnagar":(24.3667,91.9000),
+        "Sreemangal":(24.3000,91.7333),
+        # Habiganj
+        "Habiganj Sadar":(24.3739,91.4149),"Ajmiriganj":(24.4333,91.3833),
+        "Baniachong":(24.5167,91.3667),"Bahubal":(24.3333,91.5667),
+        "Chunarughat":(24.2167,91.6667),"Lakhai":(24.4167,91.2833),
+        "Madhabpur":(24.2667,91.7167),"Nabiganj":(24.2167,91.3167),
+        "Shaistaganj":(24.2833,91.4667),
+        # Sunamganj
+        "Sunamganj Sadar":(25.0694,91.3983),"Bishwamvarpur":(24.9167,91.5000),
+        "Chhatak":(25.0333,91.6667),"Derai":(24.7500,91.4167),
+        "Dharmapasha":(24.9333,91.0167),"Dowarabazar":(25.0833,91.7167),
+        "Jagannathpur":(24.7833,91.4500),"Jamalganj":(25.0000,91.1167),
+        "Sullah":(24.8667,91.3500),"Tahirpur":(25.1167,91.1000),
+        # Khulna
+        "Khulna Sadar":(22.8456,89.5403),"Batiaghata":(22.7500,89.7333),
+        "Dacope":(22.5833,89.5333),"Daulatpur Khulna":(22.8500,89.5167),
+        "Dighalia":(22.9500,89.5833),"Dumuria":(22.8000,89.4500),
+        "Koyra":(22.3667,89.3167),"Paikgachha":(22.6667,89.3333),
+        "Phultala":(22.9000,89.5000),"Rupsha":(22.7833,89.5500),
+        "Terokhada":(22.9833,89.7167),
+        # Bagerhat
+        "Bagerhat Sadar":(22.6500,89.7833),"Chitalmari":(22.8167,89.6833),
+        "Fakirhat":(22.7667,89.6833),"Kachua Bagerhat":(22.7500,89.9500),
+        "Mollahat":(22.8167,89.8333),"Mongla":(22.4833,89.6000),
+        "Morrelganj":(22.5167,89.8833),"Rampal":(22.7000,89.6167),
+        "Sarankhola":(22.4333,89.9500),"Sharankhola":(22.4333,89.9500),
+        # Jessore/Jashore
+        "Jessore Sadar":(23.1667,89.2167),"Jashore Sadar":(23.1667,89.2167),
+        "Abhaynagar":(23.0833,89.4167),"Bagherpara":(23.2833,89.2000),
+        "Chaugachha":(23.1167,89.0333),"Jhikargachha":(23.1000,89.1500),
+        "Keshabpur":(22.9167,89.2167),"Manirampur":(23.0167,89.2667),
+        "Sharsha":(23.0500,89.0167),
+        # Satkhira
+        "Satkhira Sadar":(22.7167,89.0667),"Assasuni":(22.5667,89.1667),
+        "Debhata":(22.4667,89.0000),"Kalaroa":(22.8833,89.0667),
+        "Kaliganj Satkhira":(22.4833,89.1167),"Shyamnagar":(22.1833,89.0667),
+        "Tala":(22.6833,89.1333),
+        # Narail
+        "Narail Sadar":(23.1667,89.5000),"Kalia":(23.1833,89.6833),
+        "Lohagara Narail":(23.0167,89.5833),
+        # Magura
+        "Magura Sadar":(23.4833,89.4167),"Mohammadpur Magura":(23.4000,89.4833),
+        "Shalikha":(23.4333,89.4667),"Sreepur Magura":(23.5833,89.3833),
+        # Jhenaidah
+        "Jhenaidah Sadar":(23.5444,89.1544),"Harinakunda":(23.5500,88.9833),
+        "Kaliganj Jhenaidah":(23.3500,89.1333),"Kotchandpur":(23.4000,88.9833),
+        "Maheshpur":(23.6667,88.9000),"Shailkupa":(23.6167,89.0833),
+        # Chuadanga
+        "Chuadanga Sadar":(23.6406,88.8417),"Alamdanga":(23.7167,88.9500),
+        "Damurhuda":(23.7833,88.9333),"Jibannagar":(23.5333,88.8833),
+        # Meherpur
+        "Meherpur Sadar":(23.7619,88.6306),"Gangni":(23.8500,88.7333),
+        "Mujibnagar":(23.7833,88.6667),
+        # Kushtia
+        "Kushtia Sadar":(23.9010,89.1208),"Bheramara":(24.0333,89.0167),
+        "Daulatpur Kushtia":(24.1167,88.9667),"Khoksa":(23.8333,89.0667),
+        "Kumarkhali":(23.8667,89.2167),"Mirpur Kushtia":(23.8667,88.9667),
+        # Barishal/Barisal
+        "Barishal Sadar":(22.7010,90.3535),"Barisal Sadar":(22.7010,90.3535),
+        "Agailjhara":(22.9333,90.2000),"Babuganj":(22.6833,90.3333),
+        "Bakerganj":(22.5833,90.2667),"Banaripara":(22.8333,90.3167),
+        "Gaurnadi":(22.8667,90.2667),"Hizla":(22.5833,90.4333),
+        "Mehendiganj":(22.4500,90.5167),"Muladi":(22.6000,90.3500),
+        "Uzirpur":(22.8000,90.2000),"Wazirpur":(22.8000,90.2000),
+        # Pirojpur
+        "Pirojpur Sadar":(22.5794,89.9757),"Bhandaria":(22.4667,90.0500),
+        "Kawkhali Pirojpur":(22.5833,89.9500),"Mathbaria":(22.2833,89.9500),
+        "Nazirpur":(22.5167,89.9000),"Nesarabad":(22.6167,89.9833),
+        "Zianagar":(22.5667,89.9167),
+        # Jhalokathi
+        "Jhalokathi Sadar":(22.6393,90.1986),"Kathi":(22.6167,90.1333),
+        "Nalchity":(22.5500,90.0333),"Rajapur":(22.5167,90.0833),
+        # Barguna
+        "Barguna Sadar":(22.1500,90.1120),"Amtali":(22.0167,90.1333),
+        "Bamna":(22.2667,89.9500),"Betagi":(22.1667,90.0167),
+        "Patharghata":(22.0000,90.0333),"Taltali":(21.9667,90.2333),
+        # Patuakhali
+        "Patuakhali Sadar":(22.3596,90.3298),"Bauphal":(22.4667,90.5000),
+        "Dashmina":(22.3833,90.5333),"Dumki":(22.4000,90.3833),
+        "Galachipa":(22.1500,90.4667),"Kalapara":(21.9667,90.3167),
+        "Mirzaganj":(22.5000,90.3333),"Rangabali":(22.1667,90.6167),
+        # Bhola
+        "Bhola Sadar":(22.6860,90.6480),"Burhanuddin":(22.5000,90.7167),
+        "Char Fasson":(22.1667,90.7667),"Daulatkhan":(22.5333,90.7667),
+        "Lalmohan":(22.4167,90.7000),"Manpura":(22.0833,90.8167),
+        "Tazumuddin":(22.4167,90.8000),
+        # Naogaon/Rajshahi division misc
+        "Atrai Sadar":(24.6000,88.9000),
+        # Gazipur
+        "Gazipur":(23.9999,90.4203),
+        # Narayanganj
+        "Narayanganj":(23.6238,90.4998),
+        # Netrokona (variant)
+        "Netrokona":(24.8704,90.7270),"Netrakona":(24.8704,90.7270),
+        # Mymensingh district coord (fallback)
+        "Mymensingh":(24.7471,90.4203),"Maymensingh":(24.7471,90.4203),
+        # Cumilla/Comilla variant
+        "Comilla Sadar":(23.4607,91.1809),"Comilla":(23.4607,91.1809),
+        # Rangpur district coord
+        "Rangpur":(25.7439,89.2752),
+        # Others
+        "Sherpur Sadar":(25.0167,90.0167),"Nakla":(24.9333,90.1667),
+        "Nalitabari":(25.1000,90.1500),"Jhenaigati":(25.0167,90.0833),
+        "Sreebardi":(25.0667,90.0333),
     }
 
+    # ── Upazila name normalization ──
     UPA_NORM = {
+        # Kurigram
         "roumary":"Rowmari","raomari":"Rowmari","rowmari":"Rowmari","raumari":"Rowmari",
         "chilmari":"Chilmari","chilmare":"Chilmari","rajibpur":"Rajibpur",
-        "rangpur sadar":"Rangpur Sadar","sadar":"Rangpur Sadar","college road":"Rangpur Sadar",
-        "pirganj":"Pirganj","pirgonj":"Pirganj","pirgacha":"Pirgacha",
-        "mahiganj":"Mahiganj","satmatha":"Mahiganj","sundarganj":"Sundarganj",
-        "sundorganj":"Sundarganj","sadullapur":"Sadullapur","mirpur":"Mirpur",
-        "mymensingh sadar":"Mymensingh Sadar","gaibandha":"Gaibandha Sadar",
+        "ulipur":"Ulipur","nageshwari":"Nageshwari","bhurungamari":"Bhurungamari",
+        "rajarhat":"Rajarhat","phulbari":"Phulbari","kurigram sadar":"Kurigram Sadar",
+        # Gaibandha
+        "sundarganj":"Sundarganj","sundorganj":"Sundarganj","sadullapur":"Sadullapur",
+        "gaibandha sadar":"Gaibandha Sadar","gobindaganj":"Gobindaganj",
+        "palashbari":"Palashbari","fulchhari":"Fulchhari","gaibandha":"Gaibandha Sadar",
+        # Rangpur
+        "rangpur sadar":"Rangpur Sadar","pirganj":"Pirganj","pirgonj":"Pirganj",
+        "pirgacha":"Pirgacha","mahiganj":"Mahiganj","satmatha":"Mahiganj",
         "gangachara":"Gangachara","kaunia":"Kaunia","mithapukur":"Mithapukur",
         "badarganj":"Badarganj","taraganj":"Taraganj",
+        # Lalmonirhat
         "lalmonirhat sadar":"Lalmonirhat Sadar","hatibandha":"Hatibandha",
         "kaliganj":"Kaliganj","aditmari":"Aditmari","patgram":"Patgram",
-        "ulipur":"Ulipur","nageshwari":"Nageshwari","bhurungamari":"Bhurungamari",
-        "rajarhat":"Rajarhat","phulbari":"Phulbari",
+        # Nilphamari
         "nilphamari sadar":"Nilphamari Sadar","saidpur":"Saidpur",
-        "jaldhaka":"Jaldhaka","domar":"Domar",
-        "gobindaganj":"Gobindaganj","palashbari":"Palashbari","fulchhari":"Fulchhari",
-        "dinajpur sadar":"Dinajpur Sadar","bogura sadar":"Bogura Sadar",
-        "sirajganj sadar":"Sirajganj Sadar","rajshahi sadar":"Rajshahi Sadar",
-        "tangail sadar":"Tangail Sadar","jamalpur sadar":"Jamalpur Sadar",
-        "trishal":"Trishal","bhaluka":"Bhaluka",
-        "savar":"Savar","dhanmondi":"Dhanmondi","uttara":"Uttara","motijheel":"Motijheel",
+        "jaldhaka":"Jaldhaka","domar":"Domar","dimla":"Dimla",
+        # Dinajpur
+        "dinajpur sadar":"Dinajpur Sadar","birampur":"Birampur",
+        "parbatipur":"Parbatipur","fulbari":"Fulbari","phulbari":"Phulbari",
+        # Bogura
+        "bogura sadar":"Bogura Sadar","bogra sadar":"Bogura Sadar",
+        "gabtali":"Gabtali","sariakandi":"Sariakandi","sonatala":"Sonatala",
+        "dhunat":"Dhunat","sherpur bogura":"Sherpur Bogura",
+        # Joypurhat
+        "joypurhat sadar":"Joypurhat Sadar","kalai":"Kalai","khetlal":"Khetlal",
+        # Sirajganj
+        "sirajganj sadar":"Sirajganj Sadar","belkuchi":"Belkuchi",
+        "shahjadpur":"Shahjadpur","ullapara":"Ullahpara","ullahpara":"Ullahpara",
+        # Pabna
+        "pabna sadar":"Pabna Sadar","ishwardi":"Ishwardi","santhia":"Santhia",
+        # Rajshahi
+        "rajshahi sadar":"Rajshahi Sadar","godagari":"Godagari",
+        "tanore":"Tanore","puthia":"Puthia","charghat":"Charghat",
+        # Naogaon
+        "naogaon sadar":"Naogaon Sadar","atrai":"Atrai","manda":"Manda",
+        "dhamoirhat":"Dhamoirhat","sapahar":"Sapahar","patnitala":"Patnitala",
+        # Chapainawabganj
+        "chapainawabganj sadar":"Chapainawabganj Sadar",
+        "shibganj":"Shibganj Chapai","gomastapur":"Gomastapur",
+        # Natore
+        "natore sadar":"Natore Sadar","singra":"Singra","lalpur":"Lalpur",
+        "baraigram":"Baraigram","gurudaspur":"Gurudaspur",
+        # Tangail
+        "tangail sadar":"Tangail Sadar","ghatail":"Ghatail","madhupur":"Madhupur",
+        "mirzapur":"Mirzapur","sakhipur":"Sakhipur","kalihati":"Kalihati",
+        "basail":"Basail","delduar":"Delduar","nagarpur":"Nagarpur",
+        # Jamalpur
+        "jamalpur sadar":"Jamalpur Sadar","islampur":"Islampur",
+        "melandaha":"Melandaha","dewanganj":"Dewanganj","bakshiganj":"Bakshiganj",
+        "sarishabari":"Sarishabari","madarganj":"Madarganj",
+        # Mymensingh
+        "mymensingh sadar":"Mymensingh Sadar","trishal":"Trishal","bhaluka":"Bhaluka",
+        "gaffargaon":"Gaffargaon","gauripur":"Gauripur","gouripur":"Gouripur",
+        "haluaghat":"Haluaghat","ishwarganj":"Ishwarganj","iswarganj":"Ishwarganj",
+        "ishwargonj":"Ishwarganj","muktagacha":"Muktagacha","nandail":"Nandail",
+        "phulbaria":"Phulbaria","phulpur":"Phulpur","fulbaria mymensingh":"Fulbaria",
+        # Netrokona
+        "netrokona sadar":"Netrokona Sadar","atpara":"Atpara","barhatta":"Barhatta",
+        "durgapur":"Durgapur","kendua":"Kendua","madan":"Madan",
+        "mohanganj":"Mohanganj","kalmakanda":"Kalmakanda","chandua":"Chandua",
+        "khaliajuri":"Khaliajuri","purbadhala":"Purbadhala",
+        # Kishoreganj
+        "kishoreganj sadar":"Kishoreganj Sadar","bhairab":"Bhairab",
+        "bajitpur":"Bajitpur","kuliarchar":"Kuliarchar","katiadi":"Katiadi",
+        "pakundia":"Pakundia","tarail":"Tarail","karimganj":"Karimganj",
+        "hossainpur":"Hossainpur","itna":"Itna","nikli":"Nikli",
+        "austagram":"Austagram","mithamain":"Mithamain",
+        # Dhaka
+        "dhaka sadar":"Dhaka Sadar","mirpur":"Mirpur","savar":"Savar",
+        "dhanmondi":"Dhanmondi","uttara":"Uttara","motijheel":"Motijheel",
+        "demra":"Demra","jatrabari":"Jatrabari","tejgaon":"Tejgaon",
+        "gulshan":"Gulshan","banani":"Banani","badda":"Badda",
+        "keraniganj":"Keraniganj","dohar":"Dohar","dhamrai":"Dhamrai",
+        "mohammadpur":"Mohammadpur","wari":"Wari","ramna":"Ramna",
+        "lalbagh":"Lalbagh","sutrapur":"Sutrapur","kotwali":"Kotwali",
+        "kakrail":"Dhaka Sadar","shahbag":"Dhaka Sadar","segunbagicha":"Dhaka Sadar",
+        "rajarbag":"Dhaka Sadar","purana paltan":"Dhaka Sadar",
+        # Gazipur
+        "gazipur sadar":"Gazipur Sadar","tongi":"Tongi","kaliakair":"Kaliakair",
+        "sreepur":"Sreepur","kapasia":"Kapasia",
+        # Narayanganj
+        "narayanganj sadar":"Narayanganj Sadar","rupganj":"Rupganj",
+        "sonargaon":"Sonargaon","araihazar":"Araihazar","bandar":"Bandar",
+        # Narsingdi
+        "narsingdi sadar":"Narsingdi Sadar","shibpur":"Shibpur","belabo":"Belabo",
+        "monohardi":"Monohardi","raipura":"Raipura","palash":"Palash",
+        # Faridpur
+        "faridpur sadar":"Faridpur Sadar","bhanga":"Bhanga","saltha":"Saltha",
+        "nagarkanda":"Nagarkanda","alfadanga":"Alfadanga",
+        # Gopalganj
+        "gopalganj sadar":"Gopalganj Sadar","tungipara":"Tungipara",
+        "kotalipara":"Kotalipara","kashiani":"Kashiani","muksudpur":"Muksudpur",
+        # Madaripur
+        "madaripur sadar":"Madaripur Sadar","shibchar":"Shibchar",
+        "kalkini":"Kalkini","rajoir":"Rajoir",
+        # Barishal/Barisal
+        "barishal sadar":"Barishal Sadar","barisal sadar":"Barishal Sadar",
+        "agailjhara":"Agailjhara","babuganj":"Babuganj","bakerganj":"Bakerganj",
+        "banaripara":"Banaripara","gaurnadi":"Gaurnadi","hizla":"Hizla",
+        "mehendiganj":"Mehendiganj","muladi":"Muladi","uzirpur":"Uzirpur",
+        "wazirpur":"Uzirpur","bimanbandor":"Barishal Sadar",
+        "barishal bimanbandor":"Barishal Sadar",
+        # Pirojpur
+        "pirojpur sadar":"Pirojpur Sadar","bhandaria":"Bhandaria",
+        "mathbaria":"Mathbaria","nazirpur":"Nazirpur","nesarabad":"Nesarabad",
+        # Jhalokathi
+        "jhalokathi sadar":"Jhalokathi Sadar","nalchity":"Nalchity",
+        "rajapur":"Rajapur","kathi":"Kathi",
+        # Barguna
+        "barguna sadar":"Barguna Sadar","amtali":"Amtali","bamna":"Bamna",
+        "betagi":"Betagi","patharghata":"Patharghata",
+        # Patuakhali
+        "patuakhali sadar":"Patuakhali Sadar","bauphal":"Bauphal",
+        "galachipa":"Galachipa","kalapara":"Kalapara","mirzaganj":"Mirzaganj",
+        # Bhola
+        "bhola sadar":"Bhola Sadar","burhanuddin":"Burhanuddin",
+        "daulatkhan":"Daulatkhan","lalmohan":"Lalmohan","manpura":"Manpura",
+        # Cumilla
+        "cumilla sadar":"Cumilla Sadar","comilla sadar":"Cumilla Sadar",
+        "barura":"Barura","brahmanpara":"Brahmanpara","burichang":"Burichang",
+        "chandina":"Chandina","chauddagram":"Chauddagram","debidwar":"Debidwar",
+        "daudkandi":"Daudkandi","homna":"Homna","laksam":"Laksam",
+        "muradnagar":"Muradnagar","meghna":"Meghna","titas":"Titas",
+        # Brahmanbaria
+        "brahmanbaria sadar":"Brahmanbaria Sadar","akhaura":"Akhaura",
+        "ashuganj":"Ashuganj","kasba":"Kasba","sarail":"Sarail",
+        "nabinagar":"Nabinagar","nasirnagar":"Nasirnagar",
+        # Chandpur
+        "chandpur sadar":"Chandpur Sadar","haimchar":"Haimchar",
+        "haziganj":"Haziganj","kachua":"Kachua","matlab north":"Matlab North",
+        "matlab south":"Matlab South","shahrasti":"Shahrasti",
+        # Chittagong/Chattogram
+        "chittagong sadar":"Chittagong Sadar","chattogram sadar":"Chittagong Sadar",
+        "hathazari":"Hathazari","fatikchhari":"Fatikchhari","mirsarai":"Mirsarai",
+        "sandwip":"Sandwip","sitakunda":"Sitakunda","rangunia":"Rangunia",
+        "anwara":"Anwara","patiya":"Patiya","chandanaish":"Chandanaish",
+        # Sylhet
+        "sylhet sadar":"Sylhet Sadar","bishwanath":"Bishwanath",
+        "golapganj":"Golapganj","gowainghat":"Gowainghat",
+        "jaintiapur":"Jaintiapur","kanaighat":"Kanaighat","zakiganj":"Zakiganj",
+        "fenchuganj":"Fenchuganj","beanibazar":"Beanibazar",
+        # Moulvibazar
+        "moulvibazar sadar":"Moulvibazar Sadar","sreemangal":"Sreemangal",
+        "kamalganj":"Kamalganj","kulaura":"Kulaura","barlekha":"Barlekha",
+        # Habiganj
+        "habiganj sadar":"Habiganj Sadar","chunarughat":"Chunarughat",
+        "madhabpur":"Madhabpur","nabiganj":"Nabiganj","shaistaganj":"Shaistaganj",
+        "baniachong":"Baniachong","lakhai":"Lakhai","bahubal":"Bahubal",
+        # Sunamganj
+        "sunamganj sadar":"Sunamganj Sadar","chhatak":"Chhatak","derai":"Derai",
+        "dowarabazar":"Dowarabazar","jagannathpur":"Jagannathpur",
+        # Khulna
+        "khulna sadar":"Khulna Sadar","dumuria":"Dumuria","koyra":"Koyra",
+        "paikgachha":"Paikgachha","batiaghata":"Batiaghata","dacope":"Dacope",
+        # Jessore
+        "jessore sadar":"Jessore Sadar","jashore sadar":"Jashore Sadar",
+        "keshabpur":"Keshabpur","manirampur":"Manirampur","sharsha":"Sharsha",
+        "abhaynagar":"Abhaynagar","jhikargachha":"Jhikargachha",
+        # Satkhira
+        "satkhira sadar":"Satkhira Sadar","kalaroa":"Kalaroa",
+        "assasuni":"Assasuni","shyamnagar":"Shyamnagar","tala":"Tala",
+        # Jhenaidah
+        "jhenaidah sadar":"Jhenaidah Sadar","shailkupa":"Shailkupa",
+        "kotchandpur":"Kotchandpur","maheshpur":"Maheshpur",
+        # Chuadanga
+        "chuadanga sadar":"Chuadanga Sadar","alamdanga":"Alamdanga",
+        "damurhuda":"Damurhuda","jibannagar":"Jibannagar",
+        # Kushtia
+        "kushtia sadar":"Kushtia Sadar","bheramara":"Bheramara",
+        "ishwardi":"Ishwardi","kumarkhali":"Kumarkhali",
+        # Cox's Bazar
+        "cox's bazar sadar":"Cox'S Bazar Sadar","chakaria":"Chakaria",
+        "teknaf":"Teknaf","ukhia":"Ukhia","ramu":"Ramu",
+        "maheshkhali":"Maheshkhali","kutubdia":"Kutubdia",
+        # Bandarban
+        "bandarban sadar":"Bandarban Sadar","lama":"Lama","ruma":"Ruma",
+        "alikadam":"Alikadam","rowangchhari":"Rowangchhari",
+        # Rangamati
+        "rangamati sadar":"Rangamati Sadar","kaptai":"Kaptai",
+        "baghaichhari":"Baghaichhari","barkal":"Barkal",
+        # Khagrachhari
+        "khagrachhari sadar":"Khagrachhari Sadar","dighinala":"Dighinala",
+        "matiranga":"Matiranga","ramgarh":"Ramgarh","panchhari":"Panchhari",
+        # Sherpur
+        "sherpur sadar":"Sherpur Sadar","nakla":"Nakla",
+        "nalitabari":"Nalitabari","sreebardi":"Sreebardi",
+        # Misc village/area → upazila mappings often seen in CDR
+        "pasar":"Gouripur","sohagi":"Ishwarganj","sahanati":"Gauripur",
+        "maoha":"Gouripur","ishwargonj":"Ishwarganj",
     }
+
+    # ── District name correction/normalization ──
     DIST_CORR = {
+        # Kurigram variants
         "kuregram":"Kurigram","kurigrame":"Kurigram","kurigram":"Kurigram",
+        # Rangpur variants
         "rongpur":"Rangpur","rangpur":"Rangpur","rangpur sadar":"Rangpur",
+        # Gaibandha variants
         "gaibanda":"Gaibandha","gaibandha":"Gaibandha",
-        "dhaka":"Dhaka","mymensingh":"Mymensingh","rajshahi":"Rajshahi",
+        # Major districts
+        "dhaka":"Dhaka","mymensingh":"Mymensingh","mymensingh.":"Mymensingh",
+        "mymensing":"Mymensingh","maymensingh":"Mymensingh","maimensingh":"Mymensingh",
+        "rajshahi":"Rajshahi","khulna":"Khulna","sylhet":"Sylhet",
+        "chittagong":"Chittagong","chattogram":"Chittagong",
+        "barishal":"Barishal","barisal":"Barishal",
+        "cumilla":"Cumilla","comilla":"Cumilla",
+        "tangail":"Tangail","faridpur":"Faridpur","gopalganj":"Gopalganj",
+        "narsingdi":"Narsingdi","narayanganj":"Narayanganj","gazipur":"Gazipur",
+        "manikganj":"Manikganj","munshiganj":"Munshiganj","kishoreganj":"Kishoreganj",
+        "netrokona":"Netrokona","netrakona":"Netrokona",
+        "jamalpur":"Jamalpur","sherpur":"Sherpur","bogura":"Bogura","bogra":"Bogura",
+        "sirajganj":"Sirajganj","pabna":"Pabna","natore":"Natore",
+        "naogaon":"Naogaon","rajbari":"Rajbari","shariatpur":"Shariatpur",
+        "madaripur":"Madaripur","joypurhat":"Joypurhat",
+        "chapainawabganj":"Chapainawabganj","chapai nawabganj":"Chapainawabganj",
+        "jhenaidah":"Jhenaidah","jessore":"Jessore","jashore":"Jessore",
+        "magura":"Magura","narail":"Narail","satkhira":"Satkhira",
+        "bagerhat":"Bagerhat","kushtia":"Kushtia","meherpur":"Meherpur",
+        "chuadanga":"Chuadanga","lalmonirhat":"Lalmonirhat",
+        "nilphamari":"Nilphamari","dinajpur":"Dinajpur","thakurgaon":"Thakurgaon",
+        "panchagarh":"Panchagarh","habiganj":"Habiganj",
+        "moulvibazar":"Moulvibazar","sunamganj":"Sunamganj",
+        "brahmanbaria":"Brahmanbaria","chandpur":"Chandpur",
+        "lakshmipur":"Lakshmipur","noakhali":"Noakhali","feni":"Feni",
+        "cox's bazar":"Cox'S Bazar","coxs bazar":"Cox'S Bazar",
+        "bandarban":"Bandarban","rangamati":"Rangamati","khagrachhari":"Khagrachhari",
+        "pirojpur":"Pirojpur","jhalokathi":"Jhalokathi","barguna":"Barguna",
+        "patuakhali":"Patuakhali","bhola":"Bhola",
+        # With trailing punctuation
+        "mymensingh.":"Mymensingh","dhaka.":"Dhaka","chittagong.":"Chittagong",
+        # Dist : prefix cleanup
+        "dist : barishal":"Barishal","dist : dhaka":"Dhaka",
+        "dist : mymensingh":"Mymensingh","dist : chittagong":"Chittagong",
+        "dist- netrokhona":"Netrokona","dist mymensingh":"Mymensingh",
     }
 
     def haversine(la1,lo1,la2,lo2):
@@ -1543,30 +2087,84 @@ def movement_pattern_analysis(df):
         return R*2*math.atan2(math.sqrt(a),math.sqrt(1-a))
 
     def parse_ud(addr):
+        """
+        Extract (upazila, district) from a BTS address string.
+        Handles: 'DIST : BARISHAL', 'DIST. MYMENSINGH', 'P.S- GOURIPUR', 'PS:ISHWARGANJ'
+        Falls back to comma-split parts if regex fails.
+        """
         if not addr or str(addr).strip() in ("","-","nan"): return None,None
-        s=str(addr); d=upa=None
-        dm=re.search(r"[Dd]ist(?:rict)?[\s:\-\.]+([A-Za-z\s]+?)(?:[,.\n;]|$)",s)
-        if dm: d=dm.group(1).strip()
-        um=re.search(r"(?:P[\. ]?S[\s:\-\.]+|[Pp]s[\s:\-]+|[Tt]hana[\s:\-]+|[Uu]pazill?a[\s:\-]+)([A-Za-z][A-Za-z\s]+?)(?:[,.\n;]|$)",s)
-        if um: upa=um.group(1).strip()
-        if not d:
-            parts=[re.sub(r"\d+","",p).strip(" -.") for p in s.split(",")]
-            parts=[p for p in parts if len(p)>2]
-            if parts: d=parts[-1].strip()
-            if len(parts)>=2 and not upa: upa=parts[-2].strip()
-        if d: d=DIST_CORR.get(d.lower().strip(),d.title())
-        if upa:
-            upa=re.sub(r"\s+"," ",upa).strip()
-            upa=UPA_NORM.get(upa.lower(),upa.title())
-        return upa,d
+        s = str(addr); d = upa = None
 
-    def get_coord(upa,dist):
-        if upa and upa in BD_COORDS: return BD_COORDS[upa]
+        # ── District: multiple patterns ──
+        # Pattern 1: DIST : MYMENSINGH / DIST. DHAKA / DIST- CHITTAGONG / DIS- NETROKHONA
+        dm = re.search(r"\bDIS[T]?\s*[:\.\-]\s*([A-Za-z][A-Za-z\s']+?)(?:[,\.\n;]|$)", s, re.IGNORECASE)
+        if dm:
+            d = dm.group(1).strip().rstrip(".")
+        # Pattern 2: District Mymensingh / District: Dhaka
+        if not d:
+            dm2 = re.search(r"\bDistrict\s*[:\-]?\s*([A-Za-z][A-Za-z\s']+?)(?:[,\.\n;]|$)", s, re.IGNORECASE)
+            if dm2: d = dm2.group(1).strip().rstrip(".")
+
+        # ── Upazila/PS: multiple patterns ──
+        # Pattern: P.S- GOURIPUR / P/S CHANDUA / PS:ISHWARGANJ / Thana- / Upazila-
+        um = re.search(
+            r"(?:P[\./]?\s*S[\s:\.\-]+|[Pp]s\s*[:\-]+|[Tt]hana\s*[:\-]+|[Uu]pazill?a\s*[:\-]+)"
+            r"([A-Za-z][A-Za-z\s]+?)(?:[,\.\n;]|$)", s, re.IGNORECASE)
+        if um: upa = um.group(1).strip().rstrip(".")
+
+        # ── Fallback: comma-split last parts ──
+        if not d:
+            parts = [re.sub(r"\d+","",p).strip(" -.") for p in s.split(",")]
+            parts = [p.strip() for p in parts if len(p.strip()) > 2]
+            if parts:
+                last = parts[-1].strip()
+                # Strip leading "DIST :" or "DIS-" prefix if present
+                last = re.sub(r"^DIS[T]?\s*[:\.\-]\s*", "", last, flags=re.IGNORECASE).strip()
+                d = last
+            if len(parts) >= 2 and not upa:
+                upa = parts[-2].strip()
+
+        # ── Normalize district ──
+        if d:
+            d_clean = d.lower().strip().rstrip(".")
+            d = DIST_CORR.get(d_clean, d.title().strip())
+
+        # ── Normalize upazila ──
+        if upa:
+            upa = re.sub(r"\s+"," ", upa).strip().rstrip(".")
+            upa_norm = UPA_NORM.get(upa.lower().strip(), None)
+            if upa_norm:
+                upa = upa_norm
+            else:
+                # Try partial match: first word of upazila
+                first_word = upa.lower().split()[0] if upa else ""
+                upa = UPA_NORM.get(first_word, upa.title())
+
+        return upa, d
+
+    def get_coord(upa, dist):
+        """
+        Look up coordinates for a upazila/district.
+        Tries: exact upazila → exact dist sadar → district prefix match → district in UPA_NORM coords.
+        """
+        if upa:
+            if upa in BD_COORDS: return BD_COORDS[upa]
+            # Try case-insensitive
+            for k, v in BD_COORDS.items():
+                if k.lower() == upa.lower(): return v
         if dist:
-            k=dist+" Sadar"
+            # Try "District Sadar"
+            k = dist + " Sadar"
             if k in BD_COORDS: return BD_COORDS[k]
-            for kk,vv in BD_COORDS.items():
-                if kk.lower().startswith(dist.lower()[:5]): return vv
+            # Try exact district name
+            if dist in BD_COORDS: return BD_COORDS[dist]
+            # Try prefix match (first 6 chars)
+            dist_low = dist.lower()
+            for kk, vv in BD_COORDS.items():
+                if kk.lower().startswith(dist_low[:6]): return vv
+            # Try if district name is contained in key
+            for kk, vv in BD_COORDS.items():
+                if dist_low in kk.lower() and "Sadar" in kk: return vv
         return None
 
     df_loc=df[df["address"].notna()&df["address"].apply(_is_valid_address)].copy()
@@ -1576,7 +2174,7 @@ def movement_pattern_analysis(df):
     home_dist = _home_district(df_loc)
     work_dist = None  # Not used in new logic
 
-    # Home coord: most frequent upazila/district across ALL records
+    # Home coord: most frequent address whose coord can be resolved
     home_coord = None
     home_label = None
     for addr in df_loc["address"].value_counts().index:
@@ -1590,29 +2188,63 @@ def movement_pattern_analysis(df):
         home_coord = (25.5964, 89.7662)  # fallback Rowmari
         home_label = "Rowmari"
 
-    HOME_KM=35.0; TRANSIT_H=6; HOME_RETURN_TOLERANCE_H=12
+    HOME_KM=35.0; TRANSIT_H=6
 
-    # Enrich rows with distance from home
+    # ── Enrich rows with distance from home ──
+    # KEY FIX: When coord lookup fails for a record, we do NOT set km=0
+    # (which falsely marks it as "home" and breaks the trip session).
+    # Instead we carry forward the last known km. Records at the START
+    # with no coord default to 0.0 (home) since we have no information.
     rows_e=[]
+    last_known_km = 0.0
+    last_known_coord = home_coord
     for _,row in df_loc.iterrows():
         upa,dist=parse_ud(row["address"])
         coord=get_coord(upa,dist)
-        km=haversine(home_coord[0],home_coord[1],coord[0],coord[1]) if coord else 0.0
+        if coord:
+            km=haversine(home_coord[0],home_coord[1],coord[0],coord[1])
+            last_known_km=km
+            last_known_coord=coord
+        else:
+            # Coord unknown: keep last known km so we don't falsely break a session
+            km=last_known_km
+            coord=last_known_coord
         rows_e.append({"ts":row["start"],"address":row["address"],
                        "upazila":upa,"district":dist,"coord":coord,"km":km})
     df_e=pd.DataFrame(rows_e).sort_values("ts").reset_index(drop=True)
     df_e["away"]=df_e["km"]>=HOME_KM
 
-    # Group consecutive away runs — home return always breaks the session
+    # ── Group consecutive away runs into sessions ──
+    # A session ends ONLY when we see a CONFIRMED home location (km < HOME_KM
+    # AND the coord was successfully resolved — not just carried forward).
+    # We track whether each row has a confirmed coord or is using the fallback.
+    confirmed_home_mask = []
+    last_was_resolved = True
+    prev_km = 0.0
+    for _, row in df_e.iterrows():
+        # A row is "confirmed home" only if km < HOME_KM AND the distance
+        # changed from the previous row (meaning coord was freshly resolved).
+        # Simpler heuristic: mark as confirmed home only if km < HOME_KM
+        # AND km <= HOME_KM * 0.5 (clearly home, not borderline).
+        confirmed_home_mask.append(row["km"] < HOME_KM and row["km"] < HOME_KM * 0.8)
+    df_e["confirmed_home"] = confirmed_home_mask
+
     sessions=[]
     sess_rows=[]; in_sess=False
-    for _,r in df_e.iterrows():
+    for idx, r in df_e.iterrows():
         if r["away"]:
             in_sess=True; sess_rows.append(r)
         else:
-            if in_sess and sess_rows:
-                sessions.append(sess_rows)
-            sess_rows=[]; in_sess=False
+            # Only break the session if this is a CONFIRMED home return
+            # (not just a coord-lookup failure that defaulted to last known km)
+            if r["confirmed_home"]:
+                if in_sess and sess_rows:
+                    sessions.append(sess_rows)
+                sess_rows=[]; in_sess=False
+            else:
+                # Ambiguous location: if already in a session, keep it going
+                if in_sess:
+                    sess_rows.append(r)
     if in_sess and sess_rows: sessions.append(sess_rows)
 
     trips=[]
