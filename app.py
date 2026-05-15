@@ -626,14 +626,19 @@ def load_and_clean(file_bytes):
         df['party_a'] = df['party_a'].astype(str).str.strip()
 
     # ── Mark anomalies (DO NOT REMOVE — keep for location analysis) ──
-    # is_anomaly = True means invalid party_b (service SMS, promo, short codes etc.)
-    # These rows are EXCLUDED from call/contact analysis
-    # but INCLUDED in location analysis (their BTS data is still valid)
+    # is_anomaly = True means invalid party_b for CALL records
+    # SMS records with service/app party_b (WhatsApp, service numbers) are VALID
     anomaly_count = 0
     if 'party_b_clean' in df.columns:
-        anomaly_mask = ~df['party_b_clean'].apply(is_valid_number)
+        invalid_pb = ~df['party_b_clean'].apply(is_valid_number)
+        # For SMS rows, non-number party_b is normal (WhatsApp, bank OTP, etc.)
+        is_sms_row = pd.Series(False, index=df.index)
+        if 'usage_type' in df.columns:
+            ut_tmp = df['usage_type'].astype(str).str.lower().str.strip()
+            is_sms_row = ut_tmp.isin(SMS_OUT_TYPES + SMS_IN_TYPES)
+        anomaly_mask = invalid_pb & ~is_sms_row
         anomaly_count = int(anomaly_mask.sum())
-        df['is_anomaly'] = anomaly_mask  # flag — do not remove row
+        df['is_anomaly'] = anomaly_mask
     else:
         df['is_anomaly'] = False
 
@@ -666,15 +671,39 @@ def cdf(df):
 # ─────────────────────────────────────────────
 # ANALYSIS FUNCTIONS (same as cdr_analysis.py)
 # ─────────────────────────────────────────────
+def is_imei_cdr(df):
+    """Return True if this CDR is IMEI-based (single dominant IMEI, multiple SIMs)."""
+    if 'imei' not in df.columns or 'party_a' not in df.columns: return False
+    imei_counts = df['imei'].dropna().value_counts()
+    if imei_counts.empty: return False
+    # Dominant IMEI covers >= 80% of records (filter garbage values like '-')
+    real_imeis = imei_counts[imei_counts.index.map(
+        lambda x: str(x).replace('-','').isdigit() and len(str(x)) >= 10
+    )]
+    if real_imeis.empty: return False
+    top_imei_pct = real_imeis.iloc[0] / len(df)
+    party_a_unique = df['party_a'].dropna().nunique()
+    return top_imei_pct >= 0.80 and party_a_unique > 1
+
 def get_phone(df):
-    if 'party_a' in df.columns and len(df) > 0:
-        return str(df['party_a'].mode()[0])
-    return 'N/A'
+    if 'party_a' not in df.columns: return 'N/A'
+    if is_imei_cdr(df):
+        # Show IMEI + all SIM numbers
+        imei = df['imei'].dropna().mode()[0] if 'imei' in df.columns else 'N/A'
+        sims = df['party_a'].dropna().value_counts()
+        # Filter out garbage (too short or non-numeric)
+        sims = [s for s in sims.index if str(s).replace('+','').isdigit() and len(str(s)) >= 10]
+        sim_str = ' / '.join(str(s) for s in sims[:3])
+        return f"IMEI: {imei} (SIMs: {sim_str})"
+    return str(df['party_a'].mode()[0])
 
 def get_operator(df):
     if 'operator' in df.columns:
+        # Filter: keep only known operator names (not numeric garbage)
         ops = df['operator'].dropna().unique()
-        return ', '.join(str(o) for o in ops) if len(ops) > 0 else 'N/A'
+        known = [o for o in ops if str(o).strip() and not str(o).strip().isdigit()
+                 and len(str(o).strip()) > 2]
+        return ', '.join(str(o) for o in known) if known else 'N/A'
     return 'N/A'
 
 def get_date_range(df):
@@ -856,19 +885,21 @@ def plot_top_call_overall(df, n=10):
 def top_locations(df, mask=None, n=10):
     if 'address' not in df.columns: return pd.DataFrame()
     data = df if mask is None else df[mask]
-    c = data['address'].dropna().value_counts().head(n)
+    valid = data['address'].dropna().apply(lambda a: a if _is_valid_address(a) else None).dropna()
+    c = valid.value_counts().head(n)
     if c.empty: return pd.DataFrame()
     return pd.DataFrame({'Address': c.index, 'Count': c.values})
 
 def location_summary(df):
     if 'address' not in df.columns: return pd.DataFrame()
-    addrs = df['address'].dropna()
+    addrs = df['address'].dropna().apply(lambda a: a if _is_valid_address(a) else None).dropna()
     if len(addrs)==0: return pd.DataFrame()
     mv = addrs.value_counts()
 
     def top_addr(mask):
         if mask is None or 'start' not in df.columns: return ('N/A', 0)
-        sub = df[mask]['address'].dropna().value_counts()
+        sub = df[mask]['address'].dropna().apply(
+            lambda a: a if _is_valid_address(a) else None).dropna().value_counts()
         return (sub.index[0], int(sub.iloc[0])) if not sub.empty else ('N/A', 0)
 
     home_mask    = df['start'].dt.hour.astype(int).isin(list(range(0,6))+list(range(22,24))) if 'start' in df.columns else None
@@ -962,7 +993,10 @@ def last_n_days_top_locations(df, days=10, n=10):
     max_date = df['start'].max()
     cutoff = max_date - pd.Timedelta(days=days)
     recent = df[df['start'] >= cutoff]
-    addrs = recent['address'].dropna().value_counts().head(n)
+    addrs = (recent['address'].dropna()
+             .apply(lambda a: a if _is_valid_address(a) else None)
+             .dropna()
+             .value_counts().head(n))
     if addrs.empty:
         return pd.DataFrame()
     return pd.DataFrame({'Address': addrs.index, 'Count': addrs.values})
@@ -1071,7 +1105,9 @@ def plot_contacts(df, direction='out', n=10, title='Top Contacts'):
 def plot_locations(df, mask=None, title='Top Locations', n=10):
     if 'address' not in df.columns: return None
     data = df if mask is None else df[mask]
-    c = data['address'].dropna().value_counts().head(n)
+    c = (data['address'].dropna()
+         .apply(lambda a: a if _is_valid_address(a) else None)
+         .dropna().value_counts().head(n))
     if c.empty: return None
     labels = [str(a)[:40]+'...' if len(str(a))>40 else str(a) for a in c.index[::-1]]
     fig, ax = plt.subplots(figsize=(12, max(4, n*0.5)))
@@ -1149,8 +1185,10 @@ def _home_district(df):
         return None
     night = df[df['start'].dt.hour.astype(int).isin(list(range(0,6))+list(range(22,24)))]
     if night.empty:
-        night = df  # fallback
-    addr_counts = night['address'].dropna().value_counts()
+        night = df
+    addr_counts = (night['address'].dropna()
+                   .apply(lambda a: a if _is_valid_address(a) else None)
+                   .dropna().value_counts())
     for addr in addr_counts.index:
         d = _extract_district(addr)
         if d:
@@ -1165,7 +1203,9 @@ def _work_district(df):
     day = df[(df['start'].dt.hour.astype(int) >= 8) & (df['start'].dt.hour.astype(int) < 18)]
     if day.empty:
         return None
-    addr_counts = day['address'].dropna().value_counts()
+    addr_counts = (day['address'].dropna()
+                   .apply(lambda a: a if _is_valid_address(a) else None)
+                   .dropna().value_counts())
     for addr in addr_counts.index:
         d = _extract_district(addr)
         if d:
@@ -1183,154 +1223,488 @@ def _is_valid_address(addr):
     return len(cleaned) >= 5  # must have at least 5 meaningful chars
 
 
+def generate_overall_comment(df, phone=None, operator=None, date_range=None, total_raw=None):
+    """
+    Generates a structured, data-driven overall comment for the CDR report.
+    Covers: identity, activity, contacts, time behaviour, location, network, anomalies.
+    """
+    d = cdf(df)
+    lines = []
+
+    # ── 1. Identity & Period ─────────────────────────────────────────────
+    ph   = phone    or get_phone(df)
+    op   = operator or get_operator(df)
+    dr   = date_range or get_date_range(df)
+    raw  = total_raw or len(df)
+    days_span = 0
+    if 'start' in df.columns and df['start'].notna().any():
+        dmin = df['start'].min()
+        dmax = df['start'].max()
+        days_span = max((dmax - dmin).days + 1, 1)
+
+    if is_imei_cdr(df):
+        # IMEI-based CDR — special identity paragraph
+        imei_val = df['imei'].dropna().mode()[0] if 'imei' in df.columns else 'N/A'
+        sims = [s for s in df['party_a'].dropna().value_counts().index
+                if str(s).replace('+','').isdigit() and len(str(s)) >= 10]
+        sim_detail = '; '.join(
+            f"{s} ({op_v})" for s, op_v in
+            [(s, df[df['party_a']==s]['operator'].dropna().mode()[0]
+              if len(df[df['party_a']==s]['operator'].dropna()) > 0 else 'N/A')
+             for s in sims[:3]]
+        )
+        lines.append(
+            f"This CDR report is IMEI-based, pertaining to device with IMEI {imei_val}. "
+            f"The device was used with {len(sims)} SIM card(s) during the analysis period: {sim_detail}. "
+            f"The analysis covers {days_span} days ({dr}), "
+            f"with a total of {raw:,} raw records processed across all SIMs."
+        )
+    else:
+        lines.append(
+            f"This CDR report pertains to subscriber {ph} operating on the {op} network. "
+            f"The analysis covers a period of {days_span} days ({dr}), "
+            f"with a total of {raw:,} raw records processed."
+        )
+
+    # ── 2. Activity Overview ─────────────────────────────────────────────
+    n_out  = int(d['is_call_out'].sum())  if 'is_call_out' in d.columns else 0
+    n_in   = int(d['is_call_in'].sum())   if 'is_call_in'  in d.columns else 0
+    n_sout = int(d['is_sms_out'].sum())   if 'is_sms_out'  in d.columns else 0
+    n_sin  = int(d['is_sms_in'].sum())    if 'is_sms_in'   in d.columns else 0
+    n_total_calls = n_out + n_in
+    n_total_sms   = n_sout + n_sin
+
+    dur_total = 0
+    if 'duration' in d.columns:
+        dur_total = int(d.loc[d['is_call_out'] | d['is_call_in'], 'duration'].sum()) if n_total_calls > 0 else 0
+
+    daily_avg = round(n_total_calls / days_span, 1) if days_span > 0 else 0
+
+    lines.append(
+        f"The subscriber made {n_out:,} outgoing calls (MOC) and received {n_in:,} incoming calls (MTC), "
+        f"totalling {n_total_calls:,} call events with a combined talk time of "
+        f"{round(dur_total/60, 1):,} minutes ({round(dur_total/3600, 1)} hours). "
+        f"Average daily call activity was {daily_avg} calls/day. "
+        f"SMS activity recorded {n_sout} sent and {n_sin} received messages."
+    )
+
+    # ── 3. Contact Behaviour ─────────────────────────────────────────────
+    gcol = 'party_b_norm' if 'party_b_norm' in d.columns else 'party_b_clean'
+    contact_comment = ""
+    if gcol in d.columns:
+        all_calls = d[d['is_call_out'] | d['is_call_in']]
+        if not all_calls.empty:
+            vc = all_calls[gcol].value_counts()
+            unique_contacts = len(vc)
+            top_num   = display_number(vc.index[0]) if len(vc) > 0 else 'N/A'
+            top_count = int(vc.iloc[0])             if len(vc) > 0 else 0
+            top_pct   = round(top_count / n_total_calls * 100, 1) if n_total_calls > 0 else 0
+            top2_pct  = round(vc.iloc[:3].sum() / n_total_calls * 100, 1) if len(vc) >= 3 and n_total_calls > 0 else 0
+
+            dep_note = ""
+            if top_pct >= 25:
+                dep_note = (f" This indicates a high dependency on a single contact, "
+                            f"with the top number accounting for {top_pct}% of all calls.")
+            elif top_pct >= 15:
+                dep_note = f" The top contact accounts for {top_pct}% of total call activity."
+
+            contact_comment = (
+                f"The subscriber communicated with {unique_contacts} unique numbers. "
+                f"The most frequently contacted number is {top_num} with {top_count:,} call events ({top_pct}% of total).{dep_note} "
+                f"The top 3 contacts collectively account for {top2_pct}% of all calls."
+            )
+    if contact_comment:
+        lines.append(contact_comment)
+
+    # ── 4. Time-of-Day Behaviour ─────────────────────────────────────────
+    if 'start' in d.columns and d['start'].notna().any():
+        d2 = d.copy()
+        d2['hour'] = d2['start'].dt.hour
+        slot_map = {
+            'Night (22:00–05:00)':   d2['hour'].apply(lambda h: h >= 22 or h < 5),
+            'Morning (05:00–08:00)': d2['hour'].apply(lambda h: 5 <= h < 8),
+            'Day (08:00–18:00)':     d2['hour'].apply(lambda h: 8 <= h < 18),
+            'Evening (18:00–22:00)': d2['hour'].apply(lambda h: 18 <= h < 22),
+        }
+        slot_counts = {k: int(v.sum()) for k, v in slot_map.items()}
+        peak_slot   = max(slot_counts, key=slot_counts.get)
+        peak_count  = slot_counts[peak_slot]
+        peak_pct    = round(peak_count / len(d2) * 100, 1) if len(d2) > 0 else 0
+        night_pct   = round(slot_counts.get('Night (22:00–05:00)', 0) / len(d2) * 100, 1) if len(d2) > 0 else 0
+
+        night_note = ""
+        if night_pct >= 10:
+            night_note = (f" Notably, {night_pct}% of activity occurred during night hours (22:00–05:00), "
+                          f"which may warrant further attention.")
+
+        lines.append(
+            f"Peak communication activity was recorded during {peak_slot}, "
+            f"accounting for {peak_pct}% of all events.{night_note}"
+        )
+
+    # ── 5. Location & Movement ───────────────────────────────────────────
+    mv = movement_pattern_analysis(df)
+    if mv:
+        home   = mv.get('home_district') or 'unknown'
+        work   = mv.get('work_district') or 'unknown'
+        trips  = mv.get('trips', [])
+        gaps   = mv.get('gaps', [])
+        same   = home.lower() == work.lower()
+        loc_comment = (
+            f"Location analysis indicates the subscriber's estimated home district as {home}"
+            + (f" and work district as {work}." if not same else ", with work activity also centred in the same district.")
+        )
+        if trips:
+            districts = list({t['district'] for t in trips})
+            loc_comment += (f" The subscriber travelled outside the home district on {len(trips)} occasion(s), "
+                            f"visiting: {', '.join(districts[:5])}.")
+        if gaps:
+            loc_comment += (f" {len(gaps)} network disconnection period(s) of more than 4 consecutive days "
+                            f"were detected, which may indicate travel, device change, or SIM inactivity.")
+        lines.append(loc_comment)
+
+    # ── 6. Network Technology ────────────────────────────────────────────
+    if 'cell_type' in df.columns and df['cell_type'].notna().any():
+        # Filter valid tech values: 2G, 3G, 4G, 5G only
+        valid_techs = ['2G','3G','4G','5G','LTE','WCDMA','GSM','NR']
+        tech_vc = (df['cell_type'].dropna().str.upper().str.strip()
+                   .apply(lambda x: x if any(t in x for t in valid_techs) else None)
+                   .dropna().value_counts())
+        if not tech_vc.empty:
+            tech_str = ', '.join([f"{v} ({int(c):,} records)" for v, c in tech_vc.head(3).items()])
+            lines.append(f"Network technology usage: {tech_str}.")
+
+    # ── 7. IMEI / Device Note ────────────────────────────────────────────
+    if 'imei' in df.columns:
+        imei_vals = df['imei'].dropna().unique()
+        imei_vals = [str(i) for i in imei_vals if str(i).strip() not in ('', '-', 'nan')]
+        if len(imei_vals) > 1:
+            lines.append(
+                f"Multiple IMEI values ({len(imei_vals)}) detected for this subscriber, "
+                f"suggesting possible device changes or use of multiple handsets during the analysis period."
+            )
+        elif len(imei_vals) == 1:
+            lines.append(f"A single device (IMEI: {imei_vals[0]}) was used throughout the analysis period.")
+
+    # ── 8. Closing ───────────────────────────────────────────────────────
+    lines.append(
+        "The above observations are derived solely from Call Detail Records (CDR) provided for analysis. "
+        "This report is intended for investigative/analytical purposes and should be interpreted "
+        "in conjunction with other available evidence."
+    )
+
+    return lines
+
+
+def generate_recommendation(df):
+    """Returns a list of recommendation strings based on CDR patterns."""
+    d = cdf(df)
+    recs = []
+
+    # Top contact dependency
+    gcol = 'party_b_norm' if 'party_b_norm' in d.columns else 'party_b_clean'
+    if gcol in d.columns:
+        all_calls  = d[d['is_call_out'] | d['is_call_in']]
+        n_total    = len(all_calls)
+        if n_total > 0:
+            vc       = all_calls[gcol].value_counts()
+            top_pct  = round(vc.iloc[0] / n_total * 100, 1) if len(vc) > 0 else 0
+            if top_pct >= 20:
+                recs.append(
+                    f"Investigate the relationship between the subscriber and the top contact "
+                    f"({display_number(vc.index[0])}) — {top_pct}% of all calls directed to/from "
+                    f"a single number indicates a significant association."
+                )
+
+    # Night activity
+    if 'start' in d.columns and d['start'].notna().any():
+        d2 = d.copy()
+        d2['hour'] = d2['start'].dt.hour
+        night_pct = round(((d2['hour'] >= 22) | (d2['hour'] < 5)).sum() / len(d2) * 100, 1)
+        if night_pct >= 10:
+            recs.append(
+                f"Significant night-time activity ({night_pct}% of events) detected. "
+                f"Cross-reference night-time contacts and locations with case context."
+            )
+
+    # Movement
+    mv = movement_pattern_analysis(df)
+    if mv and mv.get('trips'):
+        recs.append(
+            f"Out-of-district travel recorded ({len(mv['trips'])} trip(s)). "
+            f"Verify travel dates against case timeline and obtain tower dump data for visited districts if required."
+        )
+    if mv and mv.get('gaps'):
+        recs.append(
+            f"Network disconnection gap(s) of 4+ days detected. "
+            f"Verify whether subscriber was using an alternate SIM or was unreachable during these periods."
+        )
+
+    # Multiple IMEI
+    if 'imei' in df.columns:
+        imei_vals = [str(i) for i in df['imei'].dropna().unique() if str(i).strip() not in ('', '-', 'nan')]
+        if len(imei_vals) > 1:
+            recs.append(
+                f"Multiple devices (IMEI count: {len(imei_vals)}) detected. "
+                f"Obtain CDR for all associated IMEIs to ensure complete communication picture."
+            )
+
+    if not recs:
+        recs.append("No specific anomalies detected. Continue routine monitoring as required.")
+
+    return recs
+
+
 def movement_pattern_analysis(df):
     """
-    Detect out-of-home-district travel and network disconnection gaps.
-    Rules:
-      - Only count valid BTS addresses (no -, -,, empty cells)
-      - Only count as a trip if person is outside home/work district for >1 consecutive day
-      - Passing through (1 day) is ignored
+    Distance-based movement pattern analysis.
+    - Home coord from most frequent night-time BTS address.
+    - Out-of-home: any location >= 35 km from home coord.
+    - Transit < 6 hours at intermediate stop: ignored.
+    - Destination = furthest location in each away-session (upazila preferred).
+    - Table in REVERSE chronological order.
+    - Network gaps > 4 days flagged.
     """
-    if 'address' not in df.columns or 'start' not in df.columns:
+    if "address" not in df.columns or "start" not in df.columns:
         return None
 
-    # Filter valid addresses only
-    df_loc = df[
-        df['address'].notna() &
-        df['address'].apply(_is_valid_address)
-    ].copy()
-    df_loc = df_loc.sort_values('start').reset_index(drop=True)
+    import math
 
-    if df_loc.empty:
-        return None
-
-    home_dist  = _home_district(df_loc)
-    work_dist  = _work_district(df_loc)
-    base_dists = set(filter(None, [home_dist, work_dist]))
-    if not base_dists:
-        base_dists = {'Dhaka'}
-
-    # Add date and district columns
-    df_loc['date']     = df_loc['start'].dt.date
-    df_loc['district'] = df_loc['address'].apply(_extract_district)
-
-    # Remove rows where district could not be extracted
-    df_loc = df_loc[df_loc['district'].notna()]
-
-    # Daily dominant district (most frequent district per day)
-    daily = (df_loc.groupby('date')['district']
-             .apply(lambda x: x.value_counts().index[0] if len(x) > 0 else None)
-             .reset_index())
-    daily.columns = ['date', 'district']
-    daily = daily[daily['district'].notna()].reset_index(drop=True)
-
-    # Detect out-of-home trips (>1 consecutive day outside base districts)
-    trips = []
-    i = 0
-    while i < len(daily):
-        dist = daily.iloc[i]['district']
-        if dist and dist not in base_dists:
-            # Collect consecutive out-of-home days
-            j = i
-            trip_dates = []
-            trip_districts = []
-            while j < len(daily) and daily.iloc[j]['district'] not in base_dists:
-                trip_dates.append(daily.iloc[j]['date'])
-                trip_districts.append(daily.iloc[j]['district'])
-                j += 1
-
-            # Only count if MORE than 1 consecutive calendar day
-            if len(trip_dates) > 1:
-                start_d   = trip_dates[0]
-                end_d     = trip_dates[-1]
-                days      = (pd.Timestamp(end_d) - pd.Timestamp(start_d)).days + 1
-                # Most frequent district in this trip
-                main_dist = pd.Series(trip_districts).value_counts().index[0]
-                # Get top addresses for this trip (valid only)
-                mask  = (df_loc['date'] >= start_d) & (df_loc['date'] <= end_d)
-                addrs = (df_loc[mask]['address']
-                         .dropna()
-                         .apply(lambda a: a if _is_valid_address(a) else None)
-                         .dropna()
-                         .value_counts()
-                         .head(3)
-                         .index.tolist())
-                trips.append({
-                    'district':   main_dist,
-                    'start_date': str(start_d),
-                    'end_date':   str(end_d),
-                    'days':       days,
-                    'addresses':  addrs
-                })
-            i = j
-        else:
-            i += 1
-
-    # Detect network gaps (>4 consecutive days with no CDR activity)
-    all_dates = sorted(df['start'].dt.date.unique())
-    gaps = []
-    for k in range(len(all_dates) - 1):
-        d1 = pd.Timestamp(all_dates[k])
-        d2 = pd.Timestamp(all_dates[k+1])
-        gap_days = (d2 - d1).days - 1
-        if gap_days > 4:
-            gaps.append({
-                'gap_start': str(all_dates[k]),
-                'gap_end':   str(all_dates[k+1]),
-                'days':      gap_days
-            })
-
-    total_days = (pd.Timestamp(all_dates[-1]) - pd.Timestamp(all_dates[0])).days + 1 if all_dates else 0
-    out_days   = sum(t['days'] for t in trips)
-
-    return {
-        'home_district':    home_dist,
-        'work_district':    work_dist,
-        'base_districts':   list(base_dists),
-        'trips':            trips,
-        'gaps':             gaps,
-        'total_days':       total_days,
-        'out_of_home_days': out_days,
-        'total_records':    len(df),
-        'date_from':        str(all_dates[0])  if all_dates else 'N/A',
-        'date_to':          str(all_dates[-1]) if all_dates else 'N/A',
+    BD_COORDS = {
+        "Rowmari":(25.5964,89.7662),"Chilmari":(25.5555,89.6836),
+        "Rajibpur":(25.6580,89.8401),"Ulipur":(25.6717,89.5718),
+        "Nageshwari":(25.9711,89.7039),"Bhurungamari":(26.0688,89.7164),
+        "Rajarhat":(25.7594,89.4952),"Phulbari":(25.8654,89.4620),
+        "Kurigram Sadar":(25.8057,89.6360),
+        "Sundarganj":(25.3810,89.4670),"Sadullapur":(25.1580,89.4887),
+        "Gaibandha Sadar":(25.3288,89.5288),"Gobindaganj":(25.1175,89.3590),
+        "Palashbari":(25.2116,89.3918),"Fulchhari":(25.1780,89.5420),
+        "Rangpur Sadar":(25.7439,89.2752),"Pirganj":(25.8538,89.0346),
+        "Pirgacha":(25.7011,89.3840),"Mahiganj":(25.7671,89.2387),
+        "Gangachara":(25.7208,89.2019),"Kaunia":(25.6452,89.2884),
+        "Mithapukur":(25.6046,89.1961),"Badarganj":(25.6754,89.0548),
+        "Taraganj":(25.9302,89.1630),
+        "Lalmonirhat Sadar":(25.9923,89.2847),"Aditmari":(25.9042,89.3521),
+        "Kaliganj":(25.8622,89.4014),"Hatibandha":(26.0551,89.4688),
+        "Patgram":(26.1800,89.5127),
+        "Nilphamari Sadar":(25.9315,88.8560),"Saidpur":(25.7778,88.8879),
+        "Jaldhaka":(25.8596,89.0196),"Domar":(25.9963,88.9601),
+        "Dinajpur Sadar":(25.6279,88.6333),"Birampur":(25.4857,88.6987),
+        "Bogura Sadar":(24.8465,89.3776),"Joypurhat Sadar":(25.0964,89.0222),
+        "Sirajganj Sadar":(24.4534,89.7006),"Pabna Sadar":(24.0063,89.2372),
+        "Naogaon Sadar":(24.9131,88.7527),"Rajshahi Sadar":(24.3745,88.6042),
+        "Chapainawabganj Sadar":(24.5965,88.2787),
+        "Tangail Sadar":(24.2512,89.9167),"Jamalpur Sadar":(24.8966,89.9441),
+        "Mymensingh Sadar":(24.7471,90.4203),"Trishal":(24.5469,90.3455),
+        "Bhaluka":(24.4005,90.3715),"Netrokona Sadar":(24.8704,90.7270),
+        "Kishoreganj Sadar":(24.4449,90.7766),
+        "Mirpur":(23.8223,90.3654),"Savar":(23.8580,90.2664),
+        "Dhanmondi":(23.7461,90.3742),"Uttara":(23.8759,90.3795),
+        "Motijheel":(23.7272,90.4093),"Dhaka Sadar":(23.7104,90.4074),
+        "Gazipur Sadar":(23.9999,90.4203),"Narayanganj Sadar":(23.6238,90.4998),
+        "Cumilla Sadar":(23.4607,91.1809),"Chittagong Sadar":(22.3569,91.7832),
+        "Sylhet Sadar":(24.8949,91.8687),"Khulna Sadar":(22.8456,89.5403),
     }
 
+    UPA_NORM = {
+        "roumary":"Rowmari","raomari":"Rowmari","rowmari":"Rowmari","raumari":"Rowmari",
+        "chilmari":"Chilmari","chilmare":"Chilmari","rajibpur":"Rajibpur",
+        "rangpur sadar":"Rangpur Sadar","sadar":"Rangpur Sadar","college road":"Rangpur Sadar",
+        "pirganj":"Pirganj","pirgonj":"Pirganj","pirgacha":"Pirgacha",
+        "mahiganj":"Mahiganj","satmatha":"Mahiganj","sundarganj":"Sundarganj",
+        "sundorganj":"Sundarganj","sadullapur":"Sadullapur","mirpur":"Mirpur",
+        "mymensingh sadar":"Mymensingh Sadar","gaibandha":"Gaibandha Sadar",
+        "gangachara":"Gangachara","kaunia":"Kaunia","mithapukur":"Mithapukur",
+        "badarganj":"Badarganj","taraganj":"Taraganj",
+        "lalmonirhat sadar":"Lalmonirhat Sadar","hatibandha":"Hatibandha",
+        "kaliganj":"Kaliganj","aditmari":"Aditmari","patgram":"Patgram",
+        "ulipur":"Ulipur","nageshwari":"Nageshwari","bhurungamari":"Bhurungamari",
+        "rajarhat":"Rajarhat","phulbari":"Phulbari",
+        "nilphamari sadar":"Nilphamari Sadar","saidpur":"Saidpur",
+        "jaldhaka":"Jaldhaka","domar":"Domar",
+        "gobindaganj":"Gobindaganj","palashbari":"Palashbari","fulchhari":"Fulchhari",
+        "dinajpur sadar":"Dinajpur Sadar","bogura sadar":"Bogura Sadar",
+        "sirajganj sadar":"Sirajganj Sadar","rajshahi sadar":"Rajshahi Sadar",
+        "tangail sadar":"Tangail Sadar","jamalpur sadar":"Jamalpur Sadar",
+        "trishal":"Trishal","bhaluka":"Bhaluka",
+        "savar":"Savar","dhanmondi":"Dhanmondi","uttara":"Uttara","motijheel":"Motijheel",
+    }
+    DIST_CORR = {
+        "kuregram":"Kurigram","kurigrame":"Kurigram","kurigram":"Kurigram",
+        "rongpur":"Rangpur","rangpur":"Rangpur","rangpur sadar":"Rangpur",
+        "gaibanda":"Gaibandha","gaibandha":"Gaibandha",
+        "dhaka":"Dhaka","mymensingh":"Mymensingh","rajshahi":"Rajshahi",
+    }
 
+    def haversine(la1,lo1,la2,lo2):
+        R=6371.0; p1,p2=math.radians(la1),math.radians(la2)
+        dp=math.radians(la2-la1); dl=math.radians(lo2-lo1)
+        a=math.sin(dp/2)**2+math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
+        return R*2*math.atan2(math.sqrt(a),math.sqrt(1-a))
+
+    def parse_ud(addr):
+        if not addr or str(addr).strip() in ("","-","nan"): return None,None
+        s=str(addr); d=upa=None
+        dm=re.search(r"[Dd]ist(?:rict)?[\s:\-\.]+([A-Za-z\s]+?)(?:[,.\n;]|$)",s)
+        if dm: d=dm.group(1).strip()
+        um=re.search(r"(?:P[\. ]?S[\s:\-\.]+|[Pp]s[\s:\-]+|[Tt]hana[\s:\-]+|[Uu]pazill?a[\s:\-]+)([A-Za-z][A-Za-z\s]+?)(?:[,.\n;]|$)",s)
+        if um: upa=um.group(1).strip()
+        if not d:
+            parts=[re.sub(r"\d+","",p).strip(" -.") for p in s.split(",")]
+            parts=[p for p in parts if len(p)>2]
+            if parts: d=parts[-1].strip()
+            if len(parts)>=2 and not upa: upa=parts[-2].strip()
+        if d: d=DIST_CORR.get(d.lower().strip(),d.title())
+        if upa:
+            upa=re.sub(r"\s+"," ",upa).strip()
+            upa=UPA_NORM.get(upa.lower(),upa.title())
+        return upa,d
+
+    def get_coord(upa,dist):
+        if upa and upa in BD_COORDS: return BD_COORDS[upa]
+        if dist:
+            k=dist+" Sadar"
+            if k in BD_COORDS: return BD_COORDS[k]
+            for kk,vv in BD_COORDS.items():
+                if kk.lower().startswith(dist.lower()[:5]): return vv
+        return None
+
+    df_loc=df[df["address"].notna()&df["address"].apply(_is_valid_address)].copy()
+    df_loc=df_loc.sort_values("start").reset_index(drop=True)
+    if df_loc.empty: return None
+
+    home_dist = _home_district(df_loc)
+    work_dist = None  # Not used in new logic
+
+    # Home coord: most frequent upazila/district across ALL records
+    home_coord = None
+    home_label = None
+    for addr in df_loc["address"].value_counts().index:
+        upa, dist = parse_ud(addr)
+        coord = get_coord(upa, dist)
+        if coord:
+            home_coord = coord
+            home_label = upa or dist
+            break
+    if not home_coord:
+        home_coord = (25.5964, 89.7662)  # fallback Rowmari
+        home_label = "Rowmari"
+
+    HOME_KM=35.0; TRANSIT_H=6; HOME_RETURN_TOLERANCE_H=12
+
+    # Enrich rows with distance from home
+    rows_e=[]
+    for _,row in df_loc.iterrows():
+        upa,dist=parse_ud(row["address"])
+        coord=get_coord(upa,dist)
+        km=haversine(home_coord[0],home_coord[1],coord[0],coord[1]) if coord else 0.0
+        rows_e.append({"ts":row["start"],"address":row["address"],
+                       "upazila":upa,"district":dist,"coord":coord,"km":km})
+    df_e=pd.DataFrame(rows_e).sort_values("ts").reset_index(drop=True)
+    df_e["away"]=df_e["km"]>=HOME_KM
+
+    # Group consecutive away runs — home return always breaks the session
+    sessions=[]
+    sess_rows=[]; in_sess=False
+    for _,r in df_e.iterrows():
+        if r["away"]:
+            in_sess=True; sess_rows.append(r)
+        else:
+            if in_sess and sess_rows:
+                sessions.append(sess_rows)
+            sess_rows=[]; in_sess=False
+    if in_sess and sess_rows: sessions.append(sess_rows)
+
+    trips=[]
+    for sess in sessions:
+        sdf=pd.DataFrame(sess)
+        s_start=sdf["ts"].min(); s_end=sdf["ts"].max()
+        s_days=(s_end.date()-s_start.date()).days+1
+
+        # Sub-group by location change
+        loc_groups=[]; cur_key=None; cur_rows=[]
+        for _,r in sdf.iterrows():
+            lk=(r["upazila"] or "",r["district"] or "")
+            if lk!=cur_key:
+                if cur_rows: loc_groups.append((cur_key,cur_rows))
+                cur_key=lk; cur_rows=[r]
+            else: cur_rows.append(r)
+        if cur_rows: loc_groups.append((cur_key,cur_rows))
+
+        stay_locs=[]
+        for (upa_k,dist_k),grp in loc_groups:
+            gdf=pd.DataFrame(grp)
+            hrs=(gdf["ts"].max()-gdf["ts"].min()).total_seconds()/3600
+            if hrs>=TRANSIT_H or len(loc_groups)==1:
+                stay_locs.append({
+                    "upazila":(upa_k if upa_k and str(upa_k).lower()!="nan" else None),"district":dist_k or None,
+                    "km":round(gdf["km"].max(),1),"hours":round(hrs,1),
+                    "first":gdf["ts"].min(),"last":gdf["ts"].max(),
+                    "sample_addr":gdf["address"].value_counts().index[0] if not gdf.empty else "",
+                })
+        if not stay_locs: continue
+
+        dest=max(stay_locs,key=lambda x:x["km"])
+        dest_label=(dest["upazila"] if dest["upazila"] and str(dest["upazila"]).strip().lower()!="nan" else None) or dest["district"] or "Unknown"
+        dist_label=dest["district"] or "Unknown"
+
+        trips.append({
+            "upazila":dest_label,"district":dist_label,
+            "km":dest["km"],"start_date":str(s_start.date()),
+            "end_date":str(s_end.date()),"days":s_days,
+            "hours":round((s_end-s_start).total_seconds()/3600,1),
+            "stay_locs":stay_locs,
+            "address":str(dest["sample_addr"])[:80],
+        })
+
+    trips.sort(key=lambda x:x["start_date"],reverse=True)
+
+    all_dates=sorted(df["start"].dt.date.unique())
+    gaps=[]
+    for k in range(len(all_dates)-1):
+        d1=pd.Timestamp(all_dates[k]); d2=pd.Timestamp(all_dates[k+1])
+        gd=(d2-d1).days-1
+        if gd>4: gaps.append({"gap_start":str(all_dates[k]),"gap_end":str(all_dates[k+1]),"days":gd})
+
+    total_days=((pd.Timestamp(all_dates[-1])-pd.Timestamp(all_dates[0])).days+1 if all_dates else 0)
+    return {
+        "home_district":home_dist,"work_district":None,
+        "home_coord":home_coord,"home_label":home_label,
+        "base_districts":list(set(filter(None,[home_dist]))),
+        "trips":trips,"gaps":gaps,"total_days":total_days,
+        "out_of_home_days":sum(t["days"] for t in trips),
+        "total_records":len(df),
+        "date_from":str(all_dates[0]) if all_dates else "N/A",
+        "date_to":str(all_dates[-1]) if all_dates else "N/A",
+    }
 
 def _movement_html(mv):
-    """Generate HTML for movement pattern section."""
+    """Generate HTML for movement pattern section (new distance-based logic)."""
     if not mv:
         return '<p style="color:#64748b;">Location data insufficient for movement analysis.</p>'
 
-    # Summary cards
-    trip_count = len(mv['trips'])
-    gap_count  = len(mv['gaps'])
+    trip_count = len(mv["trips"])
+    gap_count  = len(mv["gaps"])
+
+    home_label = mv.get("home_label") or mv.get("home_district") or "N/A"
+
     cards_html = f"""
-    <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:1rem; margin-bottom:1.5rem;">
+    <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:1rem; margin-bottom:1.5rem;">
         <div style="background:white; border-top:4px solid #2563eb; border-radius:10px;
                     padding:1rem; box-shadow:0 1px 3px rgba(0,0,0,0.06);">
             <div style="font-size:0.75rem; color:#94a3b8; font-weight:600;
                         text-transform:uppercase;">Total Records</div>
             <div style="font-size:1.8rem; font-weight:800; color:#0f172a;
-                        margin:0.3rem 0;">{mv['total_records']:,}</div>
-            <div style="font-size:0.8rem; color:#64748b;">Call + SMS | {mv['total_days']} days</div>
+                        margin:0.3rem 0;">{mv["total_records"]:,}</div>
+            <div style="font-size:0.8rem; color:#64748b;">Call + SMS | {mv["total_days"]} days</div>
         </div>
         <div style="background:white; border-top:4px solid #16a34a; border-radius:10px;
                     padding:1rem; box-shadow:0 1px 3px rgba(0,0,0,0.06);">
             <div style="font-size:0.75rem; color:#94a3b8; font-weight:600;
-                        text-transform:uppercase;">Estimated Home</div>
+                        text-transform:uppercase;">Home Location</div>
             <div style="font-size:1.1rem; font-weight:800; color:#0f172a;
-                        margin:0.3rem 0;">{mv['home_district'] or 'N/A'}</div>
-            <div style="font-size:0.78rem; color:#16a34a;">Based on night activity</div>
-        </div>
-        <div style="background:white; border-top:4px solid #f59e0b; border-radius:10px;
-                    padding:1rem; box-shadow:0 1px 3px rgba(0,0,0,0.06);">
-            <div style="font-size:0.75rem; color:#94a3b8; font-weight:600;
-                        text-transform:uppercase;">Estimated Work</div>
-            <div style="font-size:1.1rem; font-weight:800; color:#0f172a;
-                        margin:0.3rem 0;">{mv['work_district'] or 'N/A'}</div>
-            <div style="font-size:0.78rem; color:#f59e0b;">Based on daytime activity</div>
+                        margin:0.3rem 0;">{home_label}</div>
+            <div style="font-size:0.78rem; color:#16a34a;">{mv["home_district"] or ""} District (most frequent)</div>
         </div>
         <div style="background:white; border-top:4px solid #dc2626; border-radius:10px;
                     padding:1rem; box-shadow:0 1px 3px rgba(0,0,0,0.06);">
@@ -1338,7 +1712,7 @@ def _movement_html(mv):
                         text-transform:uppercase;">Network Gaps</div>
             <div style="font-size:1.8rem; font-weight:800; color:#dc2626;
                         margin:0.3rem 0;">{gap_count}</div>
-            <div style="font-size:0.8rem; color:#64748b;">Disconnected &gt;4 days</div>
+            <div style="font-size:0.8rem; color:#64748b;">Disconnected more than 4 days</div>
         </div>
         <div style="background:white; border-top:4px solid #7c3aed; border-radius:10px;
                     padding:1rem; box-shadow:0 1px 3px rgba(0,0,0,0.06);">
@@ -1346,56 +1720,66 @@ def _movement_html(mv):
                         text-transform:uppercase;">Out-of-Home Trips</div>
             <div style="font-size:1.8rem; font-weight:800; color:#7c3aed;
                         margin:0.3rem 0;">{trip_count}</div>
-            <div style="font-size:0.8rem; color:#64748b;">{mv['out_of_home_days']} days total</div>
+            <div style="font-size:0.8rem; color:#64748b;">{mv["out_of_home_days"]} days total</div>
         </div>
     </div>"""
 
-    # Trips section
-    trips_html = ''
-    if mv['trips']:
-        tags = ' '.join([
-            f"""<span style="background:#fef3c7; color:#92400e; border:1px solid #fde68a;
-                border-radius:20px; padding:0.4rem 1rem; font-size:0.85rem; font-weight:600;
-                white-space:nowrap;">
-                {t['district']} — {t['start_date']} to {t['end_date']} ({t['days']} days)
-            </span>"""
-            for t in mv['trips']
-        ])
-        trips_html = f"""
-        <div style="background:#fffbeb; border-left:4px solid #f59e0b; border-radius:10px;
-                    padding:1rem 1.5rem; margin-bottom:1rem;">
-            <div style="font-weight:700; color:#92400e; margin-bottom:0.75rem;">
-                Out-of-Home District Travel Detected
-            </div>
-            <div style="display:flex; flex-wrap:wrap; gap:0.5rem;">{tags}</div>
-        </div>"""
+    # ── Trips table (reverse chronological) ──────────────────────────────
+    trips_html = ""
+    if mv["trips"]:
+        def _stay_detail(stay_locs):
+            if len(stay_locs) <= 1: return ""
+            parts = []
+            for sl in stay_locs[:-1]:
+                lbl = sl["upazila"] or sl["district"] or "?"
+                parts.append(f"{lbl} ({sl['hours']}h, {sl['km']}km)")
+            return "Via: " + " -> ".join(parts) if parts else ""
 
-        # Detail table
-        rows = ''.join([
+        rows = "".join([
             f"""<tr style="background:{'#f8fafc' if i%2==0 else 'white'};">
-                <td style="padding:0.7rem 1rem; font-weight:600;">{t['district']}</td>
-                <td style="padding:0.7rem 1rem;">{t['start_date']}</td>
-                <td style="padding:0.7rem 1rem;">{t['end_date']}</td>
+                <td style="padding:0.7rem 1rem; font-weight:600; color:#1e3a8a;">
+                    {i+1}</td>
+                <td style="padding:0.7rem 1rem; font-weight:700;">
+                    {t["upazila"]}<br>
+                    <span style="font-size:0.8rem;font-weight:400;color:#64748b;">
+                        {t["district"]} District</span></td>
                 <td style="padding:0.7rem 1rem; text-align:center;">
-                    <span style="background:#dbeafe; color:#1e40af; border-radius:12px;
-                                 padding:0.2rem 0.6rem; font-weight:700;">{t['days']}</span>
+                    <span style="background:#dbeafe;color:#1e40af;border-radius:12px;
+                                 padding:0.2rem 0.7rem;font-weight:700;">
+                        {t["km"]} km</span></td>
+                <td style="padding:0.7rem 1rem;">{t["start_date"]}</td>
+                <td style="padding:0.7rem 1rem;">{t["end_date"]}</td>
+                <td style="padding:0.7rem 1rem; text-align:center;">
+                    <span style="background:#ede9fe;color:#5b21b6;border-radius:12px;
+                                 padding:0.2rem 0.6rem;font-weight:700;">{t["days"]}</span>
                 </td>
-                <td style="padding:0.7rem 1rem; font-size:0.85rem; color:#475569;">
-                    {'; '.join(str(a)[:60] for a in t['addresses'][:2])}
+                <td style="padding:0.7rem 1rem; font-size:0.82rem; color:#475569;">
+                    {str(t["address"])[:55]}
+                    {"<br><span style='color:#94a3b8;font-size:0.78rem;'>" + _stay_detail(t.get("stay_locs",[])) + "</span>" if _stay_detail(t.get("stay_locs",[])) else ""}
                 </td>
             </tr>"""
-            for i, t in enumerate(mv['trips'])
+            for i, t in enumerate(mv["trips"])
         ])
-        trips_html += f"""
+
+        trips_html = f"""
+        <div style="font-weight:700; color:#92400e; margin:0.5rem 0 0.75rem 0;
+                    background:#fffbeb; border-left:4px solid #f59e0b;
+                    border-radius:6px; padding:0.6rem 1rem;">
+            Out-of-Home Travel Detected — {trip_count} trip(s) |
+            Home Reference: {home_label}, {mv.get("home_district","?")} District
+            (35 km radius threshold)
+        </div>
         <table style="width:100%; border-collapse:collapse; margin-bottom:1rem;
                       border:1px solid #e2e8f0; border-radius:10px; overflow:hidden;">
             <thead>
                 <tr style="background:#1e3a8a; color:white;">
-                    <th style="padding:0.7rem 1rem; text-align:left;">District</th>
-                    <th style="padding:0.7rem 1rem; text-align:left;">From</th>
-                    <th style="padding:0.7rem 1rem; text-align:left;">To</th>
+                    <th style="padding:0.7rem 1rem; text-align:left;">#</th>
+                    <th style="padding:0.7rem 1rem; text-align:left;">Destination (Upazila / District)</th>
+                    <th style="padding:0.7rem 1rem; text-align:center;">Distance</th>
+                    <th style="padding:0.7rem 1rem; text-align:left;">Departure</th>
+                    <th style="padding:0.7rem 1rem; text-align:left;">Return</th>
                     <th style="padding:0.7rem 1rem; text-align:center;">Days</th>
-                    <th style="padding:0.7rem 1rem; text-align:left;">BTS Location</th>
+                    <th style="padding:0.7rem 1rem; text-align:left;">BTS Location / Route</th>
                 </tr>
             </thead>
             <tbody>{rows}</tbody>
@@ -1403,22 +1787,22 @@ def _movement_html(mv):
     else:
         trips_html = """<div style="background:#ecfdf5; border-left:4px solid #10b981;
                     border-radius:10px; padding:1rem 1.5rem; margin-bottom:1rem; color:#065f46;">
-            No out-of-home-district travel detected within the analysis period.
+            No out-of-home travel detected (&ge;35 km from home location) within the analysis period.
         </div>"""
 
-    # Network gaps section
-    gaps_html = ''
-    if mv['gaps']:
-        gap_rows = ''.join([
+    # ── Gaps ──────────────────────────────────────────────────────────────
+    gaps_html = ""
+    if mv["gaps"]:
+        gap_rows = "".join([
             f"""<tr style="background:{'#fff1f2' if i%2==0 else 'white'};">
-                <td style="padding:0.7rem 1rem;">{g['gap_start']}</td>
-                <td style="padding:0.7rem 1rem;">{g['gap_end']}</td>
+                <td style="padding:0.7rem 1rem;">{g["gap_start"]}</td>
+                <td style="padding:0.7rem 1rem;">{g["gap_end"]}</td>
                 <td style="padding:0.7rem 1rem; text-align:center;">
-                    <span style="background:#fee2e2; color:#dc2626; border-radius:12px;
-                                 padding:0.2rem 0.7rem; font-weight:700;">{g['days']} days</span>
+                    <span style="background:#fee2e2;color:#dc2626;border-radius:12px;
+                                 padding:0.2rem 0.7rem;font-weight:700;">{g["days"]} days</span>
                 </td>
             </tr>"""
-            for i, g in enumerate(mv['gaps'])
+            for i, g in enumerate(mv["gaps"])
         ])
         gaps_html = f"""
         <div style="font-weight:700; color:#dc2626; margin:1rem 0 0.5rem 0;">
@@ -1435,15 +1819,8 @@ def _movement_html(mv):
             </thead>
             <tbody>{gap_rows}</tbody>
         </table>"""
-    else:
-        gaps_html = """<div style="background:#ecfdf5; border-left:4px solid #10b981;
-                    border-radius:10px; padding:0.75rem 1.25rem; color:#065f46; margin-top:1rem;">
-            No network disconnection gaps detected (&gt;4 days).
-        </div>"""
 
     return cards_html + trips_html + gaps_html
-
-
 
 def imsi_change_analysis(df):
     """
@@ -1702,7 +2079,7 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
     <h1>📞 CDR Analysis Report</h1>
     <h2>1. Executive Summary</h2>
     <div class="info-box">
-    <strong>Phone Number:</strong> {phone}<br>
+    <strong>{"Device IMEI / SIM(s)" if is_imei_cdr(df) else "Phone Number"}:</strong> {phone}<br>
     <strong>Operator:</strong> {operator}<br>
     <strong>Analysis Period:</strong> {date_range}<br>
     <strong>Total Raw Records:</strong> {total_raw:,}<br>
@@ -1713,7 +2090,7 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
     <table><tr><th>Field</th><th>Value</th></tr>
     <tr><td>IMEI</td><td>{', '.join(str(i) for i in imei) if imei else 'N/A'}</td></tr>
     <tr><td>IMSI</td><td>{', '.join(str(i) for i in imsi) if imsi else 'N/A'}</td></tr>
-    <tr><td>Phone Number</td><td>{phone}</td></tr></table>
+    <tr><td>{"Device IMEI / SIM(s)" if is_imei_cdr(df) else "Phone Number"}</td><td>{phone}</td></tr></table>
     {_imsi_change_html(df)}
     {_imei_change_html(df)}
     <h2>3. Call Analysis</h2>
@@ -1759,8 +2136,10 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
 
     {_target_number_html(df, target_number)}
 
-    <h2>10. Overall Comment</h2><p>N/A</p>
-    <h2>11. Recommendation</h2><p>N/A</p>
+    <h2>10. Overall Comment</h2>
+    {''.join(f'<p>{ln}</p>' for ln in generate_overall_comment(df, phone, operator, date_range, total_raw))}
+    <h2>11. Recommendation</h2>
+    <ol>{''.join(f'<li>{r}</li>' for r in generate_recommendation(df))}</ol>
     <hr><p style="text-align:center;color:gray;font-size:11px;">
     Report generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | CDR Analysis Tool v1.0</p>
     </body></html>"""
@@ -1842,7 +2221,8 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
 
     # Summary table
     add_h('1. Executive Summary')
-    info=[('Phone Number',phone),('Operator',operator),('Analysis Period',date_range),
+    id_label = 'Device IMEI / SIM(s)' if is_imei_cdr(df) else 'Phone Number'
+    info=[( id_label, phone),('Operator',operator),('Analysis Period',date_range),
           ('Total Raw Records',f'{total_raw:,}'),('Anomalies Removed',f'{anomaly_count:,}'),
           ('Records Analyzed',f'{len(df):,}')]
     tbl=doc.add_table(rows=len(info),cols=2); tbl.style='Table Grid'
@@ -1943,20 +2323,22 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
     add_h('9. Movement Pattern Analysis')
     mv = movement_pattern_analysis(df)
     if mv:
+        home_lbl = mv.get('home_label') or mv.get('home_district') or 'N/A'
         mv_summary = pd.DataFrame({
-            'Metric': ['Home District','Work District','Total Days',
+            'Metric': ['Home Location','Home District','Total Days',
                        'Out-of-Home Trips','Out-of-Home Days','Network Gaps (>4 days)'],
-            'Value':  [mv['home_district'] or 'N/A', mv['work_district'] or 'N/A',
+            'Value':  [home_lbl, mv['home_district'] or 'N/A',
                        str(mv['total_days']), str(len(mv['trips'])),
                        str(mv['out_of_home_days']), str(len(mv['gaps']))]
         })
         add_df_table(mv_summary)
         if mv['trips']:
-            add_h('13.1 Out-of-Home District Travel', 2)
+            add_h('13.1 Out-of-Home Travel (35km+ from Home)', 2)
             trip_df = pd.DataFrame([{
-                'District': t['district'], 'From': t['start_date'],
+                'Destination': t['upazila'], 'District': t['district'],
+                'Distance(km)': t['km'], 'From': t['start_date'],
                 'To': t['end_date'], 'Days': t['days'],
-                'BTS Location': '; '.join(str(a)[:60] for a in t['addresses'][:2])
+                'BTS Location': str(t.get('address',''))[:80]
             } for t in mv['trips']])
             add_df_table(trip_df)
         if mv['gaps']:
@@ -1989,8 +2371,13 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
             })
             add_df_table(target_df)
 
-    add_h('11. Overall Comment');          doc.add_paragraph('N/A')
-    add_h('12. Recommendation');           doc.add_paragraph('N/A')
+    add_h('11. Overall Comment')
+    for ln in generate_overall_comment(df, phone, operator, date_range, total_raw):
+        doc.add_paragraph(ln)
+
+    add_h('12. Recommendation')
+    for i, rec in enumerate(generate_recommendation(df), 1):
+        doc.add_paragraph(f"{i}. {rec}")
 
     fp=doc.add_paragraph(f'Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} | CDR Analysis Tool v1.0')
     fp.alignment=WD_ALIGN_PARAGRAPH.CENTER
@@ -2515,15 +2902,9 @@ def main():
                     </div>''', unsafe_allow_html=True)
                 with mv2:
                     st.markdown(f'''<div class="stat-card" style="border-left-color:#16a34a;">
-                        <div class="label">Estimated Home</div>
-                        <div class="value" style="font-size:1rem;">{mv["home_district"] or "N/A"}</div>
-                        <div style="font-size:0.75rem;color:#94a3b8;">Night activity</div>
-                    </div>''', unsafe_allow_html=True)
-                with mv3:
-                    st.markdown(f'''<div class="stat-card" style="border-left-color:#f59e0b;">
-                        <div class="label">Estimated Work</div>
-                        <div class="value" style="font-size:1rem;">{mv["work_district"] or "N/A"}</div>
-                        <div style="font-size:0.75rem;color:#94a3b8;">Daytime activity</div>
+                        <div class="label">Home Location</div>
+                        <div class="value" style="font-size:1rem;">{mv.get("home_label") or mv["home_district"] or "N/A"}</div>
+                        <div style="font-size:0.75rem;color:#94a3b8;">{mv["home_district"] or ""} District (most frequent)</div>
                     </div>''', unsafe_allow_html=True)
                 with mv4:
                     gap_color = "#dc2626" if mv["gaps"] else "#16a34a"
@@ -2551,7 +2932,7 @@ def main():
                         'District': t['district'],
                         'From': t['start_date'], 'To': t['end_date'],
                         'Days': t['days'],
-                        'BTS Location': "; ".join(str(a)[:50] for a in t['addresses'][:2])
+                        'BTS Location': str(t.get('address',''))[:80]
                     } for t in mv['trips']])
                     st.dataframe(trip_df, use_container_width=True, hide_index=True)
                 else:
