@@ -4125,7 +4125,7 @@ def _build_colocation(dfs, window_min=30):
     return results[:200]  # max 200
 
 
-def _build_network_html(dfs, connections, subjects):
+def _build_network_html(dfs, connections, subjects, subj_edge_count=None):
     """Build Vis.js network graph HTML — clean version."""
 
     colors_subject = ['#1d4ed8', '#dc2626', '#15803d', '#7c3aed', '#d97706']
@@ -4134,16 +4134,31 @@ def _build_network_html(dfs, connections, subjects):
     # Nodes
     nodes = {}
     # Subject nodes — large stars
+    if subj_edge_count is None:
+        subj_edge_count = {sub: 99 for sub in subjects}
+
     for i, sub in enumerate(subjects):
+        edge_cnt = subj_edge_count.get(sub, 0)
+        is_isolated = edge_cnt < 5
+        # Isolated subject: dashed border + lighter color
+        node_color = colors_subject[i % len(colors_subject)]
         nodes[sub] = {
             'id': sub,
-            'label': f"S{i+1}\n{sub[-6:]}",  # short label
-            'color': {'background': colors_subject[i % len(colors_subject)],
-                      'border': '#fff', 'highlight': {'background': colors_subject[i % len(colors_subject)]}},
-            'shape': 'star', 'size': 38,
+            'label': f"S{i+1}\n{sub[-6:]}",
+            'color': {
+                'background': node_color,
+                'border': '#fbbf24' if is_isolated else '#fff',
+                'highlight': {'background': node_color}
+            },
+            'shape': 'star',
+            'size': 38,
+            'borderWidth': 4 if is_isolated else 2,
+            'borderWidthSelected': 5,
             'font': {'size': 12, 'color': '#fff', 'bold': True, 'strokeWidth': 2, 'strokeColor': '#1e293b'},
-            'title': f"<b>Subject {i+1}</b><br>{sub}",
-            'group': 'subject', 'mass': 4
+            'title': f"<b>Subject {i+1}</b><br>{sub}<br>{'⚠️ Few/no common contacts — showing top 5 own contacts' if is_isolated else f'Connections: {edge_cnt}'}",
+            'group': 'isolated_subject' if is_isolated else 'subject',
+            'mass': 4,
+            'physics': not is_isolated  # isolated subject stays more fixed
         }
 
     common = {pb for pb, sd in connections.items() if len(sd) >= 2}
@@ -4151,17 +4166,28 @@ def _build_network_html(dfs, connections, subjects):
     for pb, subj_dict in connections.items():
         total = sum(d['total'] for d in subj_dict.values())
         is_common = pb in common
+        # Own contact of isolated subject (single subject, low edge count)
+        only_sub = list(subj_dict.keys())[0] if len(subj_dict) == 1 else None
+        is_isolated_contact = (only_sub and subj_edge_count.get(only_sub, 99) < 5)
         short = pb[-8:] if len(pb) > 8 else pb
+
+        if is_common:
+            bg = '#fca5a5'; border = '#dc2626'
+        elif is_isolated_contact:
+            # Isolated subject's own contact — yellow/gold
+            bg = '#fef3c7'; border = '#d97706'
+        else:
+            bg = '#e2e8f0'; border = '#94a3b8'
+
         nodes[pb] = {
             'id': pb,
-            'label': short,  # short label — no overlap
-            'color': {'background': '#fca5a5' if is_common else '#e2e8f0',
-                      'border': '#dc2626' if is_common else '#94a3b8'},
+            'label': short,
+            'color': {'background': bg, 'border': border},
             'shape': 'ellipse',
             'size': min(8 + total, 24),
             'font': {'size': 9, 'color': '#1e293b'},
-            'title': f"<b>{pb}</b><br>Shared by: {len(subj_dict)} subjects<br>Total contacts: {total}",
-            'group': 'common' if is_common else 'contact',
+            'title': f"<b>{pb}</b><br>Shared by: {len(subj_dict)} subject(s)<br>Total: {total}",
+            'group': 'common' if is_common else ('isolated_contact' if is_isolated_contact else 'contact'),
             'mass': 1
         }
 
@@ -4451,22 +4477,28 @@ def link_analysis_page():
         st.markdown("### 🕸️ Network Graph")
         with st.spinner("Building network graph..."):
             # Use top connections for graph (limit nodes)
-            # top 80 contacts — but ensure ALL subjects appear in graph
+            # top 80 common/shared contacts
             top_connections = defaultdict(dict)
-            for pb, subj_dict in conn_sorted[:80]:  # max 80 contact nodes
+            for pb, subj_dict in conn_sorted[:80]:
                 top_connections[pb] = subj_dict
-            # If a subject has no contacts in top_connections, add their top 3
+
+            # Each subject: count how many edges they have in top_connections
+            subj_edge_count = {sub: sum(1 for sd in top_connections.values() if sub in sd)
+                               for sub in subjects}
+
+            # Subject with < 5 edges → add their top 5 own contacts (isolated cluster)
             for df_s in dfs:
                 sub = df_s['_subject'].iloc[0]
-                sub_in_graph = any(sub in sd for sd in top_connections.values())
-                if not sub_in_graph:
-                    # Add top 3 contacts for this subject
-                    for pb, sd in conn_sorted:
-                        if sub in sd:
-                            top_connections[pb][sub] = sd[sub]
-                            if sum(1 for s in (sd for pb2,sd in top_connections.items()) if sub in s) >= 3:
+                if subj_edge_count.get(sub, 0) < 5:
+                    added = 0
+                    for pb, subj_dict in conn_sorted:
+                        if sub in subj_dict and pb not in top_connections:
+                            top_connections[pb][sub] = subj_dict[sub]
+                            added += 1
+                            if added >= 5:
                                 break
-            graph_html = _build_network_html(dfs, top_connections, subjects)
+
+            graph_html = _build_network_html(dfs, top_connections, subjects, subj_edge_count)
 
         st.components.v1.html(graph_html, height=780, scrolling=False)
 
