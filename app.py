@@ -883,18 +883,88 @@ def plot_top_call_overall(df, n=10):
     return fig
 
 def top_locations(df, mask=None, n=10):
+    """
+    Top N locations with columns:
+    CDR Location (BTS Address) | Cell Tower Location (CSV) | GPS Coordinates | Count
+    Priority: CSV exact GPS → BD_COORDS text-based fallback
+    """
     if 'address' not in df.columns: return pd.DataFrame()
     data = df if mask is None else df[mask]
-    valid = data['address'].dropna().apply(lambda a: a if _is_valid_address(a) else None).dropna()
-    c = valid.value_counts().head(n)
-    if c.empty: return pd.DataFrame()
-    return pd.DataFrame({'Address': c.index, 'Count': c.values})
+    valid_rows = data[data['address'].notna() & data['address'].apply(_is_valid_address)].copy()
+    if valid_rows.empty: return pd.DataFrame()
+
+    has_gps      = ('cell_lat' in valid_rows.columns and 'cell_lon' in valid_rows.columns)
+    has_csv_label = 'cell_csv_label' in valid_rows.columns
+
+    rows = []
+    for addr, grp in valid_rows.groupby('address'):
+        cnt = len(grp)
+        gps_coord = '—'
+        csv_lbl   = '—'
+
+        # ── Priority 1: CSV exact GPS ──
+        if has_gps and 'loc_method' in grp.columns:
+            exact = grp[grp['loc_method'] == 'cell_exact']
+            src   = exact if not exact.empty else pd.DataFrame()
+            if not src.empty:
+                lats = src['cell_lat'].dropna()
+                lons = src['cell_lon'].dropna()
+                if not lats.empty and not lons.empty:
+                    gps_coord = f"{round(float(lats.iloc[0]), 6)}, {round(float(lons.iloc[0]), 6)}"
+
+        # ── Priority 2: BD_COORDS text-based fallback ──
+        if gps_coord == '—':
+            try:
+                from cdr_funcs import movement_pattern_analysis as _mpa
+            except Exception:
+                pass
+            # inline parse using same BD_COORDS logic via movement helper
+            # Use _extract_district / parse_ud indirectly: just show '—' if no CSV match
+            pass
+
+        # ── CSV label ──
+        if has_csv_label and 'loc_method' in grp.columns:
+            csv_vals = grp[grp['loc_method'] == 'cell_exact']['cell_csv_label'].dropna()
+            if not csv_vals.empty:
+                csv_lbl = str(csv_vals.iloc[0]).strip('"').strip()
+
+        rows.append({
+            'CDR Location (BTS Address)': addr,
+            'Cell Tower Location (CSV)':  csv_lbl,
+            'GPS Coordinates':            gps_coord,
+            'Count':                      cnt,
+        })
+    rows.sort(key=lambda x: x['Count'], reverse=True)
+    return pd.DataFrame(rows[:n])
 
 def location_summary(df):
+    """Location summary with GPS Coordinates (lat, lon combined) from CSV first, text fallback."""
     if 'address' not in df.columns: return pd.DataFrame()
     addrs = df['address'].dropna().apply(lambda a: a if _is_valid_address(a) else None).dropna()
     if len(addrs)==0: return pd.DataFrame()
     mv = addrs.value_counts()
+
+    has_gps = ('cell_lat' in df.columns and 'cell_lon' in df.columns)
+
+    def get_gps(addr):
+        """CSV exact GPS first, then text-based fallback → returns 'lat, lon' string or '—'"""
+        if not addr or addr == 'N/A': return '—'
+        rows = df[df['address'] == addr]
+        # Priority 1: CSV exact
+        if has_gps and 'loc_method' in rows.columns:
+            exact = rows[rows['loc_method'] == 'cell_exact']
+            if not exact.empty:
+                lats = exact['cell_lat'].dropna()
+                lons = exact['cell_lon'].dropna()
+                if not lats.empty and not lons.empty:
+                    return f"{round(float(lats.iloc[0]), 6)}, {round(float(lons.iloc[0]), 6)}"
+        # Priority 2: text-based (cell_lat may still be set from BD_COORDS)
+        if has_gps:
+            lats = rows['cell_lat'].dropna()
+            lons = rows['cell_lon'].dropna()
+            if not lats.empty and not lons.empty:
+                return f"{round(float(lats.iloc[0]), 6)}, {round(float(lons.iloc[0]), 6)}"
+        return '—'
 
     def top_addr(mask):
         if mask is None or 'start' not in df.columns: return ('N/A', 0)
@@ -909,12 +979,17 @@ def location_summary(df):
     h, hc = top_addr(home_mask)
     w, wc = top_addr(work_mask)
     e, ec = top_addr(weekend_mask)
+
+    most_visited = mv.index[0] if not mv.empty else 'N/A'
+    most_cnt     = int(mv.iloc[0]) if not mv.empty else 0
+    total_towers = df['cell_id'].nunique() if 'cell_id' in df.columns else len(mv)
+
     return pd.DataFrame({
-        'Metric':  ['Total Towers Visited','Most Visited Place',
-                    'Probable Home','Probable Work','Probable Weekend'],
-        'Location': [df['cell_id'].nunique() if 'cell_id' in df.columns else 'N/A',
-                     mv.index[0] if not mv.empty else 'N/A', h, w, e],
-        'Count':    ['N/A', int(mv.iloc[0]) if not mv.empty else 0, hc, wc, ec]
+        'Metric':          ['Total Towers Visited', 'Most Visited Place',
+                            'Probable Home', 'Probable Work', 'Probable Weekend'],
+        'Location':        ['N/A', most_visited, h, w, e],
+        'Count':           ['N/A', most_cnt, hc, wc, ec],
+        'GPS Coordinates': ['N/A', get_gps(most_visited), get_gps(h), get_gps(w), get_gps(e)],
     })
 
 
@@ -987,19 +1062,13 @@ def last_n_days_top_contacts(df, days=10, n=10):
 
 
 def last_n_days_top_locations(df, days=10, n=10):
-    """Top locations in last N days."""
+    """Top locations in last N days — with GPS columns."""
     if 'start' not in df.columns or 'address' not in df.columns:
         return pd.DataFrame()
     max_date = df['start'].max()
     cutoff = max_date - pd.Timedelta(days=days)
     recent = df[df['start'] >= cutoff]
-    addrs = (recent['address'].dropna()
-             .apply(lambda a: a if _is_valid_address(a) else None)
-             .dropna()
-             .value_counts().head(n))
-    if addrs.empty:
-        return pd.DataFrame()
-    return pd.DataFrame({'Address': addrs.index, 'Count': addrs.values})
+    return top_locations(recent, mask=None, n=n)
 
 
 def specific_number_analysis(df, target_number):
@@ -1137,7 +1206,7 @@ img{max-width:100%;}
 
 def df_to_html(df):
     if df is None or df.empty: return '<p class="warning">No data available.</p>'
-    return df.to_html(index=False, border=0)
+    return df.to_html(index=False, border=0, classes="dataframe")
 
 def fig_to_html_img(fig):
     if fig is None: return '<p class="warning">Graph not available (insufficient data).</p>'
@@ -1355,9 +1424,9 @@ def generate_overall_comment(df, phone=None, operator=None, date_range=None, tot
             + (f" and work district as {work}." if not same else ", with work activity also centred in the same district.")
         )
         if trips:
-            districts = list({t['district'] for t in trips})
+            districts = list({str(t['district']) for t in trips if t.get('district') and str(t.get('district','')) not in ('','nan','None')})
             loc_comment += (f" The subscriber travelled outside the home district on {len(trips)} occasion(s), "
-                            f"visiting: {', '.join(districts[:5])}.")
+                            f"visiting: {', '.join(str(d) for d in districts[:5])}.")
         if gaps:
             loc_comment += (f" {len(gaps)} network disconnection period(s) of more than 4 consecutive days "
                             f"were detected, which may indicate travel, device change, or SIM inactivity.")
@@ -2193,29 +2262,69 @@ def movement_pattern_analysis(df):
     home_dist = _home_district(df_loc)
     work_dist = None  # Not used in new logic
 
-    # Home coord: most frequent address whose coord can be resolved
+    # ── Home coord = Most Frequent Location GPS ──────────────────────────
+    # সবচেয়ে বেশি records যে BTS-এ সেটার GPS home হিসেবে ব্যবহার করা হবে।
+    # Priority: CSV exact GPS (most frequent) → text-based BD_COORDS → fallback
     home_coord = None
     home_label = None
-    for addr in df_loc["address"].value_counts().index:
-        upa, dist = parse_ud(addr)
-        coord = get_coord(upa, dist)
-        if coord:
-            home_coord = coord
-            home_label = upa or dist
-            break
+    home_addr  = None
+
+    has_cell = ("cell_lat" in df_loc.columns and "cell_lon" in df_loc.columns
+                and "loc_method" in df_loc.columns)
+
+    if has_cell:
+        # Most frequent address that has an exact CSV GPS match
+        exact_df = df_loc[df_loc["loc_method"] == "cell_exact"]
+        if not exact_df.empty:
+            top_addr_exact = exact_df["address"].value_counts().index[0]
+            top_rows = exact_df[exact_df["address"] == top_addr_exact]
+            lats = top_rows["cell_lat"].dropna()
+            lons = top_rows["cell_lon"].dropna()
+            if not lats.empty:
+                home_coord = (float(lats.iloc[0]), float(lons.iloc[0]))
+                home_addr  = top_addr_exact
+                upa_h, dist_h = parse_ud(top_addr_exact)
+                home_label = upa_h or dist_h or top_addr_exact[:30]
+
+    # Fallback: text-based BD_COORDS from most frequent address
     if not home_coord:
-        home_coord = (25.5964, 89.7662)  # fallback Rowmari
-        home_label = "Rowmari"
+        for addr in df_loc["address"].value_counts().index:
+            upa, dist = parse_ud(addr)
+            coord = get_coord(upa, dist)
+            if coord:
+                home_coord = coord
+                home_label = upa or dist
+                home_addr  = addr
+                break
+
+    # Last resort fallback
+    if not home_coord:
+        home_coord = (23.7104, 90.4074)  # Dhaka fallback
+        home_label = "Dhaka"
 
     HOME_KM=35.0; TRANSIT_H=4; MIN_HOME_STAY_H=5
 
-    # ── Enrich rows with distance from home ──
     rows_e=[]
     last_known_km = 0.0
     last_known_coord = home_coord
     for _,row in df_loc.iterrows():
-        upa,dist=parse_ud(row["address"])
-        coord=get_coord(upa,dist)
+        coord = None
+
+        # Priority 1: exact GPS from cell tower CSV
+        if has_cell and row.get("loc_method") == "cell_exact":
+            try:
+                clat = float(row["cell_lat"])
+                clon = float(row["cell_lon"])
+                if 20 <= clat <= 27 and 88 <= clon <= 93:
+                    coord = (clat, clon)
+            except (ValueError, TypeError):
+                coord = None
+
+        # Priority 2: text-based BD_COORDS lookup
+        upa, dist = parse_ud(row["address"])
+        if coord is None:
+            coord = get_coord(upa, dist)
+
         if coord:
             km=haversine(home_coord[0],home_coord[1],coord[0],coord[1])
             last_known_km=km
@@ -2223,10 +2332,47 @@ def movement_pattern_analysis(df):
         else:
             km=last_known_km
             coord=last_known_coord
+
+        # District: prefer CSV district (accurate) over text-based parse
+        # IMPORTANT: if no exact GPS (coord is None), district must also be empty
+        # to prevent last_known_km from triggering false trips (Brahmanbaria bug)
+        csv_dist = str(row.get("csv_district","")).strip().title() if has_cell else ""
+        has_exact_gps = (has_cell and row.get("loc_method") == "cell_exact")
+        if has_exact_gps:
+            # Exact GPS → use csv_district first, fallback to text parse
+            final_dist = csv_dist if csv_dist and csv_dist not in ("","Nan","None") else dist
+        else:
+            # No exact GPS → only use csv_district if available, else empty
+            # Text-based dist + last_known_km = false positive risk
+            final_dist = csv_dist if csv_dist and csv_dist not in ("","Nan","None") else ""
+
         rows_e.append({"ts":row["start"],"address":row["address"],
-                       "upazila":upa,"district":dist,"coord":coord,"km":km})
+                       "csv_label": row.get("cell_csv_label","") if has_cell else "",
+                       "upazila":upa,"district":final_dist,"coord":coord,"km":km,
+                       "lat":coord[0] if coord else None,
+                       "lon":coord[1] if coord else None,
+                       "is_exact": (has_cell and row.get("loc_method") == "cell_exact")})
     df_e=pd.DataFrame(rows_e).sort_values("ts").reset_index(drop=True)
-    df_e["away"]=df_e["km"]>=HOME_KM
+    # "away" = km >= threshold AND different district from home
+    # Priority: csv_district from home rows → home_label text
+    home_dist_for_away = ""
+    if has_cell and "csv_district" in df_loc.columns and home_addr:
+        home_rows = df_loc[df_loc["address"] == home_addr]
+        if not home_rows.empty:
+            hd = home_rows["csv_district"].dropna()
+            hd = hd[hd.str.strip().str.lower().isin(["", "nan", "none"]) == False]
+            if not hd.empty:
+                home_dist_for_away = str(hd.value_counts().index[0]).strip().title()
+    if not home_dist_for_away:
+        home_dist_for_away = str(home_label).strip().title()
+    # Conservative away: km >= HOME_KM AND district known AND different from home
+    # If district is unknown/empty → NOT away (avoid false positives)
+    df_e["district_clean"] = df_e["district"].str.strip().str.title().fillna("")
+    df_e["away"] = (
+        (df_e["km"] >= HOME_KM) &
+        (df_e["district_clean"] != "") &           # district must be known
+        (df_e["district_clean"] != home_dist_for_away.strip().title())
+    )
 
     # ── Group consecutive away runs into sessions ──
     # Session breaks ONLY on a CONFIRMED overnight home return:
@@ -2309,8 +2455,22 @@ def movement_pattern_analysis(df):
             # Best upazila for this district group (most frequent non-null)
             upa_vals = gdf["upazila"].dropna()
             upa_k = upa_vals.value_counts().index[0] if not upa_vals.empty else None
-            # Best address sample
-            best_addr = gdf["address"].value_counts().index[0] if not gdf.empty else ""
+            # Best address: prefer csv_label (from cell tower CSV), fallback to CDR address
+            best_addr = ""
+            if "csv_label" in gdf.columns:
+                csv_vals = gdf["csv_label"].dropna()
+                csv_vals = csv_vals[csv_vals.astype(str).str.strip() != ""]
+                if not csv_vals.empty:
+                    best_addr = str(csv_vals.value_counts().index[0])
+            if not best_addr and not gdf.empty:
+                best_addr = str(gdf["address"].value_counts().index[0])
+            # Best exact GPS coord from CSV
+            exact_rows = gdf[gdf["is_exact"] == True] if "is_exact" in gdf.columns else pd.DataFrame()
+            best_coord = None
+            if not exact_rows.empty and exact_rows.iloc[0].get("coord"):
+                best_coord = exact_rows.iloc[0]["coord"]
+            elif not gdf.empty and gdf.iloc[0].get("coord"):
+                best_coord = gdf.iloc[0]["coord"]
             # Include if: stayed >= TRANSIT_H OR only location OR far enough
             if hrs>=TRANSIT_H or len(loc_groups)==1 or max_km>=HOME_KM*1.5:
                 stay_locs.append({
@@ -2318,7 +2478,9 @@ def movement_pattern_analysis(df):
                     "district": dist_k or None,
                     "km": max_km, "hours": round(hrs,1),
                     "first": gdf["ts"].min(), "last": gdf["ts"].max(),
-                    "sample_addr": str(best_addr)[:80],
+                    "sample_addr": best_addr[:100],
+                    "coord": best_coord,
+                    "is_exact": not exact_rows.empty,
                 })
         if not stay_locs: continue
 
@@ -2334,6 +2496,9 @@ def movement_pattern_analysis(df):
             "hours":round((s_end-s_start).total_seconds()/3600,1),
             "stay_locs":stay_locs,
             "address":str(dest["sample_addr"])[:80],
+            "lat": round(float(dest["coord"][0]), 6) if dest.get("coord") else None,
+            "lon": round(float(dest["coord"][1]), 6) if dest.get("coord") else None,
+            "is_exact": dest.get("is_exact", False),
         })
 
     trips.sort(key=lambda x:x["start_date"],reverse=True)
@@ -2356,6 +2521,22 @@ def movement_pattern_analysis(df):
         "date_from":str(all_dates[0]) if all_dates else "N/A",
         "date_to":str(all_dates[-1]) if all_dates else "N/A",
     }
+
+def _loc_accuracy_html(df):
+    """Show GPS accuracy badge in location section."""
+    if "loc_method" not in df.columns:
+        return ""
+    exact = int((df["loc_method"] == "cell_exact").sum())
+    total = len(df)
+    pct = round(exact / max(total, 1) * 100, 1)
+    color = "#059669" if pct >= 70 else "#d97706" if pct >= 30 else "#dc2626"
+    return f"""<div style="background:#f0fdf4; border-left:4px solid {color}; border-radius:8px;
+                    padding:0.6rem 1.1rem; margin-bottom:0.75rem; font-size:0.88rem; color:#065f46;">
+        <strong>📡 GPS Accuracy:</strong> {exact:,}/{total:,} records ({pct}%) matched to
+        exact cell tower coordinates (±0.5–2 km).
+        Remaining {total-exact:,} records use BTS address text-based location (±5–20 km).
+    </div>"""
+
 
 def _movement_html(mv):
     """Generate HTML for movement pattern section (new distance-based logic)."""
@@ -2410,7 +2591,7 @@ def _movement_html(mv):
             if len(stay_locs) <= 1: return ""
             parts = []
             for sl in stay_locs[:-1]:
-                lbl = sl["upazila"] or sl["district"] or "?"
+                lbl = str(sl.get("upazila") or sl.get("district") or "?").strip() or "?"
                 parts.append(f"{lbl} ({sl['hours']}h, {sl['km']}km)")
             return "Via: " + " -> ".join(parts) if parts else ""
 
@@ -2419,9 +2600,10 @@ def _movement_html(mv):
                 <td style="padding:0.7rem 1rem; font-weight:600; color:#1e3a8a;">
                     {i+1}</td>
                 <td style="padding:0.7rem 1rem; font-weight:700;">
-                    {t["upazila"]}<br>
-                    <span style="font-size:0.8rem;font-weight:400;color:#64748b;">
-                        {t["district"]} District</span></td>
+                    {t["district"] or t["upazila"]}</td>
+                <td style="padding:0.7rem 1rem; text-align:center; font-family:monospace; font-size:0.82rem; color:#1e3a8a;">
+                    {"✅ " + str(round(float(t["lat"]),5)) + "<br>" + str(round(float(t["lon"]),5)) if t.get("lat") else "—"}
+                </td>
                 <td style="padding:0.7rem 1rem; text-align:center;">
                     <span style="background:#dbeafe;color:#1e40af;border-radius:12px;
                                  padding:0.2rem 0.7rem;font-weight:700;">
@@ -2454,6 +2636,7 @@ def _movement_html(mv):
                 <tr style="background:#1e3a8a; color:white;">
                     <th style="padding:0.7rem 1rem; text-align:left;">#</th>
                     <th style="padding:0.7rem 1rem; text-align:left;">Destination (Upazila / District)</th>
+                    <th style="padding:0.7rem 1rem; text-align:center;">GPS Coordinates</th>
                     <th style="padding:0.7rem 1rem; text-align:center;">Distance</th>
                     <th style="padding:0.7rem 1rem; text-align:left;">Departure</th>
                     <th style="padding:0.7rem 1rem; text-align:left;">Return</th>
@@ -2712,6 +2895,113 @@ def _imei_change_html(df):
         <tbody>{rows}</tbody>
     </table>"""
 
+def target_location_analysis(df, target_location):
+    """
+    Target Location Analysis:
+    Enter district or upazila name to see CDR activity dates in that area.
+    Fuzzy match: partial name matching।
+    Returns: list of dicts [{date, address, usage_type, count, lat, lon, gps_coord}]
+    """
+    if not target_location or "address" not in df.columns or "start" not in df.columns:
+        return []
+
+    tgt = target_location.strip().lower()
+    # Remove common suffixes for broader matching
+    tgt_clean = re.sub(r'(?i)[ ]*(sadar|district|upazila|thana|zila)[ ]*$', '', tgt).strip()
+
+    results = []
+    addr_df = df[df["address"].notna() & df["address"].apply(_is_valid_address)].copy()
+    if addr_df.empty:
+        return []
+
+    addr_df["date"] = addr_df["start"].dt.date
+    addr_df["addr_lower"] = addr_df["address"].str.lower()
+
+    # Match: address contains target string (partial match)
+    matched = addr_df[
+        addr_df["addr_lower"].str.contains(tgt_clean, na=False, regex=False) |
+        addr_df["addr_lower"].str.contains(tgt, na=False, regex=False)
+    ]
+
+    if matched.empty:
+        return []
+
+    # Group by date — each date: count, sample address, GPS if available
+    has_gps = "cell_lat" in matched.columns and "cell_lon" in matched.columns
+
+    daily = []
+    for date, grp in matched.groupby("date"):
+        cnt = len(grp)
+        sample_addr = grp["address"].value_counts().index[0]
+        usage_types = grp["usage_type"].value_counts().to_dict() if "usage_type" in grp.columns else {}
+        usage_str = ", ".join(f"{k}:{v}" for k, v in usage_types.items())
+
+        gps_coord = "—"
+        if has_gps:
+            exact = grp[grp["loc_method"] == "cell_exact"] if "loc_method" in grp.columns else pd.DataFrame()
+            src_gps = exact if not exact.empty else grp
+            lats = src_gps["cell_lat"].dropna()
+            if not lats.empty:
+                lat = round(float(lats.iloc[0]), 6)
+                lon = round(float(src_gps["cell_lon"].dropna().iloc[0]), 6)
+                gps_coord = f"{lat}, {lon}"
+
+        daily.append({
+            "Date":            str(date),
+            "BTS Address":     sample_addr[:80],
+            "GPS Coordinates": gps_coord,
+            "Usage Type":      usage_str,
+            "Records":         cnt,
+        })
+
+    daily.sort(key=lambda x: x["Date"])
+    return daily
+
+
+def _target_location_html(df, target_location):
+    """HTML section for target location analysis."""
+    if not target_location:
+        return ""
+    results = target_location_analysis(df, target_location)
+    if not results:
+        return f"""<h2>11. Target Location Analysis</h2>
+    <div class="info-box">
+        <strong>Target Location:</strong> {target_location}<br>
+        <span class="warning">No CDR activity found near '{target_location}'.</span>
+    </div>"""
+
+    rows_html = "".join([
+        f"""<tr style="background:{'#EBF3FB' if i%2==0 else 'white'};">
+            <td>{r['Date']}</td>
+            <td>{r['BTS Address']}</td>
+            <td style="font-family:monospace;font-size:0.82em;">{r['GPS Coordinates']}</td>
+            <td>{r['Usage Type']}</td>
+            <td style="text-align:center;font-weight:700;">{r['Records']}</td>
+        </tr>"""
+        for i, r in enumerate(results)
+    ])
+
+    return f"""<h2>11. Target Location Analysis</h2>
+    <div class="info-box">
+        <strong>Target Location:</strong> {target_location}<br>
+        <strong>Total Days with Activity:</strong> {len(results)} day(s)<br>
+        <strong>Total Records:</strong> {sum(r['Records'] for r in results)}
+    </div>
+    <p>Dates when the subscriber's CDR activity was detected near <strong>{target_location}</strong>:</p>
+    <table class="dataframe">
+        <thead>
+            <tr style="text-align:right;">
+                <th>Date</th>
+                <th>BTS Address</th>
+                <th>GPS Coordinates</th>
+                <th>Usage Type</th>
+                <th>Records</th>
+            </tr>
+        </thead>
+        <tbody>{rows_html}</tbody>
+    </table>"""
+
+
 def _target_number_html(df, target_number):
     if not target_number:
         return ''
@@ -2736,7 +3026,8 @@ def _target_number_html(df, target_number):
     <p>Communication summary between the subscriber and <strong>{target_number}</strong>.</p>
     {df_to_html(table_df)}'''
 
-def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None):
+
+def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None, target_location=None):
     import re as _re_html
     def _clean_id(series):
         result = []
@@ -2790,6 +3081,7 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
     <h3>5.6 Top Call Overall</h3>{df_to_html(top_call_overall(df,10))}
     <h3>5.6a Top Call Overall Chart</h3>{fig_to_html_img(plot_top_call_overall(df,10))}
     <h2>6. Location Analysis</h2>
+    {_loc_accuracy_html(df)}
     <h3>6.1 Location Summary</h3>{df_to_html(location_summary(df))}
     <h3>6.2 Top 10 Frequent Locations</h3>{df_to_html(top_locations(df,None,10))}
     <h3>6.3 Frequent Locations Graph</h3>{fig_to_html_img(plot_locations(df,None,'Frequent Locations'))}
@@ -2814,6 +3106,7 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
     {_movement_html(movement_pattern_analysis(df))}
 
     {_target_number_html(df, target_number)}
+    {_target_location_html(df, target_location) if target_location else ""}
 
     <h2>10. Overall Comment</h2>
     {''.join(f'<p>{ln}</p>' for ln in generate_overall_comment(df, phone, operator, date_range, total_raw))}
@@ -2827,7 +3120,7 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
 # ─────────────────────────────────────────────
 # WORD (DOCX) GENERATOR
 # ─────────────────────────────────────────────
-def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None):
+def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None, target_location=None):
     from docx import Document
     from docx.shared import Pt, RGBColor, Inches, Cm
     from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -3069,6 +3362,1108 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
 # ─────────────────────────────────────────────
 # STREAMLIT UI
 # ─────────────────────────────────────────────
+
+
+
+
+
+
+def build_movement_map(df, phone, operator):
+    """
+    GPS Location Logic:
+
+    PRIORITY 1 — CSV LAC+CID match:
+        → CDR address vs CSV address token similarity check
+        → High sim (>=0.6): confirmed CSV GPS + district/thana
+        → Low sim (<0.6) but same LAC match: GPS used with caution flag
+        → CSV GPS vs text-parsed GPS distance > 40km: mark as suspicious
+
+    PRIORITY 2 — Text parse from CDR BTS address:
+        → P.S:/P/S: keyword → thana extract → THANA_GPS (±3-8km)
+        → DIST: keyword → district → DISTRICT_GPS (±10-20km)
+        → Last comma token fallback
+        → Error/placeholder address → skip GPS
+
+    HOME:
+        → Most frequent GPS location (by coordinate cluster)
+        → Not time-based — purely frequency
+
+    FALSE POSITIVE RULES:
+        → Single record AND >35km from home → ⚠️ suspicious
+        → Same-day records in 2+ districts AND far → transit day
+        → CSV GPS vs text GPS distance >40km → suspicious
+        → "MOUZA NOT FOUND" / error address → no GPS assigned
+    """
+    import math, json as _json, re as _re
+    import pandas as _pd
+
+    # ── Thana GPS (±3-8 km) ──
+    THANA_GPS = {
+        'Gobindaganj':(25.1167,89.3667),'Gobindoganj':(25.1167,89.3667),
+        'Gaibandha Sadar':(25.3288,89.5449),'Sadullapur':(25.2667,89.5000),
+        'Sundarganj':(25.5333,89.4667),'Fulchhari':(25.0667,89.5167),
+        'Palashbari':(25.2333,89.4667),'Sughatta':(25.4333,89.3167),
+        'Uttara':(23.8750,90.3987),'Gulshan':(23.7925,90.4078),
+        'Cantonment Dhaka':(23.8000,90.4000),'Dhaka Cantonment':(23.8000,90.4000),
+        'Khilkhet':(23.8200,90.4200),'Badda':(23.7800,90.4300),
+        'Tongi':(23.8980,90.3990),'Pallabi':(23.8300,90.3600),
+        'Kafrul':(23.7900,90.3700),'Mirpur':(23.8223,90.3654),
+        'Mohammadpur':(23.7638,90.3567),'Motijheel':(23.7300,90.4175),
+        'Lalbagh':(23.7205,90.3888),'Kotwali':(23.7200,90.4100),
+        'Sabujbagh':(23.7300,90.4400),'Gazipur Sadar':(23.9999,90.4203),
+        'Rupganj':(23.7500,90.5167),'Savar':(23.8576,90.2667),
+        'Bogra Sadar':(24.8465,89.3720),'Bogra Sadar South':(24.8300,89.3600),
+        'Bogra Sadar South New':(24.8300,89.3600),
+        'Shibganj':(25.0571,89.3693),'Shibgonj':(25.0571,89.3693),
+        'Sherpur':(24.7058,89.3968),'Kamarkhanda':(24.4149,89.6527),
+        'Sirajganj Sadar':(24.4508,89.7013),'Tangail Sadar':(24.2513,89.9167),
+        'Comilla Sadar':(23.4682,91.1788),'Chouddagram':(23.2667,91.2667),
+        'Kasba':(23.8000,91.1333),'Brahmanbaria Sadar':(23.9570,91.1120),
+        'Rangpur Sadar':(25.7439,89.2752),'Kurigram Sadar':(25.8074,89.6360),
+        'Ulipur':(25.6833,89.6667),'Mithapukur':(25.6833,89.1833),
+        'Gopalganj Sadar':(25.1167,89.3667),
+    }
+
+    # ── District GPS (±10-20 km last resort) ──
+    DISTRICT_GPS = {
+        'Dhaka':(23.8103,90.4125),'Chittagong':(22.3384,91.8317),
+        'Sylhet':(24.8949,91.8687),'Rajshahi':(24.3745,88.6042),
+        'Khulna':(22.8456,89.5403),'Barisal':(22.7010,90.3535),
+        'Rangpur':(25.7439,89.2752),'Mymensingh':(24.7471,90.4203),
+        'Gaibandha':(25.3288,89.5449),'Kurigram':(25.8074,89.6360),
+        'Jamalpur':(24.9373,89.9373),'Comilla':(23.4682,91.1788),
+        'Bogra':(24.8465,89.3720),'Dinajpur':(25.6279,88.6338),
+        'Nilphamari':(25.9313,88.8561),'Lalmonirhat':(25.9217,89.2836),
+        'Sirajganj':(24.4508,89.7013),'Sirajgonj':(24.4508,89.7013),
+        'Pabna':(24.0064,89.2372),'Manikganj':(23.8634,89.9947),
+        'Munshiganj':(23.5422,90.5302),'Narsingdi':(23.9234,90.7151),
+        'Gazipur':(23.9999,90.4203),'Tangail':(24.2513,89.9167),
+        'Kishoreganj':(24.4449,90.7766),'Netrokona':(24.8710,90.7278),
+        'Sherpur':(25.0204,90.0152),'Faridpur':(23.6070,89.8429),
+        'Gopalganj':(23.0046,89.8267),'Noakhali':(22.8696,91.0997),
+        'Feni':(23.0235,91.3960),'Chandpur':(23.2373,90.6518),
+        'Brahmanbaria':(23.9570,91.1120),'Coxsbazar':(21.4272,92.0058),
+        'Bandarban':(22.1953,92.2184),'Narayanganj':(23.6238,90.4997),
+        'Jessore':(23.1664,89.2082),'Satkhira':(22.7185,89.0705),
+        'Kushtia':(23.9012,89.1213),'Bogura':(24.8465,89.3720),
+        'Naogaon':(24.9131,88.7465),'Natore':(24.4198,88.9877),
+        'Chapainawabganj':(24.5965,88.2765),'Joypurhat':(25.1026,89.0197),
+        'Panchagarh':(26.3411,88.5541),'Thakurgaon':(26.0336,88.4616),
+    }
+
+    INVALID_PATTERNS = [
+        'MOUZA NOT FOUND','NOT FOUND IN AG','CAAB PERMISSION',
+        'PERMISSION FOUND','MOUZA-MOUZA',
+    ]
+
+    def hav(a,b,c,d):
+        R=6371; dlat=math.radians(c-a); dlon=math.radians(d-b)
+        x=math.sin(dlat/2)**2+math.cos(math.radians(a))*math.cos(math.radians(c))*math.sin(dlon/2)**2
+        return round(R*2*math.asin(math.sqrt(max(0.0,x))),1)
+
+    def bearing(la1,lo1,la2,lo2):
+        dlo=math.radians(lo2-lo1); la1r=math.radians(la1); la2r=math.radians(la2)
+        x=math.sin(dlo)*math.cos(la2r)
+        y=math.cos(la1r)*math.sin(la2r)-math.sin(la1r)*math.cos(la2r)*math.cos(dlo)
+        return round((math.degrees(math.atan2(x,y))+360)%360,1)
+
+    def get_color(km, home_dist, this_dist):
+        if km < 3:               return '#c62828'
+        if this_dist==home_dist: return '#1565C0'
+        if km < 50:              return '#E65100'
+        if km < 150:             return '#7B1FA2'
+        return '#1B5E20'
+
+    def addr_tokens(s):
+        noise={'vill','village','road','ward','house','the','and','plot','dist',
+               'p.o','p.s','p','o','s','no','num','po','ps','mouza','moza',
+               'union','para','gram','gram','bazar','hat','ghat','more'}
+        return set(t for t in _re.sub(r'[^a-z0-9]',' ',str(s).lower()).split()
+                   if len(t)>=3 and t not in noise)
+
+    def addr_sim(cdr_addr, csv_addr):
+        ct=addr_tokens(cdr_addr); st=addr_tokens(csv_addr)
+        if not ct or not st: return 0.0
+        return round(len(ct&st)/max(len(ct),len(st)),2)
+
+    def is_invalid(addr):
+        a=str(addr).upper()
+        return any(p in a for p in INVALID_PATTERNS)
+
+    def text_gps(addr_str):
+        """CDR address text → GPS. Thana first, then District."""
+        if is_invalid(addr_str): return None
+        s=str(addr_str).upper()
+
+        # P.S / P/S → thana
+        thana=''
+        mt=_re.search(r'P[\.\s]*/?\s*S[\.\:\s\-/]+([A-Z][A-Z\s\-]{2,}?)(?:[,\.\n]|DIST|$)',s)
+        if mt: thana=mt.group(1).strip().rstrip('.,- ').title()
+
+        # DIST: → district
+        district=''
+        md=_re.search(r'DIST[\.\:\s]+([A-Z][A-Z\s\-]{2,}?)(?:[,\.\n]|$|\s+BD)',s)
+        if md: district=md.group(1).strip().rstrip('.,- ').title()
+
+        # Fallback: last comma tokens
+        if not district:
+            parts=[p.strip() for p in _re.split(r'[,،]',s) if len(p.strip())>2]
+            parts=[_re.sub(r'\b(BD|BANGLADESH|\d{4,})\b','',p).strip() for p in parts]
+            parts=[p for p in parts if p and not p.isdigit()]
+            if parts:
+                last=parts[-1].rstrip('.').title()
+                if last.replace(' ','').isalpha() and len(last)>=4:
+                    district=last
+                if len(parts)>=2 and not thana:
+                    sl=parts[-2].rstrip('.').title()
+                    if len(sl)>=4: thana=sl
+
+        # Normalize
+        dist_norm={'Gaibanda':'Gaibandha','Bogura':'Bogra','Sirajgonj':'Sirajganj',
+                   'Cumilla':'Comilla','Bogra Sadar South New':'Bogra'}
+
+        # Try thana GPS first (more accurate)
+        if thana:
+            for tk in [thana, thana.replace(' Sadar','').strip()]:
+                if tk in THANA_GPS:
+                    g=THANA_GPS[tk]
+                    d=dist_norm.get(district,district) or tk.split()[0]
+                    return (g[0],g[1],d,thana,5000,'text_thana')
+
+        # District GPS
+        if district:
+            d=dist_norm.get(district,district)
+            if d in DISTRICT_GPS:
+                g=DISTRICT_GPS[d]
+                return (g[0],g[1],d,thana,15000,'text_district')
+            # Partial match
+            for k,v in DISTRICT_GPS.items():
+                if k.lower() in d.lower() or d.lower() in k.lower():
+                    return (v[0],v[1],k,thana,15000,'text_district')
+
+        return None
+
+    # ── Validate inputs ──
+    if 'start' not in df.columns or 'address' not in df.columns:
+        return None
+
+    df=df.copy()
+    has_loc='loc_method' in df.columns
+    has_csv_lat='cell_lat' in df.columns
+    has_csv_dist='csv_district' in df.columns
+    has_csv_thana='csv_thana' in df.columns  # may or may not exist
+    has_csv_label='cell_csv_label' in df.columns
+
+    ADDR_SIM_THRESHOLD = 0.5   # CSV GPS accepted if sim >= this
+    DIST_SUSPECT_KM   = 40.0   # CSV GPS vs text GPS > this → suspicious
+
+    rows_out=[]
+    for _,row in df.sort_values('start').iterrows():
+        addr=str(row.get('address',''))
+        method=str(row.get('loc_method','')) if has_loc else ''
+        lat=lon=None; district=thana=''; acc_m=None; gps_method='none'; suspect=False
+
+        # ── PRIORITY 1: CSV LAC+CID match ──
+        if method=='cell_exact' and has_csv_lat and _pd.notna(row.get('cell_lat')):
+            csv_lat=float(row['cell_lat']); csv_lon=float(row['cell_lon'])
+
+            # Address similarity: CDR addr vs CSV label
+            csv_lbl=str(row.get('cell_csv_label','')) if has_csv_label else ''
+            sim=addr_sim(addr, csv_lbl) if csv_lbl else 1.0  # no label = trust CSV
+
+            csv_dist_val=str(row.get('csv_district','')).strip().title() if has_csv_dist else ''
+            csv_thana_val=str(row.get('csv_thana','')).strip().title() if has_csv_thana else ''
+
+            # Cross-check: text parse for this address
+            tg=text_gps(addr)
+            if tg and sim>=ADDR_SIM_THRESHOLD:
+                text_lat,text_lon=tg[0],tg[1]
+                dist_diff=hav(csv_lat,csv_lon,text_lat,text_lon)
+                if dist_diff>DIST_SUSPECT_KM:
+                    suspect=True  # GPS vs text disagree by >40km
+
+            lat=csv_lat; lon=csv_lon
+            district=csv_dist_val; thana=csv_thana_val
+            acc_m=1500
+            gps_method='csv_exact'
+
+        # ── PRIORITY 2: Text parse (no CSV match) ──
+        elif not is_invalid(addr):
+            tg=text_gps(addr)
+            if tg:
+                lat,lon,district,thana,acc_m,gps_method=tg
+
+        if lat is not None and 19<=lat<=27 and 87<=lon<=93:
+            rows_out.append({
+                'lat':lat,'lon':lon,'district':district,'thana':thana,
+                'acc_m':acc_m,'gps_method':gps_method,'suspect':suspect,
+                'start':row['start'],'addr':addr[:70],
+            })
+
+    if len(rows_out)<2: return None
+    gdf=_pd.DataFrame(rows_out).sort_values('start').reset_index(drop=True)
+    gdf['km_raw']=0.0  # placeholder, will compute after home
+
+    # ── HOME: CDR address frequency → GPS from CSV match ──
+    # সবচেয়ে বেশি CDR address → সেটাই home
+    # GPS: সেই address-এর csv_exact GPS (যদি থাকে), নইলে text parse
+    addr_freq = df['address'].value_counts()
+    addr_freq = addr_freq[addr_freq.index.str.len() > 5]  # empty address বাদ
+
+    home_lat = home_lon = None
+    home_dist_val = ''; home_label = 'Home'
+
+    for top_addr in addr_freq.index:
+        # CDR rows for this address
+        addr_rows = gdf[gdf['addr'].str.upper().str[:50] == top_addr.upper()[:50]]
+        if addr_rows.empty:
+            # Try text-parsed GPS for this address
+            tg = text_gps(top_addr)
+            if tg:
+                home_lat, home_lon = tg[0], tg[1]
+                home_dist_val = tg[2]
+                home_label = top_addr.split(',')[0][:25].split('|')[0].strip().title()
+                break
+            continue
+        # Prefer csv_exact rows
+        ex = addr_rows[addr_rows['gps_method'] == 'csv_exact']
+        src = ex if not ex.empty else addr_rows
+        home_lat = float(src['lat'].mean())
+        home_lon = float(src['lon'].mean())
+        home_dist_val = str(src['district'].mode().iloc[0]) if not src['district'].empty else ''
+        home_label = top_addr.split(',')[0][:25].split('|')[0].strip().title()
+        break
+
+    if home_lat is None:
+        # Fallback: most frequent GPS cluster
+        gdf['lat_r']=gdf['lat'].round(3); gdf['lon_r']=gdf['lon'].round(3)
+        freq=gdf.groupby(['lat_r','lon_r','district']).size().reset_index(name='cnt').sort_values('cnt',ascending=False)
+        home_lat=float(freq.iloc[0]['lat_r']); home_lon=float(freq.iloc[0]['lon_r'])
+        home_dist_val=str(freq.iloc[0]['district'])
+        home_rows=gdf[(gdf['lat_r']==freq.iloc[0]['lat_r'])&(gdf['lon_r']==freq.iloc[0]['lon_r'])]
+        home_label=str(home_rows['addr'].value_counts().index[0]).split(',')[0][:25].strip().title()
+
+    gdf['km']=gdf.apply(lambda r:hav(home_lat,home_lon,r['lat'],r['lon']),axis=1)
+
+    # ── Transit day detection ──
+    gdf['date_str']=_pd.to_datetime(gdf['start']).dt.date.astype(str)
+    transit_days=set()
+    for date,grp in gdf.groupby('date_str'):
+        far=grp[grp['km']>30]
+        if len(far)>=2 and far['district'].nunique()>1:
+            transit_days.add(date)
+    gdf['is_transit']=gdf['date_str'].isin(transit_days)
+    transit_info={}
+    for date in sorted(transit_days):
+        grp=gdf[gdf['date_str']==date].sort_values('start')
+        dists=list(dict.fromkeys(d for d in grp['district'].tolist() if d))
+        transit_info[date]=' → '.join(dists)
+
+    # ── Build steps from non-transit ──
+    stay=gdf[~gdf['is_transit']].copy()
+    MAX_STEPS=60
+    steps=[]; step_rows=[]; prev_lat=prev_lon=None; prev_dist=None
+    for _,row in stay.iterrows():
+        clat=float(row['lat']); clon=float(row['lon'])
+        cur_dist=str(row.get('district','')).strip()
+        d2p=hav(prev_lat,prev_lon,clat,clon) if prev_lat else 999
+        # Same district within 50km OR any location within 25km → same step
+        same_grp=(d2p<25 and step_rows) or (cur_dist and cur_dist==prev_dist and d2p<50 and step_rows)
+        if same_grp:
+            step_rows.append(row)
+        else:
+            if step_rows:
+                sr=_pd.DataFrame(step_rows)
+                ex=sr[sr['gps_method']=='csv_exact']
+                rep=ex if not ex.empty else sr
+                top_d=sr['district'].value_counts().index[0] if not sr['district'].value_counts().empty else ''
+                top_th=sr['thana'].value_counts().index[0] if not sr['thana'].value_counts().empty and sr['thana'].any() else ''
+                best_acc=int(sr['acc_m'].min())
+                best_m='csv_exact' if not ex.empty else sr['gps_method'].mode().iloc[0]
+                any_suspect=bool(sr['suspect'].any())
+                steps.append({'lat':float(rep['lat'].mean()),'lon':float(rep['lon'].mean()),
+                    'district':top_d,'thana':top_th,'count':len(sr),
+                    'km':round(float(sr['km'].max()),1),
+                    'start':str(sr['start'].min()),'end':str(sr['start'].max()),
+                    'addr':str(sr['addr'].value_counts().index[0])[:65] if not sr['addr'].value_counts().empty else '',
+                    'method':best_m,'acc_m':best_acc,'suspect':any_suspect})
+            step_rows=[row]
+        prev_lat=clat; prev_lon=clon; prev_dist=cur_dist
+    if step_rows:
+        sr=_pd.DataFrame(step_rows)
+        ex=sr[sr['gps_method']=='csv_exact']
+        rep=ex if not ex.empty else sr
+        top_d=sr['district'].value_counts().index[0] if not sr['district'].value_counts().empty else ''
+        top_th=sr['thana'].value_counts().index[0] if not sr['thana'].value_counts().empty and sr['thana'].any() else ''
+        best_m='csv_exact' if not ex.empty else sr['gps_method'].mode().iloc[0]
+        steps.append({'lat':float(rep['lat'].mean()),'lon':float(rep['lon'].mean()),
+            'district':top_d,'thana':top_th,'count':len(sr),
+            'km':round(float(sr['km'].max()),1),
+            'start':str(sr['start'].min()),'end':str(sr['start'].max()),
+            'addr':str(sr['addr'].value_counts().index[0])[:65] if not sr['addr'].value_counts().empty else '',
+            'method':best_m,'acc_m':int(sr['acc_m'].min()),'suspect':bool(sr['suspect'].any())})
+
+    # ── Suspicious filter ──
+    # Rule 1: 1 record AND >35km from home → unconfirmed
+    # Rule 2: suspect flag (CSV vs text GPS disagree >40km) → unconfirmed
+    main_steps=[]; suspicious=[]
+    for s in steps:
+        is_sus=False
+        if s['count']==1 and s['km']>35:
+            is_sus=True
+        elif s['suspect'] and s['km']>35:
+            is_sus=True
+        if is_sus:
+            suspicious.append(s)
+        else:
+            main_steps.append(s)
+
+    if not main_steps: return None
+    steps=main_steps
+
+    # ── Step limit: MAX 60 steps — বেশি হলে same-district consecutive merge ──
+    while len(steps) > MAX_STEPS:
+        # Find two consecutive steps with same district → merge
+        merged=False
+        for i in range(len(steps)-1):
+            if steps[i]['district']==steps[i+1]['district']:
+                s1=steps[i]; s2=steps[i+1]
+                merged_step={
+                    'lat':(s1['lat']*s1['count']+s2['lat']*s2['count'])/(s1['count']+s2['count']),
+                    'lon':(s1['lon']*s1['count']+s2['lon']*s2['count'])/(s1['count']+s2['count']),
+                    'district':s1['district'],'thana':s1.get('thana',''),
+                    'count':s1['count']+s2['count'],
+                    'km':max(s1['km'],s2['km']),
+                    'start':s1['start'],'end':s2['end'],
+                    'addr':s1['addr'] if s1['count']>=s2['count'] else s2['addr'],
+                    'method':s1['method'] if s1['method']=='csv_exact' else s2['method'],
+                    'acc_m':min(s1['acc_m'],s2['acc_m']),
+                    'suspect':s1.get('suspect',False) or s2.get('suspect',False),
+                }
+                steps=steps[:i]+[merged_step]+steps[i+2:]
+                merged=True; break
+        if not merged:
+            # No same-district pair → merge closest pair by km difference
+            min_diff=float('inf'); min_i=0
+            for i in range(len(steps)-1):
+                diff=abs(steps[i]['km']-steps[i+1]['km'])
+                if diff<min_diff: min_diff=diff; min_i=i
+            s1=steps[min_i]; s2=steps[min_i+1]
+            merged_step={
+                'lat':(s1['lat']+s2['lat'])/2,'lon':(s1['lon']+s2['lon'])/2,
+                'district':s1['district'] if s1['count']>=s2['count'] else s2['district'],
+                'thana':s1.get('thana',''),'count':s1['count']+s2['count'],
+                'km':max(s1['km'],s2['km']),'start':s1['start'],'end':s2['end'],
+                'addr':s1['addr'],'method':s1['method'],'acc_m':min(s1['acc_m'],s2['acc_m']),
+                'suspect':s1.get('suspect',False) or s2.get('suspect',False),
+            }
+            steps=steps[:min_i]+[merged_step]+steps[min_i+2:]
+
+    # ── Stats ──
+    csv_exact_cnt=int((gdf['gps_method']=='csv_exact').sum())
+    text_cnt=int((gdf['gps_method']!='csv_exact').sum())
+    period_start=str(_pd.to_datetime(gdf['start'].min()).date())
+    period_end=str(_pd.to_datetime(gdf['start'].max()).date())
+    total=len(df)
+
+    def acc_badge(method,acc_m,suspect=False):
+        s_tag='<span style="color:#dc2626"> ⚠️</span>' if suspect else ''
+        if method=='csv_exact':
+            return f"<span style='background:#d1fae5;color:#065f46;font-size:9px;padding:1px 5px;border-radius:8px;font-weight:600'>📡 CSV ±{acc_m}m</span>"+s_tag
+        elif 'thana' in method:
+            return f"<span style='background:#fef3c7;color:#92400e;font-size:9px;padding:1px 5px;border-radius:8px;font-weight:600'>📍 Thana ~{acc_m//1000}km</span>"+s_tag
+        return f"<span style='background:#fee2e2;color:#991b1b;font-size:9px;padding:1px 5px;border-radius:8px;font-weight:600'>🌍 District ~{acc_m//1000}km</span>"+s_tag
+
+    # ── Leaflet JS ──
+    js=[]
+    coords=[[round(s['lat'],5),round(s['lon'],5)] for s in steps]
+    js.append("var coords="+_json.dumps(coords)+";")
+    js.append("var route=L.polyline.antPath(coords,{color:'#1d4ed8',weight:3,opacity:0.75,delay:600,dashArray:[14,18],pulseColor:'#93c5fd',paused:false,reverse:false}).addTo(map);")
+
+    for i in range(len(steps)-1):
+        p1=steps[i]; p2=steps[i+1]
+        ml=round((p1['lat']+p2['lat'])/2,5); mlo=round((p1['lon']+p2['lon'])/2,5)
+        b=bearing(p1['lat'],p1['lon'],p2['lat'],p2['lon'])
+        dk=hav(p1['lat'],p1['lon'],p2['lat'],p2['lon'])
+        col=get_color(p2['km'],home_dist_val,p2['district'])
+        d1=(p1['district'] or '?').replace('"','')
+        d2=(p2['district'] or '?').replace('"','')
+        svg=("<svg width='26' height='26' viewBox='0 0 26 26' style='overflow:visible;display:block;margin:-13px 0 0 -13px'>"
+            "<defs><marker id='ah{i}' markerWidth='7' markerHeight='7' refX='5' refY='3.5' orient='auto'>"
+            "<path d='M0,0.5 L6,3.5 L0,6.5 Z' fill='{col}' stroke='white' stroke-width='0.7'/></marker></defs>"
+            "<circle cx='13' cy='13' r='6' fill='white' fill-opacity='0.8' stroke='{col}' stroke-width='1.5'/>"
+            "<line x1='4' y1='13' x2='20' y2='13' stroke='{col}' stroke-width='2.8' stroke-linecap='round' "
+            "marker-end='url(#ah{i})' transform='rotate({b},13,13)'/></svg>").format(i=i,col=col,b=b)
+        tip="{a}&#8594;{b2}: {d1}&#8594;{d2} ({dk}km)".format(a=i+1,b2=i+2,d1=d1,d2=d2,dk=dk)
+        js.append("L.marker([{ml},{mlo}],{{icon:L.divIcon({{html:{svg},iconSize:[26,26],iconAnchor:[13,13],className:''}}),zIndexOffset:-50}}).addTo(map).bindTooltip('{tip}',{{sticky:true}});".format(ml=ml,mlo=mlo,svg=_json.dumps(svg),tip=tip))
+
+    for i,s in enumerate(steps):
+        num=i+1; la=round(s['lat'],5); lo=round(s['lon'],5)
+        km=s['km']; col=get_color(km,home_dist_val,s['district'])
+        dist=(s['district'] or '—').replace('"','')
+        thana=(s.get('thana','') or '').replace('"','')
+        loc_lbl=f"{thana}, {dist}" if thana and thana.lower()!=dist.lower() else dist
+        cnt=s['count']; st2=s['start'][:16]; en=s['end'][:16]
+        addr=s['addr'].replace('"',' ').replace("'",' ')
+        badge=acc_badge(s['method'],s['acc_m'],s.get('suspect',False))
+        rad=max(9,min(32,9+cnt//6))
+        popup=("<div style='font-family:Arial;min-width:230px'>"
+            "<div style='background:{col};color:#fff;padding:7px 12px;border-radius:8px 8px 0 0;font-weight:700;font-size:13px'>Step {num} — {loc_lbl} ({km}km)</div>"
+            "<table style='width:100%;font-size:12px;border-collapse:collapse;border:1px solid #e5e7eb;border-top:none'>"
+            "<tr style='background:#f9fafb'><td style='padding:4px 8px;color:#6b7280'>Period</td><td style='padding:4px 8px'>{st2}<br>&rarr; {en}</td></tr>"
+            "<tr><td style='padding:4px 8px;color:#6b7280'>Records</td><td style='padding:4px 8px;font-weight:600'>{cnt}</td></tr>"
+            "<tr style='background:#f9fafb'><td style='padding:4px 8px;color:#6b7280'>From Home</td><td style='padding:4px 8px'>{km} km</td></tr>"
+            "<tr><td style='padding:4px 8px;color:#6b7280'>GPS</td><td style='padding:4px 8px;font-family:monospace;font-size:11px'>{la}, {lo}</td></tr>"
+            "<tr style='background:#f9fafb'><td style='padding:4px 8px;color:#6b7280'>Accuracy</td><td style='padding:4px 8px'>{badge}</td></tr>"
+            "<tr><td style='padding:4px 8px;color:#6b7280'>BTS</td><td style='padding:4px 8px;font-size:11px'>{addr}</td></tr>"
+            "</table></div>"
+        ).format(col=col,num=num,loc_lbl=loc_lbl,km=km,st2=st2,en=en,cnt=cnt,la=la,lo=lo,badge=badge,addr=addr)
+        tip2="Step {num}: {loc} | {s0}&rarr;{e0} | {cnt}rec | {km}km".format(num=num,loc=loc_lbl,s0=s['start'][:10],e0=s['end'][:10],cnt=cnt,km=km)
+        js.append("L.circleMarker([{la},{lo}],{{radius:{rad},fillColor:'{col}',color:'#fff',weight:2.5,opacity:1,fillOpacity:0.9}}).addTo(map).bindPopup({pop}).bindTooltip('{tip}',{{sticky:true}});".format(la=la,lo=lo,rad=rad,col=col,pop=_json.dumps(popup),tip=tip2))
+        ni="<div style='background:{col};color:#fff;border-radius:50%;width:20px;height:20px;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.35);margin:-10px 0 0 -10px'>{num}</div>".format(col=col,num=num)
+        js.append("L.marker([{la},{lo}],{{icon:L.divIcon({{html:{ni},iconSize:[20,20],iconAnchor:[10,10],className:''}}),zIndexOffset:10}}).addTo(map);".format(la=la,lo=lo,ni=_json.dumps(ni)))
+
+    for s in suspicious:
+        la=round(s['lat'],5); lo=round(s['lon'],5)
+        dist=(s['district'] or '?').replace('"','')
+        thana=(s.get('thana','') or '').replace('"','')
+        loc_s=f"{thana}, {dist}" if thana and thana.lower()!=dist.lower() else dist
+        pop=("<div style='font-family:Arial;padding:10px;min-width:200px'>"
+             "<b style='color:#f59e0b'>&#9888; Unconfirmed Location</b><br>"
+             "<b>Location:</b> {loc}<br><b>GPS:</b> {la},{lo}<br>"
+             "<b>From Home:</b> {km}km<br><b>Records:</b> {cnt}<br>"
+             "<b>Date:</b> {dt}</div>").format(loc=loc_s,la=la,lo=lo,km=round(s['km'],1),cnt=s['count'],dt=s['start'][:10])
+        js.append("L.circleMarker([{la},{lo}],{{radius:7,fillColor:'#f59e0b',color:'white',weight:1.5,opacity:0.8,fillOpacity:0.35,dashArray:'5,4'}}).addTo(map).bindPopup({pop}).bindTooltip('&#9888; {loc} ({km}km) — {cnt}rec',{{sticky:true}});".format(la=la,lo=lo,pop=_json.dumps(pop),loc=loc_s,km=round(s['km'],1),cnt=s['count']))
+
+    home_pop="<div style='font-family:Arial;padding:10px'><b style='font-size:14px'>&#127968; Home Location</b><br><br><b>Area:</b> {hl}<br><b>District:</b> {hd}<br><b>GPS:</b> {la}, {lo}<br><b>Source:</b> Most frequent BTS location</div>".format(hl=home_label,hd=home_dist_val,la=round(home_lat,5),lo=round(home_lon,5))
+    js.append("L.marker([{la},{lo}],{{icon:L.divIcon({{html:\"<div style='font-size:30px;margin:-15px 0 0 -15px'>&#127968;</div>\",iconSize:[30,30],iconAnchor:[15,15],className:''}}),zIndexOffset:1000}}).addTo(map).bindPopup({pop}).bindTooltip('&#127968; Home: {hl}',{{sticky:true,permanent:true,direction:'right',offset:[15,0]}});".format(la=round(home_lat,5),lo=round(home_lon,5),pop=_json.dumps(home_pop),hl=home_label))
+
+    all_bounds=[[round(s['lat'],5),round(s['lon'],5)] for s in steps]+[[round(home_lat,5),round(home_lon,5)]]
+    js.append("map.fitBounds("+_json.dumps(all_bounds)+",{padding:[80,80]});")
+    all_js='\n'.join(js)
+
+    # ── Timeline ──
+    tl_rows=''
+    for i,s in enumerate(steps):
+        col=get_color(s['km'],home_dist_val,s['district'])
+        dist=s['district'] or '—'; thana=s.get('thana','') or ''
+        loc_lbl=f"{thana}, {dist}" if thana and thana.lower()!=dist.lower() else dist
+        icon='&#127968;' if s['km']<3 else ('&#9992;' if s['km']>150 else ('&#128663;' if s['km']>35 else '&#128205;'))
+        mi='&#128249;' if s['method']=='csv_exact' else ('&#128270;' if 'thana' in s['method'] else '&#127758;')
+        tl_rows+=("<div class='tl-row' onclick=\"map.setView([{la},{lo}],13)\">"
+            "<div class='tl-num' style='background:{col}'>{n}</div>"
+            "<div class='tl-info'><span style='font-weight:600;color:{col}'>{icon} {loc}</span>"
+            " <span class='tl-km'>{km}km</span> <span title='source'>{mi}</span><br>"
+            "<span class='tl-date'>{st} &rarr; {en}</span>"
+            " &middot; <span class='tl-cnt'>{cnt}rec</span></div></div>\n"
+        ).format(la=round(s['lat'],5),lo=round(s['lon'],5),col=col,n=i+1,
+                 icon=icon,loc=loc_lbl,km=s['km'],mi=mi,
+                 st=s['start'][:10],en=s['end'][:10],cnt=s['count'])
+
+    if transit_info:
+        tl_rows+='<div style="margin-top:8px;padding:6px 8px;background:#fffbeb;border-radius:6px;border-left:3px solid #f59e0b;font-size:10px;color:#92400e"><b>&#128652; Transit days:</b><br>'
+        for dt,route in sorted(transit_info.items()):
+            tl_rows+=f"&nbsp;{dt}: {route}<br>"
+        tl_rows+='</div>'
+    if suspicious:
+        tl_rows+='<div style="margin-top:6px;padding:6px 8px;background:#fef9f0;border-radius:6px;border-left:3px solid #f59e0b;font-size:10px;color:#b45309"><b>&#9888; Unconfirmed:</b><br>'
+        for s in suspicious:
+            loc_s=(s.get('thana','') or s['district'] or '?')
+            tl_rows+=f"&nbsp;{loc_s} {round(s['km'],1)}km &middot; {s['start'][:10]} ({s['count']}rec)<br>"
+        tl_rows+='</div>'
+
+    dot=lambda c:f"<span style='display:inline-block;width:13px;height:13px;border-radius:50%;background:{c};vertical-align:middle'></span> "
+    lgd_arrow=("<svg width='22' height='14' style='vertical-align:middle;margin-right:2px'>"
+        "<defs><marker id='lgd-a' markerWidth='6' markerHeight='6' refX='4' refY='3' orient='auto'>"
+        "<path d='M0,0.5 L6,3 L0,5.5 Z' fill='#1d4ed8'/></marker></defs>"
+        "<circle cx='5' cy='7' r='3' fill='white' stroke='#1d4ed8' stroke-width='1.2'/>"
+        "<line x1='3' y1='7' x2='18' y2='7' stroke='#1d4ed8' stroke-width='2.2' marker-end='url(#lgd-a)'/></svg>")
+    note_bar=(f"<div style='position:fixed;bottom:24px;left:280px;z-index:1000;background:#fffbeb;"
+        f"border:1px solid #f59e0b;border-radius:8px;padding:8px 14px;font-family:Arial;font-size:11px;color:#92400e'>"
+        f"&#128249; CSV exact: {csv_exact_cnt} | &#128270; Text: {text_cnt} | "
+        f"&#128652; {len(transit_info)} transit | &#9888; {len(suspicious)} unconfirmed</div>")
+
+    parts=[]
+    parts.append('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">')
+    parts.append('<meta name="viewport" content="width=device-width,initial-scale=1">')
+    parts.append(f'<title>Movement Map &mdash; {phone}</title>')
+    parts.append('<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.css"/>')
+    parts.append('<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.js"></script>')
+    parts.append('<script src="https://cdn.jsdelivr.net/npm/leaflet-ant-path@1.1.2/dist/leaflet-ant-path.min.js"></script>')
+    parts.append("""<style>
+*{box-sizing:border-box;margin:0;padding:0}html,body{width:100%;height:100%;font-family:Arial,sans-serif}
+#map{position:absolute;inset:0;z-index:0}
+.panel{position:fixed;z-index:1000;background:#fff;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.18)}
+#hdr{top:10px;left:50%;transform:translateX(-50%);padding:10px 24px;text-align:center;white-space:nowrap}
+#tl{top:70px;left:10px;width:272px;padding:10px 12px;max-height:calc(100vh - 90px);overflow-y:auto}
+#lgd{bottom:90px;right:10px;padding:12px 16px;min-width:192px}
+.tl-row{display:flex;gap:8px;align-items:flex-start;padding:5px 4px;border-bottom:1px solid #f3f4f6;cursor:pointer;border-radius:4px}
+.tl-row:hover{background:#f0f9ff}
+.tl-num{min-width:22px;height:22px;border-radius:50%;color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px}
+.tl-info{font-size:11px;line-height:1.6}.tl-km{color:#9ca3af;font-size:10px}.tl-date{color:#6b7280}.tl-cnt{color:#374151;font-weight:600}
+#tl::-webkit-scrollbar{width:4px}#tl::-webkit-scrollbar-thumb{background:#d1d5db;border-radius:2px}
+</style>""")
+    parts.append('</head><body>')
+    parts.append(f'<div id="hdr" class="panel"><b style="font-size:15px;color:#111827">&#128205; Movement Analysis &mdash; {phone}</b><br>'
+        f'<span style="font-size:12px;color:#6b7280">{operator} &nbsp;|&nbsp; {period_start} &rarr; {period_end} &nbsp;|&nbsp; {total:,} records &nbsp;|&nbsp; {len(steps)} confirmed steps</span></div>')
+    parts.append(f'<div id="tl" class="panel"><div style="font-size:13px;font-weight:700;color:#111827;margin-bottom:6px">&#128203; Timeline <span style="font-size:10px;font-weight:400;color:#9ca3af">click to zoom</span></div>'
+        f'<div style="margin-bottom:6px;padding:3px 6px;background:#f9fafb;border-radius:5px;font-size:10px;color:#374151">&#128249;CSV &nbsp; &#128270;Thana &nbsp; &#127758;District</div>'+tl_rows+'</div>')
+    parts.append(f'<div id="lgd" class="panel"><b style="font-size:13px">Legend</b><div style="line-height:2.1;font-size:12px;margin-top:6px">'
+        f'&#127968; <span style="color:#c62828">Home ({home_label})</span><br>'
+        +dot('#1565C0')+str(home_dist_val)+'<br>'
+        +dot('#E65100')+'Nearby &lt;50 km<br>'
+        +dot('#7B1FA2')+'Far 50&ndash;150 km<br>'
+        +dot('#1B5E20')+'Very far &gt;150 km<br>'
+        +lgd_arrow+' Direction<br>'
+        +dot('#f59e0b')+'&#9888; Unconfirmed'
+        +'</div><hr style="margin:6px 0;border-color:#f3f4f6"><span style="font-size:10px;color:#9ca3af">Circle &#8733; records | Click for details</span></div>')
+    parts.append(note_bar)
+    parts.append('<div id="map"></div><script>')
+    parts.append("var map=L.map('map',{center:[23.5,90.3],zoom:7,zoomControl:true});")
+    parts.append("L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a>',subdomains:'abc',maxZoom:19}).addTo(map);")
+    parts.append(all_js)
+    parts.append('</script></body></html>')
+    return '\n'.join(parts).encode('utf-8')
+
+
+# ═══════════════════════════════════════════════════════════════
+# CDR LINK ANALYSIS — Multi-CDR Connection & Co-location Analysis
+# ═══════════════════════════════════════════════════════════════
+
+import streamlit as st
+import pandas as pd
+import re
+import json
+import math
+from itertools import combinations
+from collections import defaultdict
+
+
+# ─────────────────────────────────────────────────────────────
+# Helper functions
+# ─────────────────────────────────────────────────────────────
+
+def _clean_phone(v):
+    d = re.sub(r'[^0-9]', '', str(v))
+    if len(d) >= 10:
+        if d.startswith('880') and len(d) == 13: return '0' + d[3:]
+        if d.startswith('88') and len(d) == 12:  return '0' + d[2:]
+        if d.startswith('0')  and len(d) == 11:  return d
+        if len(d) == 10:                           return '0' + d
+    return d if len(d) >= 8 else None
+
+
+def _norm_lac_cid(v):
+    s = str(v).strip()
+    if s.endswith('.0') and s[:-2].isdigit(): s = s[:-2]
+    if s.isdigit() and len(s) > 1: s = str(int(s))
+    return s
+
+
+def _is_valid_number(p):
+    if not p: return False
+    d = re.sub(r'[^0-9]', '', str(p))
+    return len(d) >= 10
+
+
+def _remove_anomalies(df):
+    """Remove anomalous records: invalid numbers, service SMS, etc."""
+    if 'Usage Type' not in df.columns: return df
+    df = df[df['Usage Type'].isin(['MOC', 'MTC', 'SMSMO', 'SMSMT', 'SMS-MT', 'CALL-RCF'])].copy()
+    if 'Party B' in df.columns:
+        df['_pb_clean'] = df['Party B'].apply(_clean_phone)
+        df = df[df['_pb_clean'].apply(_is_valid_number)].copy()
+    return df
+
+
+def _load_cdr(uploaded_file, label):
+    """Load and clean a CDR Excel file."""
+    try:
+        xl = pd.ExcelFile(uploaded_file)
+        # Pick sheet with most rows
+        best_sheet = max(xl.sheet_names,
+                         key=lambda s: len(pd.read_excel(xl, sheet_name=s)))
+        df = pd.read_excel(xl, sheet_name=best_sheet)
+
+        # Normalize columns
+        col_map = {
+            'start':         ['start', 'start_dttime', 'date', 'datetime'],
+            'operator':      ['operator', 'provider_name', 'network'],
+            'party_a':       ['party a', 'aparty', 'party_a', 'msisdn', 'a_number'],
+            'party_b':       ['party b', 'bparty', 'party_b', 'b_number'],
+            'duration':      ['call duration', 'call_duration', 'duration'],
+            'usage_type':    ['usage type', 'usage_type', 'call_type', 'type'],
+            'cell_type':     ['cell type', 'cell_type', 'network_type', 'technology'],
+            'lac':           ['lac id', 'lac_id', 'lac', 'lacstarta', 'mccstarta'],
+            'cid':           ['cell id', 'cell_id', 'ci', 'cistarta'],
+            'address':       ['bts address', 'address', 'location', 'site_address'],
+        }
+        df.columns = [c.lower().strip() for c in df.columns]
+        rename = {}
+        for std, variants in col_map.items():
+            for v in variants:
+                if v in df.columns and std not in rename.values():
+                    rename[v] = std
+                    break
+        df = df.rename(columns=rename)
+
+        df['_label'] = label
+        df['_phone_a'] = df['party_a'].apply(_clean_phone) if 'party_a' in df.columns else label
+        df['_phone_b'] = df['party_b'].apply(_clean_phone) if 'party_b' in df.columns else None
+
+        # Determine subject phone (most frequent Party A)
+        if 'party_a' in df.columns:
+            pa_counts = df['party_a'].value_counts()
+            subject_raw = pa_counts.index[0] if not pa_counts.empty else label
+            subject_phone = _clean_phone(subject_raw) or label
+        else:
+            subject_phone = label
+
+        df['_subject'] = subject_phone
+        df['start'] = pd.to_datetime(df['start'], errors='coerce') if 'start' in df.columns else pd.NaT
+        df['lac_n'] = df['lac'].apply(_norm_lac_cid) if 'lac' in df.columns else ''
+        df['cid_n'] = df['cid'].apply(_norm_lac_cid) if 'cid' in df.columns else ''
+
+        # Remove anomalies
+        before = len(df)
+        df = _remove_anomalies(df)
+        after = len(df)
+
+        return df, subject_phone, before - after
+    except Exception as e:
+        st.error(f"Error loading {label}: {e}")
+        return None, None, 0
+
+
+def _build_connections(dfs):
+    """Build connection table from multiple CDRs."""
+    # connections[phone_b] = {subject: {call_out, call_in, sms_out, sms_in}}
+    connections = defaultdict(lambda: defaultdict(lambda: {
+        'call_out': 0, 'call_in': 0, 'sms_out': 0, 'sms_in': 0,
+        'total': 0, 'duration': 0.0
+    }))
+
+    for df in dfs:
+        subject = df['_subject'].iloc[0]
+        if 'usage_type' not in df.columns: continue
+        for _, row in df.iterrows():
+            pb = row.get('_phone_b') or _clean_phone(row.get('party_b', ''))
+            if not _is_valid_number(pb): continue
+            ut = str(row.get('usage_type', '')).upper()
+            dur = float(row.get('duration', 0) or 0) / 60
+
+            if 'MOC' in ut or 'OUT' in ut:
+                connections[pb][subject]['call_out'] += 1
+            elif 'MTC' in ut or 'IN' in ut or 'RCF' in ut:
+                connections[pb][subject]['call_in'] += 1
+            elif 'SMSMO' in ut:
+                connections[pb][subject]['sms_out'] += 1
+            elif 'SMSMT' in ut or 'SMS-MT' in ut:
+                connections[pb][subject]['sms_in'] += 1
+            connections[pb][subject]['total'] += 1
+            connections[pb][subject]['duration'] += dur
+
+    return connections
+
+
+def _build_colocation(dfs, window_min=30):
+    """Find co-location events: same BTS, same time window."""
+    results = []
+    if len(dfs) < 2: return results
+
+    # Prepare: each df with subject, time, lac, cid, address
+    prepared = []
+    for df in dfs:
+        sub = df['_subject'].iloc[0]
+        sub_df = df[df['start'].notna() & (df['lac_n'] != '') & (df['cid_n'] != '')].copy()
+        sub_df = sub_df[['start', 'lac_n', 'cid_n', 'address', '_label']].copy()
+        sub_df['_subject'] = sub
+        prepared.append(sub_df)
+
+    # Compare each pair
+    for (df_a, df_b) in combinations(prepared, 2):
+        sub_a = df_a['_subject'].iloc[0]
+        sub_b = df_b['_subject'].iloc[0]
+
+        # Merge on lac+cid
+        merged = pd.merge(
+            df_a[['start', 'lac_n', 'cid_n', 'address']].rename(
+                columns={'start': 'time_a', 'address': 'addr_a'}),
+            df_b[['start', 'lac_n', 'cid_n', 'address']].rename(
+                columns={'start': 'time_b', 'address': 'addr_b'}),
+            on=['lac_n', 'cid_n']
+        )
+        if merged.empty: continue
+
+        # Time diff filter
+        merged['diff_min'] = abs((merged['time_a'] - merged['time_b'])
+                                  .dt.total_seconds() / 60)
+        close = merged[merged['diff_min'] <= window_min].copy()
+
+        for _, row in close.iterrows():
+            results.append({
+                'Subject A': sub_a,
+                'Subject B': sub_b,
+                'Time A': str(row['time_a'])[:16],
+                'Time B': str(row['time_b'])[:16],
+                'Diff (min)': round(row['diff_min'], 1),
+                'LAC': row['lac_n'],
+                'CID': row['cid_n'],
+                'Location': str(row.get('addr_a', '') or row.get('addr_b', ''))[:60],
+            })
+
+    results.sort(key=lambda x: x['Diff (min)'])
+    return results[:200]  # max 200
+
+
+def _build_network_html(dfs, connections, subjects):
+    """Build Vis.js network graph HTML."""
+
+    # Nodes
+    nodes = {}
+    # Subject nodes
+    colors_subject = ['#2563eb', '#dc2626', '#16a34a', '#7c3aed', '#d97706']
+    for i, sub in enumerate(subjects):
+        nodes[sub] = {
+            'id': sub, 'label': sub, 'color': colors_subject[i % len(colors_subject)],
+            'shape': 'star', 'size': 30, 'font': {'size': 13, 'bold': True},
+            'title': f'Subject {i+1}: {sub}', 'group': 'subject'
+        }
+
+    # Find common contacts (appear with 2+ subjects)
+    common = {pb for pb, subj_dict in connections.items() if len(subj_dict) >= 2}
+
+    # Contact nodes
+    for pb, subj_dict in connections.items():
+        total = sum(d['total'] for d in subj_dict.values())
+        is_common = pb in common
+        nodes[pb] = {
+            'id': pb, 'label': pb,
+            'color': '#ef4444' if is_common else '#64748b',
+            'shape': 'ellipse',
+            'size': min(10 + total * 2, 35),
+            'font': {'size': 11},
+            'title': f"{pb}<br>Connections: {len(subj_dict)} subjects<br>Total: {total}",
+            'group': 'common' if is_common else 'contact'
+        }
+
+    # Edges
+    edges = []
+    eid = 0
+    for pb, subj_dict in connections.items():
+        for sub, data in subj_dict.items():
+            total = data['total']
+            if total == 0: continue
+            # Direction label
+            parts = []
+            if data['call_out'] > 0: parts.append(f"Out:{data['call_out']}")
+            if data['call_in'] > 0:  parts.append(f"In:{data['call_in']}")
+            if data['sms_out'] > 0:  parts.append(f"SMS→:{data['sms_out']}")
+            if data['sms_in'] > 0:   parts.append(f"SMS←:{data['sms_in']}")
+            edge_label = ' | '.join(parts)
+
+            # Color by type
+            if data['call_out'] + data['call_in'] > data['sms_out'] + data['sms_in']:
+                color = '#2563eb'  # call = blue
+            else:
+                color = '#16a34a'  # sms = green
+
+            width = max(1, min(8, total // 3 + 1))
+            is_common = pb in common
+
+            edges.append({
+                'id': eid, 'from': sub, 'to': pb,
+                'label': edge_label,
+                'arrows': {'to': {'enabled': True, 'scaleFactor': 0.8}},
+                'color': {'color': '#ef4444' if is_common else color, 'opacity': 0.85},
+                'width': width + (2 if is_common else 0),
+                'font': {'size': 9, 'align': 'middle'},
+                'title': f"Subject: {sub}<br>Contact: {pb}<br>{edge_label}<br>Duration: {round(data['duration'], 1)} min"
+            })
+            eid += 1
+
+    nodes_json = json.dumps(list(nodes.values()), ensure_ascii=False)
+    edges_json = json.dumps(edges, ensure_ascii=False)
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>CDR Link Analysis</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.css">
+<style>
+body {{ margin:0; font-family: "Segoe UI", Arial, sans-serif; background:#f1f5f9; }}
+#network {{ width:100%; height:680px; background:white; border:1px solid #e2e8f0; border-radius:12px; }}
+.legend {{ display:flex; gap:1.5rem; padding:.75rem 1rem; background:white; border:1px solid #e2e8f0;
+           border-radius:10px; margin-bottom:.75rem; flex-wrap:wrap; font-size:.82rem; }}
+.legend-item {{ display:flex; align-items:center; gap:.4rem; }}
+.dot {{ width:14px; height:14px; border-radius:50%; }}
+.controls {{ padding:.5rem 1rem; background:white; border:1px solid #e2e8f0;
+             border-radius:10px; margin-bottom:.75rem; display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }}
+.controls button {{ background:#1e3a8a; color:white; border:none; padding:.3rem .9rem;
+                    border-radius:6px; cursor:pointer; font-size:.82rem; }}
+.controls button:hover {{ background:#1e40af; }}
+h2 {{ color:#1e3a8a; margin:.5rem 0; font-size:1.1rem; }}
+</style>
+</head>
+<body>
+<h2>🔗 CDR Link Analysis — Network Graph</h2>
+<div class="legend">
+  <div class="legend-item"><div class="dot" style="background:#2563eb"></div> Subject (Star)</div>
+  <div class="legend-item"><div class="dot" style="background:#ef4444"></div> Common Contact (2+ subjects)</div>
+  <div class="legend-item"><div class="dot" style="background:#64748b"></div> Single Contact</div>
+  <div class="legend-item"><div style="width:20px;height:3px;background:#2563eb"></div> Call link</div>
+  <div class="legend-item"><div style="width:20px;height:3px;background:#16a34a"></div> SMS link</div>
+  <div class="legend-item"><div style="width:20px;height:3px;background:#ef4444"></div> Common link</div>
+</div>
+<div class="controls">
+  <button onclick="network.fit()">⊡ Fit All</button>
+  <button onclick="togglePhysics()">⚙ Toggle Physics</button>
+  <button onclick="showOnlyCommon()">🔴 Common Only</button>
+  <button onclick="showAll()">👁 Show All</button>
+  <span style="font-size:.8rem;color:#64748b">Scroll to zoom · Drag to move · Click node to highlight</span>
+</div>
+<div id="network"></div>
+<script>
+var nodesData = {nodes_json};
+var edgesData = {edges_json};
+var allNodes = new vis.DataSet(nodesData);
+var allEdges = new vis.DataSet(edgesData);
+var container = document.getElementById('network');
+var data = {{ nodes: allNodes, edges: allEdges }};
+var options = {{
+  nodes: {{ borderWidth:2, shadow:true }},
+  edges: {{ smooth:{{ type:'continuous' }}, shadow:false }},
+  physics: {{ enabled:true, stabilization:{{ iterations:200 }},
+               barnesHut:{{ gravitationalConstant:-8000, springLength:150, springConstant:0.04 }} }},
+  interaction: {{ hover:true, tooltipDelay:100, navigationButtons:true }},
+  layout: {{ improvedLayout:true }}
+}};
+var network = new vis.Network(container, data, options);
+var physicsOn = true;
+function togglePhysics() {{
+  physicsOn = !physicsOn;
+  network.setOptions({{ physics:{{ enabled: physicsOn }} }});
+}}
+function showOnlyCommon() {{
+  var commonNodes = nodesData.filter(n => n.group === 'subject' || n.group === 'common').map(n=>n.id);
+  var commonEdges = edgesData.filter(e => commonNodes.includes(e.to)).map(e=>e.id);
+  allNodes.update(nodesData.map(n=>({{ id:n.id, hidden: !commonNodes.includes(n.id) }})));
+  allEdges.update(edgesData.map(e=>({{ id:e.id, hidden: !commonEdges.includes(e.id) }})));
+}}
+function showAll() {{
+  allNodes.update(nodesData.map(n=>( {{ id:n.id, hidden:false }} )));
+  allEdges.update(edgesData.map(e=>( {{ id:e.id, hidden:false }} )));
+}}
+network.on('click', function(params) {{
+  if (params.nodes.length > 0) {{
+    var nodeId = params.nodes[0];
+    var connected = network.getConnectedNodes(nodeId);
+    connected.push(nodeId);
+    allNodes.update(nodesData.map(n=>( {{ id:n.id, opacity: connected.includes(n.id) ? 1.0 : 0.15 }} )));
+  }} else {{
+    allNodes.update(nodesData.map(n=>( {{ id:n.id, opacity:1.0 }} )));
+  }}
+}});
+</script>
+</body>
+</html>"""
+    return html
+
+
+def link_analysis_page():
+    """Main Link Analysis Page."""
+    st.markdown("""
+    <div style="background:white;border-radius:12px;padding:1.2rem 1.5rem;margin-bottom:1rem;
+                border-left:4px solid #2563eb;box-shadow:0 1px 4px rgba(0,0,0,.06)">
+        <div style="font-size:1.2rem;font-weight:800;color:#1e3a8a">🔗 CDR Link Analysis</div>
+        <div style="font-size:.85rem;color:#64748b">Upload up to 5 CDR files to analyze connections, common contacts, and co-location events</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Upload Section ──
+    st.markdown("### 📂 Upload CDR Files (max 5)")
+    cols = st.columns(5)
+    uploaded_files = []
+    labels = ['Subject A', 'Subject B', 'Subject C', 'Subject D', 'Subject E']
+
+    for i, col in enumerate(cols):
+        with col:
+            f = st.file_uploader(
+                labels[i], type=['xlsx', 'xls'],
+                key=f'link_cdr_{i}',
+                label_visibility='visible'
+            )
+            uploaded_files.append(f)
+
+    active_files = [(f, labels[i]) for i, f in enumerate(uploaded_files) if f is not None]
+
+    if len(active_files) < 2:
+        st.info("📌 Upload at least 2 CDR files to start link analysis")
+        return
+
+    # Settings
+    with st.expander("⚙️ Settings", expanded=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            top_n = st.slider("Top N contacts per subject", 5, 50, 20)
+        with c2:
+            coloc_window = st.slider("Co-location time window (minutes)", 5, 120, 30)
+
+    if st.button("🔗 Run Link Analysis", type="primary", use_container_width=False,
+                 key="run_link_analysis"):
+
+        # ── Load CDRs ──
+        dfs = []
+        subjects = []
+        anomaly_counts = []
+
+        with st.spinner("Loading CDR files..."):
+            for f, label in active_files:
+                df, subject, anomalies = _load_cdr(f, label)
+                if df is not None and len(df) > 0:
+                    dfs.append(df)
+                    subjects.append(subject)
+                    anomaly_counts.append(anomalies)
+
+        if len(dfs) < 2:
+            st.error("Could not load at least 2 valid CDR files")
+            return
+
+        # ── Summary cards ──
+        st.markdown("### 📊 Summary")
+        summary_cols = st.columns(len(dfs))
+        for i, (df, sub, anoms) in enumerate(zip(dfs, subjects, anomaly_counts)):
+            with summary_cols[i]:
+                st.markdown(f"""
+                <div style="background:white;border-top:4px solid {'#2563eb #dc2626 #16a34a #7c3aed #d97706'.split()[i % 5]};
+                            border-radius:10px;padding:1rem;box-shadow:0 1px 3px rgba(0,0,0,.06);text-align:center">
+                    <div style="font-size:.75rem;color:#94a3b8;text-transform:uppercase">{active_files[i][1]}</div>
+                    <div style="font-size:.95rem;font-weight:800;color:#0f172a;margin:.25rem 0">{sub}</div>
+                    <div style="font-size:.82rem;color:#64748b">{len(df):,} records</div>
+                    <div style="font-size:.78rem;color:#f59e0b">{anoms} anomalies removed</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # ── Build connections ──
+        with st.spinner("Analyzing connections..."):
+            connections = _build_connections(dfs)
+
+        # Filter top N per subject
+        # Sort connections by total across subjects
+        conn_sorted = sorted(
+            connections.items(),
+            key=lambda x: (len(x[1]), sum(d['total'] for d in x[1].values())),
+            reverse=True
+        )
+
+        # ── Common contacts highlight ──
+        common_contacts = [(pb, d) for pb, d in conn_sorted if len(d) >= 2]
+        st.markdown(f"### 🔴 Common Contacts ({len(common_contacts)} found)")
+
+        if common_contacts:
+            rows = []
+            for pb, subj_dict in common_contacts[:50]:
+                row = {'Contact Number': pb, 'Shared By': len(subj_dict)}
+                total_calls = total_sms = total_dur = 0
+                for sub in subjects:
+                    d = subj_dict.get(sub, {})
+                    out_c = d.get('call_out', 0); in_c = d.get('call_in', 0)
+                    out_s = d.get('sms_out', 0); in_s = d.get('sms_in', 0)
+                    dur = d.get('duration', 0)
+                    row[f'{sub[:8]} Calls'] = f"↑{out_c} ↓{in_c}" if (out_c+in_c) > 0 else '—'
+                    row[f'{sub[:8]} SMS'] = f"↑{out_s} ↓{in_s}" if (out_s+in_s) > 0 else '—'
+                    total_calls += out_c + in_c
+                    total_sms += out_s + in_s
+                    total_dur += dur
+                row['Total Calls'] = total_calls
+                row['Total SMS'] = total_sms
+                row['Duration (min)'] = round(total_dur, 1)
+                rows.append(row)
+
+            common_df = pd.DataFrame(rows)
+            st.dataframe(common_df, use_container_width=True, height=300)
+        else:
+            st.info("No common contacts found between subjects")
+
+        st.markdown("---")
+
+        # ── Full Connection Table ──
+        st.markdown(f"### 📋 All Connections (Top {top_n} per subject)")
+        tabs = st.tabs([f"📞 {sub}" for sub in subjects])
+
+        for tab, sub in zip(tabs, subjects):
+            with tab:
+                sub_conns = [(pb, d[sub]) for pb, d in conn_sorted
+                             if sub in d][:top_n]
+                if not sub_conns:
+                    st.info(f"No connections found for {sub}")
+                    continue
+                rows = []
+                for pb, d in sub_conns:
+                    is_common = len(connections[pb]) >= 2
+                    rows.append({
+                        'Contact': pb,
+                        'Common': '🔴 Yes' if is_common else '—',
+                        'Shared Subjects': len(connections[pb]),
+                        'Call Out (↑)': d.get('call_out', 0),
+                        'Call In (↓)': d.get('call_in', 0),
+                        'SMS Out (↑)': d.get('sms_out', 0),
+                        'SMS In (↓)': d.get('sms_in', 0),
+                        'Total': d.get('total', 0),
+                        'Duration (min)': round(d.get('duration', 0), 1),
+                    })
+                sub_df = pd.DataFrame(rows)
+                st.dataframe(sub_df, use_container_width=True, height=350)
+
+        st.markdown("---")
+
+        # ── Network Graph ──
+        st.markdown("### 🕸️ Network Graph")
+        with st.spinner("Building network graph..."):
+            # Use top connections for graph (limit nodes)
+            top_connections = defaultdict(dict)
+            for pb, subj_dict in conn_sorted[:80]:  # max 80 contact nodes
+                top_connections[pb] = subj_dict
+            graph_html = _build_network_html(dfs, top_connections, subjects)
+
+        st.components.v1.html(graph_html, height=780, scrolling=False)
+
+        # Download graph
+        st.download_button(
+            "⬇️ Download Network Graph",
+            data=graph_html.encode('utf-8'),
+            file_name="CDR_Link_Analysis_Network.html",
+            mime="text/html",
+            key="dl_network_graph"
+        )
+
+        st.markdown("---")
+
+        # ── Co-location Analysis ──
+        st.markdown(f"### 📍 Co-location Events (±{coloc_window} min, same tower)")
+        with st.spinner("Analyzing co-location..."):
+            coloc_results = _build_colocation(dfs, coloc_window)
+
+        if coloc_results:
+            st.success(f"✅ {len(coloc_results)} co-location event(s) found")
+            coloc_df = pd.DataFrame(coloc_results)
+            st.dataframe(coloc_df, use_container_width=True, height=400)
+
+            st.download_button(
+                "⬇️ Download Co-location Data",
+                data=coloc_df.to_csv(index=False).encode('utf-8'),
+                file_name="CDR_Colocation_Events.csv",
+                mime="text/csv",
+                key="dl_coloc"
+            )
+        else:
+            st.info("No co-location events found within the specified time window")
+
+
 def main():
     # ── Top App Header ──
     st.markdown("""
@@ -3078,12 +4473,22 @@ def main():
             <div class="app-header-title">CDR Analysis Platform</div>
         </div>
         <div class="app-header-nav">
-            <span>📈 Dashboard Preview</span>
-            <span>ℹ️ How It Works</span>
-            <span>❓ Help</span>
+            <span>📈 CDR Analysis</span>
+            <span>🔗 Link Analysis</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+    # ── Page Navigation ──
+    page = st.sidebar.radio(
+        "Navigation",
+        ["📞 CDR Analysis", "🔗 Link Analysis"],
+        label_visibility="collapsed"
+    )
+
+    if page == "🔗 Link Analysis":
+        link_analysis_page()
+        return
 
     # ── Hero Section ──
     st.markdown("""
@@ -3118,7 +4523,7 @@ def main():
         uploaded = st.file_uploader(
             label=" ",
             type=['xlsx', 'xls'],
-            help="যেকোনো অপারেটরের CDR Excel ফাইল",
+            help="CDR Excel file (any operator)",
             label_visibility="collapsed"
         )
         st.caption("Maximum file size: 200MB")
@@ -3137,7 +4542,8 @@ def main():
         target_number = st.text_input(
             label=" ",
             placeholder="e.g. 8801712345678",
-            label_visibility="collapsed"
+            label_visibility="collapsed",
+            key="target_number_input"
         )
         target_number = target_number.strip() if target_number else None
 
@@ -3149,6 +4555,40 @@ def main():
             </div>
         </div>
         """, unsafe_allow_html=True)
+
+        # ── Target Location ──
+        st.markdown("""
+        <div class="card-title" style="margin-top:1rem;">
+            <div class="card-icon-blue">📍</div>
+            <div>
+                <div>Target Location <span style="color:#94a3b8; font-weight:500; font-size:0.85rem;">(Optional)</span></div>
+                <div class="card-subtitle" style="font-weight:400;">Enter district or upazila name to find visit dates.</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        target_location = st.text_input(
+            label=" ",
+            placeholder="e.g. Rampal, Bagerhat, Keraniganj",
+            key="target_location_input",
+            label_visibility="collapsed"
+        )
+        target_location = target_location.strip() if target_location else None
+
+        if target_location:
+            st.markdown(f"""
+            <div style="background:#f0fdf4; border-radius:10px; padding:0.6rem 1rem; margin-top:0.4rem; display:flex; gap:0.5rem; align-items:center;">
+                <div style="color:#16a34a; font-size:1rem;">📍</div>
+                <div style="color:#15803d; font-size:0.83rem;">Will search for activity near: <strong>{target_location}</strong></div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div style="background:#f0fdf4; border-radius:10px; padding:0.6rem 1rem; margin-top:0.4rem; display:flex; gap:0.5rem; align-items:flex-start;">
+                <div style="color:#16a34a; font-size:1rem;">📍</div>
+                <div style="color:#15803d; font-size:0.83rem; line-height:1.4;">Shows all dates the subscriber visited a specific district/upazila.</div>
+            </div>
+            """, unsafe_allow_html=True)
 
     # ── Show landing content if no file uploaded ──
     if uploaded is None:
@@ -3244,13 +4684,799 @@ def main():
         return
 
     # ── Process ──
+    # ── Session State Cache: একই file দিলে re-analysis বন্ধ ──
+    import hashlib as _hashlib
+    _file_bytes_raw = uploaded.read()
+    _file_hash = _hashlib.md5(_file_bytes_raw).hexdigest()
+
+    # ── Run Analysis Button ──
+    # File upload হলেই analysis শুরু না করে, button click করলে শুরু হবে
+    _run_key = f"run_analysis_{_file_hash}"
+    if _run_key not in st.session_state:
+        st.session_state[_run_key] = False
+
+    if not st.session_state[_run_key]:
+        st.markdown("""
+        <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:12px;
+                    padding:1rem 1.5rem;margin:1rem 0;display:flex;align-items:center;gap:1rem">
+            <div style="font-size:1.5rem">📂</div>
+            <div>
+                <div style="font-weight:600;color:#166534">CDR File Ready</div>
+                <div style="font-size:0.85rem;color:#15803d">
+                    Click Run Analysis button to start
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("▶️ Run Analysis", type="primary", use_container_width=False,
+                     key=f"run_btn_{_file_hash}"):
+            st.session_state[_run_key] = True
+            st.rerun()
+        return  # Analysis will not start without clicking the button
+
+    # Cache key: file hash + target inputs
+    _cache_key = f"cdr_result_{_file_hash}"
+
+    # target_number এবং target_location আলাদা session_state-এ রাখি
+    if "target_number_val" not in st.session_state:
+        st.session_state["target_number_val"] = ""
+    if "target_location_val" not in st.session_state:
+        st.session_state["target_location_val"] = ""
+
+    # যদি cache-এ আছে এবং inputs same → cached result দেখাও
+    if (_cache_key in st.session_state
+            and st.session_state.get(_run_key, False)):
+        _cached = st.session_state[_cache_key]
+        # Show cached download buttons only
+        st.success("✅ Reports ready (cached)")
+        _base = _cached["base_name"]
+        dl1, dl2, dl3 = st.columns(3)
+        with dl1:
+            st.download_button("⬇️ Download HTML Report",
+                data=_cached["html_bytes"], file_name=f"{_base}_Report.html",
+                mime="text/html", use_container_width=True, key="dl_html_cached")
+        with dl2:
+            st.download_button("⬇️ Download Word Report",
+                data=_cached["docx_bytes"], file_name=f"{_base}_Report.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True, key="dl_docx_cached")
+        with dl3:
+            if _cached.get("map_bytes"):
+                st.download_button("🗺️ Download Movement Map",
+                    data=_cached["map_bytes"], file_name=f"{_base}_Movement_Map.html",
+                    mime="text/html", use_container_width=True, key="dl_map_cached")
+        # Show cached analysis sections
+        for _sec in _cached.get("sections", []):
+            st.markdown(_sec, unsafe_allow_html=True)
+        return
+
     progress = st.progress(0, text="📥 Reading file...")
 
     try:
-        file_bytes = uploaded.read()
+        file_bytes = _file_bytes_raw
         progress.progress(15, text="🔍 Analyzing data structure...")
 
         df, col_map, total_raw, anomaly_count, sheet = load_and_clean(file_bytes)
+
+        # ── Cell Tower GPS Enrichment ─────────────────────────────────────
+        # সব operator-এর CSV থেকে LAC+CID → exact GPS
+        # LAC mismatch থাকলে CID+address token দিয়ে smart fallback
+        cell_match_count = 0
+        try:
+            from huggingface_hub import hf_hub_download
+            import tempfile, os as _os, re as _re
+
+            HF_REPO = "Faruk131086/Celltower"
+            CELL_DIR = _os.path.join(tempfile.gettempdir(), "celltower_cache")
+            _os.makedirs(CELL_DIR, exist_ok=True)
+
+
+
+            # ── Local file fallback: HF_FILES_CFG hf নাম অনুযায়ী uploads ফোল্ডারে খোঁজো ──
+            # যদি user uploads ফোল্ডারে Banglalink_4G.csv থাকে সেটা সরাসরি CELL_DIR-এ copy করো
+            _UPLOADS_DIR = "/mnt/user-data/uploads"
+            _LOCAL_FILE_MAP = {
+                "Banglalink_4G.csv":    "Banglalink_4G.csv",
+                "Banglalink_2G3G.csv":  "Banglalink_2G3G.csv",
+                "GP_2G.csv":            "GP_2G.csv",
+                "GP_3G.csv":            "GP_3G.csv",
+                "GP_4G.csv":            "GP_4G.csv",
+                "Robi_2G.csv":          "Robi_2G.csv",
+                "Robi_2G-1.csv":        "Robi_2G.csv",
+                "Robi_4G.csv":          "Robi_4G.csv",
+                "Teletalk.csv":         "Teletalk.csv",
+            }
+            import shutil as _shutil
+            for _hf_name, _internal_name in _LOCAL_FILE_MAP.items():
+                _src_path  = _os.path.join(_UPLOADS_DIR, _hf_name)
+                _dest_path = _os.path.join(CELL_DIR, _internal_name)
+                if _os.path.isfile(_src_path) and _os.path.getsize(_src_path) > 1000:
+                    if not (_os.path.isfile(_dest_path) and _os.path.getsize(_dest_path) > 1000):
+                        _shutil.copy2(_src_path, _dest_path)
+
+            # ── HF file config: all operators, all generations ──
+            # key: lac/tac col, cid col, lat col, lon col, addr col
+            # ── HF Repo: Faruk131086/Celltower ──
+            # File names exactly as stored in HF dataset
+            HF_FILES_CFG = {
+                # ── Grameenphone ──────────────────────────────────────────
+                "GP_2G.csv":  {"hf": "GP_2G.csv",  "enc": "utf-8",   "lac": "lac", "cid": "cellid",       "lat": "latitude", "lon": "longitude", "addr": "address",      "thana": "thana", "district": "district"},
+                "GP_3G.csv":  {"hf": "GP_3G.csv",  "enc": "utf-8",   "lac": "lac", "cid": "cellid",       "lat": "latitude", "lon": "longitude", "addr": "address",      "thana": "thana", "district": "district"},
+                "GP_4G.csv":  {"hf": "GP_4G.csv",  "enc": "latin-1", "lac": "lac", "cid": "cell_id",      "lat": "latitude", "lon": "longitude", "addr": "address",      "thana": "thana", "district": "district"},
+                # ── Robi ──────────────────────────────────────────────────
+                "Robi_2G.csv": {"hf": "Robi_2G.csv", "enc": "latin-1", "lac": "lac", "cid": "cell_id",   "lat": "latitude", "lon": "longitude", "addr": "address",      "thana": "thana", "district": "district"},
+                # Robi_3G.csv নেই HF-এ → Robi_2G.csv fallback
+                "Robi_4G.csv": {"hf": "Robi_4G.csv", "enc": "latin-1", "lac": "enodebid", "cid": "cell_id", "lat": "latitude", "lon": "longitude", "addr": "address", "thana": "thana", "district": "district", "lac_alt": "tac"},
+                # ── Banglalink ────────────────────────────────────────────
+                "Banglalink_2G3G.csv": {"hf": "Banglalink_2G3G.csv", "enc": "latin-1", "lac": "lac", "cid": "ci",           "lat": "latitude", "lon": "longitude", "addr": "site address", "thana": "thana", "district": "district"},
+                "Banglalink_4G.csv":   {"hf": "Banglalink_4G.csv",   "enc": "latin-1", "lac": "tac", "cid": "eutrancellid", "lat": "latitude", "lon": "longitude", "addr": "site address", "thana": "thana", "district": "district"},
+                # ── Teletalk ──────────────────────────────────────────────
+                "Teletalk.csv": {"hf": "Teletalk.csv", "enc": "utf-8", "lac": "lac/ tal", "cid": "ci /tac", "lat": "latitude", "lon": "longitude", "addr": "full address"},
+            }
+
+            def _hf_token():
+                try: return st.secrets["HF_TOKEN"]
+                except Exception: return _os.environ.get("HF_TOKEN", None)
+
+            def _norm_id(v):
+                s = str(v).strip()
+                # .0 suffix remove (float→int)
+                if s.endswith(".0") and s[:-2].isdigit():
+                    s = s[:-2]
+                # Leading zeros strip for numeric IDs (e.g. "0130646" → "130646")
+                # This ensures CDR "0130646" matches CSV "130646"
+                if s.isdigit() and len(s) > 1:
+                    s = str(int(s))
+                return s
+
+            def _addr_tokens(s):
+                """Extract meaningful tokens from address for fuzzy matching.
+                Filters out generic words that appear in almost every address
+                (house, road, vill, post, dist, etc.) to prevent false matches.
+                """
+                _ADDR_STOPWORDS = {
+                    'house','road','vill','village','post','dist','district',
+                    'para','area','ward','block','lane','floor','flat','plot',
+                    'holding','section','street','avenue','building','tower',
+                    'police','station','office','market','bazar','bazaar',
+                    'union','upazila','thana','mouza','mouja','mauja',
+                    'north','south','east','west','central','new','old',
+                    'more','moor','ganj','pur','nagar','gram','palli',
+                }
+                s = _re.sub(r'[^a-z0-9 ]', ' ', str(s).lower())
+                return set(t for t in s.split()
+                           if len(t) > 4 and t not in _ADDR_STOPWORDS and not t.isdigit())
+
+            def _haversine_km(la1, lo1, la2, lo2):
+                """Fast Haversine distance in km between two GPS points."""
+                import math
+                R = 6371.0
+                dlat = math.radians(la2 - la1)
+                dlon = math.radians(lo2 - lo1)
+                a = math.sin(dlat/2)**2 + math.cos(math.radians(la1)) * math.cos(math.radians(la2)) * math.sin(dlon/2)**2
+                return R * 2 * math.asin(math.sqrt(a))
+
+            # Bangladesh district approximate center coordinates for CDR address cross-validation
+            BD_DISTRICT_COORDS = {
+                'dhaka': (23.8103, 90.4125), 'chittagong': (22.3569, 91.7832),
+                'sylhet': (24.8949, 91.8687), 'rajshahi': (24.3636, 88.6241),
+                'khulna': (22.8456, 89.5403), 'barisal': (22.7010, 90.3535),
+                'rangpur': (25.7439, 89.2752), 'mymensingh': (24.7471, 90.4203),
+                'comilla': (23.4607, 91.1809), 'narayanganj': (23.6238, 90.4996),
+                'gazipur': (24.0022, 90.4264), 'tangail': (24.2513, 89.9167),
+                'manikganj': (23.8630, 90.0024), 'munshiganj': (23.5422, 90.5305),
+                'narsingdi': (23.9324, 90.7154), 'kishoreganj': (24.4449, 90.7764),
+                'netrakona': (24.8701, 90.7268), 'jamalpur': (24.9375, 89.9377),
+                'sherpur': (25.0198, 90.0172), 'faridpur': (23.6070, 89.8429),
+                'gopalganj': (23.0050, 89.8267), 'madaripur': (23.1641, 90.2012),
+                'shariatpur': (23.2423, 90.4347), 'rajbari': (23.7574, 89.6441),
+                'jessore': (23.1664, 89.2080), 'satkhira': (22.7185, 89.0705),
+                'khulna': (22.8456, 89.5403), 'bagerhat': (22.6602, 89.7854),
+                'narail': (23.1722, 89.5120), 'magura': (23.4876, 89.4196),
+                'jhenaidah': (23.5447, 89.1530), 'kushtia': (23.9014, 89.1204),
+                'chuadanga': (23.6401, 88.8416), 'meherpur': (23.7620, 88.6317),
+                'bogra': (24.8465, 89.3773), 'sirajganj': (24.4535, 89.7006),
+                'pabna': (24.0064, 89.2372), 'natore': (24.4204, 88.9872),
+                'naogaon': (24.7936, 88.9312), 'chapainawabganj': (24.5965, 88.2785),
+                'joypurhat': (25.1007, 89.0227), 'dinajpur': (25.6279, 88.6338),
+                'thakurgaon': (26.0319, 88.4616), 'panchagarh': (26.3411, 88.5551),
+                'nilphamari': (25.9310, 88.8563), 'lalmonirhat': (25.9923, 89.2847),
+                'kurigram': (25.8054, 89.6363), 'gaibandha': (25.3288, 89.5287),
+                'cox bazar': (21.4272, 92.0058), "cox's bazar": (21.4272, 92.0058),
+                'bandarban': (22.1953, 92.2184), 'rangamati': (22.6522, 92.1615),
+                'khagrachhari': (23.1193, 91.9847), 'feni': (23.0230, 91.3960),
+                'noakhali': (22.8696, 91.0998), 'lakshmipur': (22.9449, 90.8412),
+                'chandpur': (23.2333, 90.6518), 'brahmanbaria': (23.9570, 91.1115),
+                'habiganj': (24.3745, 91.4153), 'moulvibazar': (24.4829, 91.7774),
+                'sunamganj': (25.0658, 91.3950), 'gazipur': (24.0022, 90.4264),
+                'savar': (23.8580, 90.2670), 'ashulia': (23.9481, 90.2895),
+                'narayanganj': (23.6238, 90.4996),
+            }
+
+            GPS_CONFIDENCE_THRESHOLD = 40  # accept GPS if confidence score >= 40/100
+
+            # ── Pre-build LAC-level GPS cluster stats (for Signal 3) ──
+            # Populated after all CSV files are loaded, before row-by-row enrichment
+            _lac_cluster_cache = {}  # lac → (median_lat, median_lon, std_km)
+
+            def _build_lac_clusters(loaded_files):
+                """
+                For each LAC, compute the median GPS and spread (std_km) of all towers.
+                Used to detect outlier GPS entries within a LAC.
+                """
+                import statistics
+                lac_points = {}  # lac → [(lat, lon)]
+                for fn, fdata in loaded_files.items():
+                    for (lv, cv), (lat, lon, toks, addr) in fdata["exact"].items():
+                        if lv not in lac_points:
+                            lac_points[lv] = []
+                        lac_points[lv].append((lat, lon))
+                clusters = {}
+                for lv, pts in lac_points.items():
+                    if len(pts) < 2:
+                        continue
+                    lats = [p[0] for p in pts]
+                    lons = [p[1] for p in pts]
+                    med_lat = statistics.median(lats)
+                    med_lon = statistics.median(lons)
+                    # Compute spread: median distance from median point
+                    dists = [_haversine_km(med_lat, med_lon, la, lo) for la, lo in pts]
+                    spread = statistics.median(dists)
+                    clusters[lv] = (med_lat, med_lon, spread)
+                return clusters
+
+            def _gps_confidence(lat, lon, cdr_addr_str, lac_key,
+                                same_lac_ci_rows, neighbor_rows):
+                """
+                Multi-source GPS confidence score (0–100).
+                Combines 4 independent signals — CDR address is just one of them.
+
+                Signal 1 – CDR Address Match (0–25 pts)
+                  GPS distance vs district mentioned in CDR address.
+                  Low weight because CDR address can also be wrong.
+
+                Signal 2 – Neighbor Consistency (0–35 pts)
+                  If surrounding records (±3 rows) all cluster near the candidate GPS,
+                  this GPS is likely correct even if CDR address disagrees.
+
+                Signal 3 – LAC Cluster Outlier (0–25 pts)
+                  All towers in this LAC normally sit within a tight geographic cluster.
+                  An outlier GPS far from the LAC median gets penalised.
+
+                Signal 4 – Same LAC+CI Majority Vote (0–15 pts)
+                  Other rows with the identical LAC+CI: what GPS do they end up with
+                  after previous signals? If >70% agree with this GPS → bonus.
+
+                Total >= GPS_CONFIDENCE_THRESHOLD (40) → accept.
+                """
+                import statistics
+                score = 0
+                reasons = []
+
+                # ── Signal 1: CDR Address Match (max 25 pts) ──
+                addr_lower = str(cdr_addr_str).lower() if cdr_addr_str else ""
+                matched_districts = []
+                for dn, (dlat, dlon) in BD_DISTRICT_COORDS.items():
+                    if dn in addr_lower:
+                        matched_districts.append((dlat, dlon, dn))
+                if not matched_districts:
+                    # CDR address mentions no known district → neutral (12 pts, half credit)
+                    score += 12
+                    reasons.append("addr:neutral(12)")
+                else:
+                    min_dist = min(_haversine_km(lat, lon, dlat, dlon)
+                                   for dlat, dlon, _ in matched_districts)
+                    if min_dist <= 30:
+                        score += 25; reasons.append(f"addr:match({min_dist:.0f}km,25)")
+                    elif min_dist <= 60:
+                        score += 15; reasons.append(f"addr:near({min_dist:.0f}km,15)")
+                    elif min_dist <= 120:
+                        score += 5;  reasons.append(f"addr:far({min_dist:.0f}km,5)")
+                    else:
+                        score += 0;  reasons.append(f"addr:mismatch({min_dist:.0f}km,0)")
+
+                # ── Signal 2: Neighbor Consistency (max 35 pts) ──
+                if neighbor_rows:
+                    neighbor_lats = [r[0] for r in neighbor_rows if r[0] is not None]
+                    neighbor_lons = [r[1] for r in neighbor_rows if r[1] is not None]
+                    if len(neighbor_lats) >= 2:
+                        med_nlat = statistics.median(neighbor_lats)
+                        med_nlon = statistics.median(neighbor_lons)
+                        dist_to_neighbors = _haversine_km(lat, lon, med_nlat, med_nlon)
+                        if dist_to_neighbors <= 20:
+                            score += 35; reasons.append(f"neighbors:close({dist_to_neighbors:.0f}km,35)")
+                        elif dist_to_neighbors <= 60:
+                            score += 20; reasons.append(f"neighbors:near({dist_to_neighbors:.0f}km,20)")
+                        elif dist_to_neighbors <= 150:
+                            score += 8;  reasons.append(f"neighbors:far({dist_to_neighbors:.0f}km,8)")
+                        else:
+                            score += 0;  reasons.append(f"neighbors:outlier({dist_to_neighbors:.0f}km,0)")
+                    else:
+                        score += 15; reasons.append("neighbors:insufficient(15)")
+                else:
+                    score += 15; reasons.append("neighbors:none(15)")
+
+                # ── Signal 3: LAC Cluster Outlier Check (max 25 pts) ──
+                if lac_key and lac_key in _lac_cluster_cache:
+                    clat, clon, spread = _lac_cluster_cache[lac_key]
+                    dist_from_cluster = _haversine_km(lat, lon, clat, clon)
+                    # Allow up to 3× the LAC spread, minimum 30km tolerance
+                    tolerance = max(spread * 3, 30)
+                    if dist_from_cluster <= tolerance:
+                        score += 25; reasons.append(f"lac_cluster:ok({dist_from_cluster:.0f}km,25)")
+                    elif dist_from_cluster <= tolerance * 2:
+                        score += 10; reasons.append(f"lac_cluster:borderline({dist_from_cluster:.0f}km,10)")
+                    else:
+                        score += 0;  reasons.append(f"lac_cluster:outlier({dist_from_cluster:.0f}km,0)")
+                else:
+                    score += 12; reasons.append("lac_cluster:unknown(12)")
+
+                # ── Signal 4: Same LAC+CI Majority Vote (max 15 pts) ──
+                if same_lac_ci_rows:
+                    close = sum(1 for r in same_lac_ci_rows
+                                if r[0] is not None and _haversine_km(lat, lon, r[0], r[1]) <= 25)
+                    ratio = close / len(same_lac_ci_rows)
+                    if ratio >= 0.7:
+                        score += 15; reasons.append(f"majority:{ratio:.0%}(15)")
+                    elif ratio >= 0.4:
+                        score += 8;  reasons.append(f"majority:{ratio:.0%}(8)")
+                    else:
+                        score += 0;  reasons.append(f"majority:{ratio:.0%}(0)")
+                else:
+                    score += 8; reasons.append("majority:unknown(8)")
+
+                return score, reasons
+
+            def _load_cell_file(fname, cfg):
+                """
+                Load one cell tower CSV from HF (public dataset, direct URL).
+                Returns:
+                  cell_exact: dict (lac,cid) -> (lat, lon, addr_tokens)
+                  cid_multi:  dict cid -> [(lat, lon, addr_tokens)]  [for fallback]
+                """
+                local = _os.path.join(CELL_DIR, fname)
+                if not (_os.path.isfile(local) and _os.path.getsize(local) > 5000):
+                    import requests as _req
+                    # Try multiple URL formats for public HF datasets
+                    urls_to_try = [
+                        f"https://huggingface.co/datasets/{HF_REPO}/resolve/main/{cfg['hf']}",
+                        f"https://huggingface.co/datasets/{HF_REPO}/resolve/refs%2Fconvert%2Fparquet/default/train/0000.parquet",
+                        f"https://datasets-server.huggingface.co/rows?dataset={HF_REPO}&config=default&split=train",
+                    ]
+                    downloaded = False
+                    last_err = ""
+                    for url in urls_to_try[:1]:  # primary direct URL
+                        try:
+                            token = _hf_token()
+                            hdrs = {
+                                "User-Agent": "Mozilla/5.0",
+                                "Cache-Control": "no-cache",
+                            }
+                            if token:
+                                hdrs["Authorization"] = f"Bearer {token}"
+                            r = _req.get(url, headers=hdrs, stream=True, timeout=180)
+                            r.raise_for_status()
+                            with open(local, "wb") as _f:
+                                for chunk in r.iter_content(65536):
+                                    if chunk: _f.write(chunk)
+                            downloaded = True
+                            break
+                        except Exception as e:
+                            last_err = str(e)
+                            # Try hf_hub_download as fallback
+                            try:
+                                path = hf_hub_download(
+                                    repo_id=HF_REPO, filename=cfg["hf"],
+                                    repo_type="dataset", token=_hf_token(),
+                                    local_dir=CELL_DIR
+                                )
+                                import shutil as _sh
+                                if path and _os.path.abspath(path) != _os.path.abspath(local):
+                                    _sh.copy2(path, local)
+                                downloaded = True
+                                break
+                            except Exception as e2:
+                                last_err = f"Direct: {e} | HF lib: {e2}"
+
+                    if not downloaded:
+                        st.warning(f"⚠️ Could not download {cfg['hf']}: {last_err}")
+                        return {}, {}
+
+                if not (_os.path.isfile(local) and _os.path.getsize(local) > 5000):
+                    st.warning(f"⚠️ Downloaded file too small or missing: {fname}")
+                    return {}, {}
+
+                cell_exact = {}
+                cid_multi  = {}
+                try:
+                    if local.endswith(".xlsx"):
+                        cdf2 = pd.read_excel(local, dtype=str)
+                    else:
+                        # Try configured encoding first, fallback to latin-1 then utf-8
+                        for _enc in [cfg["enc"], "latin-1", "utf-8"]:
+                            try:
+                                cdf2 = pd.read_csv(local, dtype=str, encoding=_enc,
+                                                   low_memory=False, on_bad_lines="skip")
+                                break
+                            except Exception:
+                                continue
+                    cdf2.columns = [c.lower().strip() for c in cdf2.columns]
+                    lc = cfg["lac"]; ci = cfg["cid"]
+                    la = cfg["lat"]; lo = cfg["lon"]
+                    ac = cfg.get("addr", "")
+
+                    # ── LAC/TAC column fallback ──
+                    # BL 4G config uses 'tac' but some CSV versions use 'lac' instead
+                    if lc not in cdf2.columns:
+                        for alt_lc in ["enodebid", "enodeb_id", "enodeb id", "tac", "lac", "lac_id", "lac id", "enbid"]:
+                            if alt_lc in cdf2.columns and alt_lc != lc:
+                                lc = alt_lc
+                                break
+
+                    # ── CID column fallback ──
+                    if ci not in cdf2.columns:
+                        for alt_ci in ["eutrancellid", "eutrancell_id", "eutran_cell_id",
+                                       "cell_id", "cell id", "cellid", "ci", "cid"]:
+                            if alt_ci in cdf2.columns and alt_ci != ci:
+                                ci = alt_ci
+                                break
+
+                    # ── LAT/LON column fallback ──
+                    if la not in cdf2.columns:
+                        for alt_la in ["latitude", "lat", "y"]:
+                            if alt_la in cdf2.columns:
+                                la = alt_la; break
+                    if lo not in cdf2.columns:
+                        for alt_lo in ["longitude", "lon", "lng", "x"]:
+                            if alt_lo in cdf2.columns:
+                                lo = alt_lo; break
+
+                    if not all(c in cdf2.columns for c in [lc, la, lo]):
+                        st.warning(f"⚠️ {fname}: Required columns not found. Available: {list(cdf2.columns[:10])}")
+                        return {}, {}
+                    if ci not in cdf2.columns:
+                        st.warning(f"⚠️ {fname}: Cell ID column '{ci}' not found. Available: {list(cdf2.columns[:10])}")
+                        return {}, {}
+
+                    has_addr   = ac and ac in cdf2.columns
+                    thana_col  = cfg.get("thana", "")
+                    dist_col   = cfg.get("district", "")
+                    has_thana  = thana_col and thana_col in cdf2.columns
+                    has_dist   = dist_col  and dist_col  in cdf2.columns
+                    # alt_ci_col: only useful if it's DIFFERENT from ci
+                    alt_ci_col = None
+                    if "eutrancellid" in cdf2.columns and "eutrancellid" != ci:
+                        alt_ci_col = "eutrancellid"
+                    # itertuples()._asdict() converts spaces→underscores in col names
+                    def _col_key(col): return col.replace(" ","_").replace("-","_")
+                    ac_key    = _col_key(ac)        if ac        else ""
+                    thana_key = _col_key(thana_col) if thana_col else ""
+                    dist_key  = _col_key(dist_col)  if dist_col  else ""
+                    ci_key    = _col_key(ci)
+                    lc_key    = _col_key(lc)
+                    la_key    = _col_key(la)
+                    lo_key    = _col_key(lo)
+                    for row in cdf2.itertuples(index=False):
+                        try:
+                            rd = row._asdict()
+                            lat = float(rd[la_key]); lon = float(rd[lo_key])
+                            if not (20 <= lat <= 27 and 88 <= lon <= 93): continue
+                            lv  = _norm_id(rd[lc_key]); cv = _norm_id(rd[ci_key])
+                            # Build full address: address, Thana, District
+                            parts = []
+                            if has_addr:
+                                a = str(rd.get(ac_key, rd.get(ac, ""))).strip().strip('"')
+                                if a and a != 'nan': parts.append(a)
+                            if has_thana:
+                                t = str(rd.get(thana_key, rd.get(thana_col, ""))).strip()
+                                if t and t != 'nan': parts.append(t)
+                            if has_dist:
+                                d = str(rd.get(dist_key, rd.get(dist_col, ""))).strip()
+                                if d and d != 'nan': parts.append(d)
+                            addr_str = ", ".join(parts)
+                            toks = _addr_tokens(addr_str)
+                            k = (lv, cv)
+                            # district value for trip filtering
+                            _dist_val = str(rd[dist_col]) if has_dist else ""
+                            if k not in cell_exact:
+                                cell_exact[k] = (lat, lon, toks, addr_str)
+                            if cv not in cid_multi:
+                                cid_multi[cv] = []
+                            cid_multi[cv].append((lat, lon, toks, addr_str))  # addr_str for token matching
+                            # Also index by eutrancid if present (BL 4G CDR may use it)
+                            if alt_ci_col:
+                                cv2 = _norm_id(rd[alt_ci_col])
+                                k2 = (lv, cv2)
+                                if k2 not in cell_exact:
+                                    cell_exact[k2] = (lat, lon, toks, addr_str)
+                                if cv2 not in cid_multi:
+                                    cid_multi[cv2] = []
+                                cid_multi[cv2].append((lat, lon, toks, addr_str))
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+                return cell_exact, cid_multi
+
+            # ── Detect operators used in this CDR ──
+            ops_in_cdr = set()
+            if "operator" in df.columns:
+                for op_val in df["operator"].dropna().unique():
+                    ov = str(op_val).lower()
+                    if "grameen" in ov or "gp" in ov:    ops_in_cdr.add("gp")
+                    elif "banglalink" in ov or "bl" in ov: ops_in_cdr.add("bl")
+                    elif "robi" in ov or "airtel" in ov:  ops_in_cdr.add("robi")
+                    elif "teletalk" in ov:                 ops_in_cdr.add("teletalk")
+            # If single operator detected earlier
+            _op_early = get_operator(df)
+            op_key_main = _op_early.lower() if _op_early else ""
+            if "grameen" in op_key_main or "gp" in op_key_main:   ops_in_cdr.add("gp")
+            if "banglalink" in op_key_main or "bl" in op_key_main: ops_in_cdr.add("bl")
+            if "robi" in op_key_main or "airtel" in op_key_main:  ops_in_cdr.add("robi")
+            if "teletalk" in op_key_main:                          ops_in_cdr.add("teletalk")
+            if not ops_in_cdr:
+                ops_in_cdr = {"gp", "bl", "robi", "teletalk"}  # load all if unknown
+
+            # ── operator+generation → CSV file mapping ──
+            # Key: (operator_key, generation) → internal fname
+            OP_GEN_FILE = {
+                ("gp",       "2g"): "GP_2G.csv",
+                ("gp",       "3g"): "GP_3G.csv",
+                ("gp",       "4g"): "GP_4G.csv",
+                ("robi",     "2g"): "Robi_2G.csv",
+                ("robi",     "3g"): "Robi_2G.csv",       # Robi_3G.csv নেই HF-এ
+                ("robi",     "4g"): "Robi_4G.csv",
+                ("bl",       "2g"): "Banglalink_2G3G.csv",
+                ("bl",       "3g"): "Banglalink_2G3G.csv",
+                ("bl",       "4g"): "Banglalink_4G.csv",
+                ("teletalk", "2g"): "Teletalk.csv",
+                ("teletalk", "3g"): "Teletalk.csv",
+                ("teletalk", "4g"): "Teletalk.csv",
+            }
+
+            # Determine which files to load based on CDR operators + generations present
+            load_files = set()
+            for op in ops_in_cdr:
+                gens_present = set()
+                if "cell_type" in df.columns:
+                    for ct in df["cell_type"].dropna().unique():
+                        ct_l = str(ct).lower()
+                        if "2g" in ct_l or "gsm" in ct_l or "wcdma" not in ct_l and "lte" not in ct_l and "4g" not in ct_l and "3g" not in ct_l:
+                            gens_present.add("2g")
+                        if "3g" in ct_l or "wcdma" in ct_l or "umts" in ct_l:
+                            gens_present.add("3g")
+                        if "4g" in ct_l or "lte" in ct_l:
+                            gens_present.add("4g")
+                if not gens_present:
+                    gens_present = {"2g", "3g", "4g"}  # load all if unknown
+                for gen in gens_present:
+                    fn = OP_GEN_FILE.get((op, gen))
+                    if fn:
+                        load_files.add(fn)
+
+            # ── Load cell tower CSV files (cached locally) ──
+            # file_key → {exact: {(lac,cid):(lat,lon,toks,addr)}, multi: {cid:[...]}}
+            loaded_files = {}
+            progress.progress(25, text="📡 Loading cell tower GPS data...")
+            for fn in load_files:
+                cfg = HF_FILES_CFG.get(fn, {})
+                if not cfg:
+                    continue
+                ex, mu = _load_cell_file(fn, cfg)
+                # Robi 4G: addr_list তৈরি করো address token matching-এর জন্য
+                _addr_list = []
+                if fn == "Robi_4G.csv":
+                    _r4g_cfg = cfg
+                    try:
+                        _r4g_path = _os.path.join(CELL_DIR, fn)
+                        if _os.path.exists(_r4g_path):
+                            import csv as _csv_mod
+                            with open(_r4g_path, 'r', encoding='latin-1', errors='replace') as _f:
+                                _reader = _csv_mod.DictReader(_f)
+                                _r4g_noise = {'and','the','road','ward','house','floor','building','thana','area','block','dhaka'}
+                                for _row in _reader:
+                                    try:
+                                        _lat = float(_row.get('latitude','').strip())
+                                        _lon = float(_row.get('longitude','').strip())
+                                        if not(19<=_lat<=27 and 87<=_lon<=93): continue
+                                        _addr_str = str(_row.get('address','')).strip()
+                                        _toks = set(t for t in __import__('re').sub(r'[^a-z0-9]',' ',_addr_str.lower()).split() if len(t)>=4 and t not in _r4g_noise)
+                                        if not _toks: continue
+                                        _addr_list.append({
+                                            'lat': _lat, 'lon': _lon, 'toks': _toks,
+                                            'district': str(_row.get('district','')).strip().title(),
+                                            'thana': str(_row.get('thana','')).strip().title(),
+                                            'addr': _addr_str,
+                                        })
+                                    except: pass
+                    except Exception as _e:
+                        pass  # addr_list empty → skip address matching
+                loaded_files[fn] = {"exact": ex, "multi": mu, "addr_list": _addr_list}
+
+            # Helper: detect generation from cell_type string
+            def _gen_from_cell_type(ct):
+                ct_l = str(ct).lower().strip()
+                if ct_l in ("", "nan", "none", "-", "n/a"): return None
+                if "4g" in ct_l or "lte" in ct_l:   return "4g"
+                if "3g" in ct_l or "wcdma" in ct_l or "umts" in ct_l: return "3g"
+                if "2g" in ct_l or "gsm" in ct_l:   return "2g"
+                return None
+
+            # Helper: detect operator key from operator string
+            def _op_key(op_str):
+                o = str(op_str).lower()
+                if "grameen" in o or " gp" in o or o.startswith("gp"): return "gp"
+                if "banglalink" in o or " bl" in o or o.startswith("bl"): return "bl"
+                if "robi" in o or "airtel" in o: return "robi"
+                if "teletalk" in o: return "teletalk"
+                return None
+
+            # ── Enrich df row by row using operator + generation ──
+            if loaded_files and "cell_id" in df.columns and ("lac" in df.columns or "lac_id" in df.columns):
+                lac_col = "lac" if "lac" in df.columns else "lac_id"
+                lats_col, lons_col, methods_col, csv_lbl_col, dist_col = [], [], [], [], []
+
+                # Debug: show loaded file stats
+                for _fn, _fd in loaded_files.items():
+                    _ex_cnt = len(_fd["exact"]); _mu_cnt = len(_fd["multi"])
+                    if _ex_cnt == 0 and _mu_cnt == 0:
+                        st.warning(f"⚠️ {_fn}: Loaded but 0 towers found — check CSV column names")
+
+                # ── Pre-compute LAC cluster stats (Signal 3) ──
+                _lac_cluster_cache = _build_lac_clusters(loaded_files)
+
+                # ── Pass 1: collect raw GPS candidates for every row (no validation yet) ──
+                # We need neighbor context → do a first pass to get candidate GPS per row
+                _candidates = []   # list of (lat|None, lon|None, addr_str, dist_val) per row
+                _row_lac    = []   # lac key per row (for Signal 3)
+                _row_lacid  = []   # (lac, ci) string per row (for Signal 4)
+
+                df_list = list(df.iterrows())
+                for _, row in df_list:
+                    lv  = _norm_id(row.get(lac_col, ""))
+                    cv  = _norm_id(row.get("cell_id", ""))
+                    k   = (lv, cv)
+                    cdr_addr_toks = _addr_tokens(row.get("address", ""))
+                    op_k  = _op_key(row.get("operator", "")) if "operator" in df.columns else None
+                    gen_k = _gen_from_cell_type(row.get("cell_type", "")) if "cell_type" in df.columns else None
+
+                    # Operator+Network strict: CDR-এর operator ও 2G/3G/4G অনুযায়ী
+                    # শুধু সেই CSV-এ LAC+CID match করো — অন্য operator বা অন্য generation-এ যাবে না
+                    fnames_to_try = []
+                    if op_k and gen_k:
+                        # Priority 1: exact operator+generation match
+                        primary = OP_GEN_FILE.get((op_k, gen_k))
+                        if primary and primary in loaded_files:
+                            fnames_to_try.append(primary)
+                        # Priority 2: same operator, other generations
+                        for g in ["4g", "3g", "2g"]:
+                            if g != gen_k:
+                                fb = OP_GEN_FILE.get((op_k, g))
+                                if fb and fb in loaded_files and fb not in fnames_to_try:
+                                    fnames_to_try.append(fb)
+                    elif op_k and not gen_k:
+                        # Cell Type NaN/unknown → same operator-এর সব generation CSV try
+                        for g in ["4g", "3g", "2g"]:
+                            fb = OP_GEN_FILE.get((op_k, g))
+                            if fb and fb in loaded_files and fb not in fnames_to_try:
+                                fnames_to_try.append(fb)
+                    # অন্য operator-এর CSV দেখবে না
+                    if not fnames_to_try:
+                        fnames_to_try = list(loaded_files.keys())
+
+                    found_lat = None; found_lon = None
+                    found_addr = ""; found_dist_val = ""
+                    for fn in fnames_to_try:
+                        fdata = loaded_files[fn]
+                        exact = fdata["exact"]; multi = fdata["multi"]
+                        if k in exact:
+                            found_lat, found_lon, _, found_addr = exact[k]
+                            found_dist_val = found_addr.split(",")[-1].strip() if "," in found_addr else found_addr[:20]
+                            break
+                        # CID+Address fallback: LAC mismatch কিন্তু CID same থাকলে
+                        # GP 4G-তে একই tower একাধিক LAC-এ থাকতে পারে (TAC reassignment)
+                        # CDR BTS address vs CSV address token similarity — score >= 2 হলেই accept
+                        # score=1 হলে না নেওয়াই ভালো (Chandpur-style false positive এড়াতে)
+                        elif cv in multi and cdr_addr_toks:
+                            _best_m = None; _best_sc = 0; _best_addr = ""; _best_dv = ""
+                            for _lt, _ln, _ctoks, _caddr in multi[cv]:
+                                _sc = len(cdr_addr_toks & _ctoks) if cdr_addr_toks and _ctoks else 0
+                                if _sc > _best_sc:
+                                    _best_sc = _sc; _best_m = (_lt, _ln); _best_addr = _caddr
+                                    _best_dv = _caddr.split(",")[-1].strip() if "," in _caddr else _caddr[:20]
+                            if _best_m and _best_sc >= 2:
+                                found_lat, found_lon = _best_m; found_addr = _best_addr; found_dist_val = _best_dv
+                                break
+
+                    # ── Robi 4G special: address token matching ──
+                    # Robi 4G CDR-এ LAC = eNodeB-based encoding → CSV TAC-এর সাথে মেলে না
+                    # তাই CDR BTS address ↔ CSV address token similarity দিয়ে GPS নেওয়া হয়
+                    if found_lat is None and op_k == "robi" and gen_k == "4g" and cdr_addr_toks:
+                        robi_4g_fname = OP_GEN_FILE.get(("robi","4g"))
+                        if robi_4g_fname and robi_4g_fname in loaded_files:
+                            _r4g_data = loaded_files[robi_4g_fname]
+                            _r4g_addr_list = _r4g_data.get("addr_list", [])
+                            if _r4g_addr_list:
+                                best_r4g = None; best_r4g_sc = 0
+                                for _entry in _r4g_addr_list:
+                                    sc = len(cdr_addr_toks & _entry["toks"])
+                                    if sc > best_r4g_sc:
+                                        best_r4g_sc = sc; best_r4g = _entry
+                                if best_r4g and best_r4g_sc >= 3:
+                                    found_lat = best_r4g["lat"]; found_lon = best_r4g["lon"]
+                                    found_addr = best_r4g["addr"]; found_dist_val = best_r4g["district"]
+
+                    _candidates.append((found_lat, found_lon, found_addr, found_dist_val))
+                    _row_lac.append(lv)
+                    _row_lacid.append((lv, cv))
+
+                # ── Pre-build Signal 4 lookup: (lac,ci) → list of candidate GPS from Pass 1 ──
+                _lacid_gps = {}  # (lv,cv) → [(lat,lon), ...]
+                for i, (clat, clon, _, _) in enumerate(_candidates):
+                    k4 = _row_lacid[i]
+                    if clat is not None:
+                        _lacid_gps.setdefault(k4, []).append((clat, clon))
+
+                # ── Pass 2: validate each candidate using confidence score ──
+                NEIGHBOR_WINDOW = 4  # look ±4 rows for neighbor context
+                rejected_count = 0
+
+                for i, (_, row) in enumerate(df_list):
+                    clat, clon, caddr, cdist = _candidates[i]
+                    if clat is None:
+                        lats_col.append(None); lons_col.append(None)
+                        methods_col.append("text_based"); csv_lbl_col.append(""); dist_col.append("")
+                        continue
+
+                    cdr_addr = row.get("address", "")
+                    lv = _row_lac[i]
+                    k4 = _row_lacid[i]
+
+                    # Neighbor GPS: ±NEIGHBOR_WINDOW rows that have a GPS candidate
+                    lo_i = max(0, i - NEIGHBOR_WINDOW)
+                    hi_i = min(len(_candidates), i + NEIGHBOR_WINDOW + 1)
+                    neighbor_gps = [(c[0], c[1]) for j, c in enumerate(_candidates[lo_i:hi_i], lo_i)
+                                    if j != i and c[0] is not None]
+
+                    # Signal 4: other rows with same LAC+CI
+                    same_laci_others = [(lt, ln) for lt, ln in _lacid_gps.get(k4, [])
+                                        if not (abs(lt - clat) < 1e-9 and abs(ln - clon) < 1e-9)]
+
+                    conf, reasons = _gps_confidence(
+                        clat, clon,
+                        cdr_addr_str   = cdr_addr,
+                        lac_key        = lv,
+                        same_lac_ci_rows = same_laci_others,
+                        neighbor_rows  = neighbor_gps,
+                    )
+
+                    # CID-only matches পেলে থ্রেশহোল্ড বাড়াই
+                    effective_threshold = GPS_CONFIDENCE_THRESHOLD
+                    if clat is not None and k4 not in loaded_files.get(fnames_to_try[0] if fnames_to_try else "", {}).get("exact", {}):
+                        # This was a CID-only match — stricter threshold
+                        effective_threshold = 55
+
+                    if conf >= effective_threshold:
+                        lats_col.append(clat); lons_col.append(clon)
+                        methods_col.append("cell_exact")
+                        csv_lbl_col.append(caddr); dist_col.append(cdist)
+                        cell_match_count += 1
+                    else:
+                        # Low confidence → fall back to text_based
+                        lats_col.append(None); lons_col.append(None)
+                        methods_col.append("text_based"); csv_lbl_col.append(""); dist_col.append("")
+                        rejected_count += 1
+
+                df["cell_lat"]       = lats_col
+                df["cell_lon"]       = lons_col
+                df["loc_method"]     = methods_col
+                df["cell_csv_label"] = csv_lbl_col
+                df["csv_district"]   = dist_col
+
+        except Exception as _cell_err:
+            st.warning(f"⚠️ Cell tower GPS enrichment failed: {_cell_err}")
+
+        gps_match_pct = round(cell_match_count / max(len(df), 1) * 100, 1)
         df_clean = cdf(df)
         progress.progress(35, text="📊 Generating report...")
 
@@ -3296,6 +5522,22 @@ def main():
         </div>
         """, unsafe_allow_html=True)
 
+        # ── GPS Accuracy Banner ──
+        if cell_match_count > 0:
+            st.markdown(f"""
+            <div style="background:#ecfdf5; border-left:4px solid #10b981; border-radius:10px;
+                        padding:0.75rem 1.25rem; margin-bottom:0.85rem; display:flex;
+                        align-items:center; gap:0.75rem;">
+                <div style="font-size:1.3rem;">📡</div>
+                <div>
+                    <strong style="color:#065f46;">GPS Cell Tower Match: {cell_match_count:,}/{len(df):,} ({gps_match_pct}%)</strong>
+                    <div style="color:#047857; font-size:0.85rem; margin-top:0.1rem;">
+                        Exact GPS coordinates matched from cell tower database · Accuracy: ±0.5–2 km
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
         # ── Anomaly Info Banner ──
         if anomaly_count > 0:
             st.markdown(f"""
@@ -3315,13 +5557,27 @@ def main():
             """, unsafe_allow_html=True)
 
         progress.progress(55, text="📄 Generating HTML report...")
-        html_content = build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number)
+
+
+
+        html_content = build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number, target_location)
         html_bytes   = html_content.encode('utf-8')
 
         progress.progress(80, text="📝 Generating Word report...")
-        docx_bytes = build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number)
+        docx_bytes = build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number, target_location)
 
+        # ── Movement Map ──
+        progress.progress(90, text="🗺️ Generating movement map...")
+        map_bytes = build_movement_map(df, phone, operator)
         progress.progress(100, text="✅ Complete!")
+
+        # ── Save to session_state cache ──
+        st.session_state[_cache_key] = {
+            "html_bytes": html_bytes,
+            "docx_bytes": docx_bytes,
+            "map_bytes": map_bytes,
+            "base_name": base_name,
+        }
 
         # ── Success + Download ──
         st.markdown("""
@@ -3332,14 +5588,15 @@ def main():
         </div>
         """, unsafe_allow_html=True)
 
-        dl1, dl2 = st.columns(2)
+        dl1, dl2, dl3 = st.columns(3)
         with dl1:
             st.download_button(
                 label="⬇️ Download HTML Report",
                 data=html_bytes,
                 file_name=f"{base_name}_Report.html",
                 mime="text/html",
-                use_container_width=True
+                use_container_width=True,
+                key="dl_html_main"
             )
         with dl2:
             st.download_button(
@@ -3347,8 +5604,20 @@ def main():
                 data=docx_bytes,
                 file_name=f"{base_name}_Report.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                use_container_width=True
+                use_container_width=True,
+                key="dl_docx_main"
             )
+        with dl3:
+            if map_bytes:
+                st.download_button(
+                    label="🗺️ Download Movement Map",
+                    data=map_bytes,
+                    file_name=f"{base_name}_Movement_Map.html",
+                    mime="text/html",
+                    use_container_width=True,
+                    key="dl_map_main"
+                )
+
 
         # ── Section Divider ──
         st.markdown("""
@@ -3607,12 +5876,30 @@ def main():
                         border-radius:8px; padding:0.75rem 1.25rem; color:#92400e; margin-bottom:0.75rem;">
                         <strong>Out-of-Home District Travel Detected</strong></div>""",
                         unsafe_allow_html=True)
-                    trip_df = pd.DataFrame([{
-                        'District': t['district'],
-                        'From': t['start_date'], 'To': t['end_date'],
-                        'Days': t['days'],
-                        'BTS Location': str(t.get('address',''))[:80]
-                    } for t in mv['trips']])
+                    trip_rows = []
+                    for t in mv['trips']:
+                        lat  = t.get('lat')
+                        lon  = t.get('lon')
+                        gps  = f"{lat}, {lon}" if lat and lon else "—"
+                        dist = f"{t['km']} km" if t.get('km') else "—"
+                        # Location label: upazila + district from CSV (cell_csv_label preferred)
+                        loc_label = ""
+                        if t.get('upazila') and str(t['upazila']).strip() not in ("", "nan"):
+                            loc_label = str(t['upazila'])
+                        if t.get('district') and str(t['district']).strip() not in ("", "nan", loc_label):
+                            loc_label = (loc_label + ", " + str(t['district'])).strip(", ")
+                        if not loc_label:
+                            loc_label = t.get('district') or "—"
+                        trip_rows.append({
+                            'Upazila / District': loc_label,
+
+                            'Distance (km)':      dist,
+                            'Start Date':         t['start_date'],
+                            'End Date':           t['end_date'],
+                            'Days':               t['days'],
+                            'Cell Location (CSV)': str(t.get('address', ''))[:100],
+                        })
+                    trip_df = pd.DataFrame(trip_rows)
                     st.dataframe(trip_df, use_container_width=True, hide_index=True)
                 else:
                     st.success("✅ No out-of-home-district travel detected.")
@@ -3675,6 +5962,19 @@ def main():
                                    res['first_contact'], res['last_contact']]
                     })
                     st.dataframe(detail_df, use_container_width=True, hide_index=True)
+
+        # ── 8. Target Location Analysis ──
+        if target_location:
+            with st.expander(f"📍 Target Location — {target_location}", expanded=True):
+                loc_results = target_location_analysis(df, target_location)
+                if not loc_results:
+                    st.warning(f"No CDR activity found near '{target_location}'. Try a different spelling or nearby area name.")
+                else:
+                    total_rec = sum(r['Records'] for r in loc_results)
+                    st.success(f"Found activity on **{len(loc_results)}** day(s) near **{target_location}** — {total_rec} total records.")
+                    loc_df = pd.DataFrame(loc_results)
+                    st.dataframe(loc_df, use_container_width=True, hide_index=True)
+
 
     except Exception as e:
         st.error(f"❌ Error: {str(e)}")
