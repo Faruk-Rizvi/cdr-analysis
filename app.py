@@ -4472,31 +4472,33 @@ def main():
             <div class="app-header-logo">📊</div>
             <div class="app-header-title">CDR Analysis Platform</div>
         </div>
-        <div class="app-header-nav">
-            <span onclick="goPage('cdr')" style="cursor:pointer;padding:.3rem .8rem;border-radius:6px;transition:background .2s;"
-                  onmouseover="this.style.background='rgba(255,255,255,.15)'"
-                  onmouseout="this.style.background='transparent'">📈 CDR Analysis</span>
-            <span onclick="goPage('link')" style="cursor:pointer;padding:.3rem .8rem;border-radius:6px;transition:background .2s;"
-                  onmouseover="this.style.background='rgba(255,255,255,.15)'"
-                  onmouseout="this.style.background='transparent'">🔗 Link Analysis</span>
+        <div class="app-header-nav" id="main-nav">
+            <span class="nav-link" id="nav-cdr">📈 CDR Analysis</span>
+            <span class="nav-link" id="nav-link">🔗 Link Analysis</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Page Navigation via query param ──
-    params = st.query_params
-    page = params.get("page", "cdr")
+    # ── Page Navigation via session state ──
+    if "current_page" not in st.session_state:
+        st.session_state["current_page"] = "cdr"
 
-    # Header nav JS — click করলে query param change হবে
-    st.markdown(f"""
-    <script>
-    function goPage(p) {{
-        const url = new URL(window.location.href);
-        url.searchParams.set('page', p);
-        window.location.href = url.toString();
-    }}
-    </script>
-    """, unsafe_allow_html=True)
+    page = st.session_state["current_page"]
+
+    # ── Actual Navigation Buttons (hidden but functional) ──
+    _nav_col1, _nav_col2, _nav_spacer = st.columns([1, 1, 8])
+    with _nav_col1:
+        if st.button("📈 CDR Analysis", key="nav_cdr_btn",
+                     type="primary" if page == "cdr" else "secondary",
+                     use_container_width=True):
+            st.session_state["current_page"] = "cdr"
+            st.rerun()
+    with _nav_col2:
+        if st.button("🔗 Link Analysis", key="nav_link_btn",
+                     type="primary" if page == "link" else "secondary",
+                     use_container_width=True):
+            st.session_state["current_page"] = "link"
+            st.rerun()
 
     if page == "link":
         link_analysis_page()
