@@ -4250,11 +4250,20 @@ var allEdges = new vis.DataSet(edgesData);
 var container = document.getElementById('network');
 var data = {{ nodes: allNodes, edges: allEdges }};
 var options = {{
-  nodes: {{ borderWidth:2, shadow:true }},
-  edges: {{ smooth:{{ type:'continuous' }}, shadow:false }},
-  physics: {{ enabled:true, stabilization:{{ iterations:200 }},
-               barnesHut:{{ gravitationalConstant:-8000, springLength:150, springConstant:0.04 }} }},
-  interaction: {{ hover:true, tooltipDelay:100, navigationButtons:true }},
+  nodes: {{ borderWidth:2, shadow:{{ enabled:true, size:6 }} }},
+  edges: {{ smooth:{{ type:'curvedCW', roundness:0.2 }}, shadow:false }},
+  physics: {{
+    enabled:true,
+    stabilization:{{ iterations:300, updateInterval:50 }},
+    barnesHut:{{
+      gravitationalConstant:-12000,
+      springLength:200,
+      springConstant:0.03,
+      damping:0.09,
+      avoidOverlap:0.5
+    }}
+  }},
+  interaction: {{ hover:true, tooltipDelay:100, navigationButtons:true, hideEdgesOnDrag:true }},
   layout: {{ improvedLayout:true }}
 }};
 var network = new vis.Network(container, data, options);
@@ -4442,9 +4451,21 @@ def link_analysis_page():
         st.markdown("### 🕸️ Network Graph")
         with st.spinner("Building network graph..."):
             # Use top connections for graph (limit nodes)
+            # top 80 contacts — but ensure ALL subjects appear in graph
             top_connections = defaultdict(dict)
             for pb, subj_dict in conn_sorted[:80]:  # max 80 contact nodes
                 top_connections[pb] = subj_dict
+            # If a subject has no contacts in top_connections, add their top 3
+            for df_s in dfs:
+                sub = df_s['_subject'].iloc[0]
+                sub_in_graph = any(sub in sd for sd in top_connections.values())
+                if not sub_in_graph:
+                    # Add top 3 contacts for this subject
+                    for pb, sd in conn_sorted:
+                        if sub in sd:
+                            top_connections[pb][sub] = sd[sub]
+                            if sum(1 for s in (sd for pb2,sd in top_connections.items()) if sub in s) >= 3:
+                                break
             graph_html = _build_network_html(dfs, top_connections, subjects)
 
         st.components.v1.html(graph_html, height=780, scrolling=False)
