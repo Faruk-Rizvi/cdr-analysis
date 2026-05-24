@@ -4473,20 +4473,32 @@ def main():
             <div class="app-header-title">CDR Analysis Platform</div>
         </div>
         <div class="app-header-nav">
-            <span>📈 CDR Analysis</span>
-            <span>🔗 Link Analysis</span>
+            <span onclick="goPage('cdr')" style="cursor:pointer;padding:.3rem .8rem;border-radius:6px;transition:background .2s;"
+                  onmouseover="this.style.background='rgba(255,255,255,.15)'"
+                  onmouseout="this.style.background='transparent'">📈 CDR Analysis</span>
+            <span onclick="goPage('link')" style="cursor:pointer;padding:.3rem .8rem;border-radius:6px;transition:background .2s;"
+                  onmouseover="this.style.background='rgba(255,255,255,.15)'"
+                  onmouseout="this.style.background='transparent'">🔗 Link Analysis</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Page Navigation ──
-    page = st.sidebar.radio(
-        "Navigation",
-        ["📞 CDR Analysis", "🔗 Link Analysis"],
-        label_visibility="collapsed"
-    )
+    # ── Page Navigation via query param ──
+    params = st.query_params
+    page = params.get("page", "cdr")
 
-    if page == "🔗 Link Analysis":
+    # Header nav JS — click করলে query param change হবে
+    st.markdown(f"""
+    <script>
+    function goPage(p) {{
+        const url = new URL(window.location.href);
+        url.searchParams.set('page', p);
+        window.location.href = url.toString();
+    }}
+    </script>
+    """, unsafe_allow_html=True)
+
+    if page == "link":
         link_analysis_page()
         return
 
