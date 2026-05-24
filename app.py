@@ -3980,9 +3980,18 @@ def _load_cdr(uploaded_file, label):
     """Load and clean a CDR Excel file."""
     try:
         xl = pd.ExcelFile(uploaded_file)
-        # Pick sheet with most rows
-        best_sheet = max(xl.sheet_names,
-                         key=lambda s: len(pd.read_excel(xl, sheet_name=s)))
+        # Pick sheet with most rows AND has CDR columns
+        def _sheet_score(s):
+            try:
+                tmp = pd.read_excel(xl, sheet_name=s, nrows=3)
+                cols = [c.lower() for c in tmp.columns]
+                has_cdr = any(k in ' '.join(cols) for k in ['party','usage','lac','cell','operator'])
+                return (len(pd.read_excel(xl, sheet_name=s)) if has_cdr else 0)
+            except: return 0
+        scores = {s: _sheet_score(s) for s in xl.sheet_names}
+        best_sheet = max(scores, key=scores.get)
+        if scores[best_sheet] == 0:
+            best_sheet = xl.sheet_names[0]
         df = pd.read_excel(xl, sheet_name=best_sheet)
 
         # Normalize columns
@@ -4117,68 +4126,76 @@ def _build_colocation(dfs, window_min=30):
 
 
 def _build_network_html(dfs, connections, subjects):
-    """Build Vis.js network graph HTML."""
+    """Build Vis.js network graph HTML — clean version."""
+
+    colors_subject = ['#1d4ed8', '#dc2626', '#15803d', '#7c3aed', '#d97706']
+    subj_labels = {sub: f"S{i+1}" for i, sub in enumerate(subjects)}
 
     # Nodes
     nodes = {}
-    # Subject nodes
-    colors_subject = ['#2563eb', '#dc2626', '#16a34a', '#7c3aed', '#d97706']
+    # Subject nodes — large stars
     for i, sub in enumerate(subjects):
         nodes[sub] = {
-            'id': sub, 'label': sub, 'color': colors_subject[i % len(colors_subject)],
-            'shape': 'star', 'size': 30, 'font': {'size': 13, 'bold': True},
-            'title': f'Subject {i+1}: {sub}', 'group': 'subject'
+            'id': sub,
+            'label': f"S{i+1}\n{sub[-6:]}",  # short label
+            'color': {'background': colors_subject[i % len(colors_subject)],
+                      'border': '#fff', 'highlight': {'background': colors_subject[i % len(colors_subject)]}},
+            'shape': 'star', 'size': 38,
+            'font': {'size': 12, 'color': '#fff', 'bold': True, 'strokeWidth': 2, 'strokeColor': '#1e293b'},
+            'title': f"<b>Subject {i+1}</b><br>{sub}",
+            'group': 'subject', 'mass': 4
         }
 
-    # Find common contacts (appear with 2+ subjects)
-    common = {pb for pb, subj_dict in connections.items() if len(subj_dict) >= 2}
+    common = {pb for pb, sd in connections.items() if len(sd) >= 2}
 
-    # Contact nodes
     for pb, subj_dict in connections.items():
         total = sum(d['total'] for d in subj_dict.values())
         is_common = pb in common
+        short = pb[-8:] if len(pb) > 8 else pb
         nodes[pb] = {
-            'id': pb, 'label': pb,
-            'color': '#ef4444' if is_common else '#64748b',
+            'id': pb,
+            'label': short,  # short label — no overlap
+            'color': {'background': '#fca5a5' if is_common else '#e2e8f0',
+                      'border': '#dc2626' if is_common else '#94a3b8'},
             'shape': 'ellipse',
-            'size': min(10 + total * 2, 35),
-            'font': {'size': 11},
-            'title': f"{pb}<br>Connections: {len(subj_dict)} subjects<br>Total: {total}",
-            'group': 'common' if is_common else 'contact'
+            'size': min(8 + total, 24),
+            'font': {'size': 9, 'color': '#1e293b'},
+            'title': f"<b>{pb}</b><br>Shared by: {len(subj_dict)} subjects<br>Total contacts: {total}",
+            'group': 'common' if is_common else 'contact',
+            'mass': 1
         }
 
-    # Edges
+    # Edges — no label by default (tooltip only), show on hover
     edges = []
     eid = 0
     for pb, subj_dict in connections.items():
         for sub, data in subj_dict.items():
             total = data['total']
             if total == 0: continue
-            # Direction label
-            parts = []
-            if data['call_out'] > 0: parts.append(f"Out:{data['call_out']}")
-            if data['call_in'] > 0:  parts.append(f"In:{data['call_in']}")
-            if data['sms_out'] > 0:  parts.append(f"SMS→:{data['sms_out']}")
-            if data['sms_in'] > 0:   parts.append(f"SMS←:{data['sms_in']}")
-            edge_label = ' | '.join(parts)
-
-            # Color by type
-            if data['call_out'] + data['call_in'] > data['sms_out'] + data['sms_in']:
-                color = '#2563eb'  # call = blue
-            else:
-                color = '#16a34a'  # sms = green
-
-            width = max(1, min(8, total // 3 + 1))
             is_common = pb in common
+            is_call = data['call_out'] + data['call_in'] > data['sms_out'] + data['sms_in']
+
+            parts = []
+            if data['call_out'] > 0: parts.append(f"↑Call:{data['call_out']}")
+            if data['call_in'] > 0:  parts.append(f"↓Call:{data['call_in']}")
+            if data['sms_out'] > 0:  parts.append(f"↑SMS:{data['sms_out']}")
+            if data['sms_in'] > 0:   parts.append(f"↓SMS:{data['sms_in']}")
+
+            if is_common:
+                edge_color = '#dc2626'
+            elif is_call:
+                edge_color = '#2563eb'
+            else:
+                edge_color = '#16a34a'
 
             edges.append({
                 'id': eid, 'from': sub, 'to': pb,
-                'label': edge_label,
-                'arrows': {'to': {'enabled': True, 'scaleFactor': 0.8}},
-                'color': {'color': '#ef4444' if is_common else color, 'opacity': 0.85},
-                'width': width + (2 if is_common else 0),
-                'font': {'size': 9, 'align': 'middle'},
-                'title': f"Subject: {sub}<br>Contact: {pb}<br>{edge_label}<br>Duration: {round(data['duration'], 1)} min"
+                'label': '',  # no label — use tooltip
+                'arrows': {'to': {'enabled': True, 'scaleFactor': 0.6}},
+                'color': {'color': edge_color, 'opacity': 0.7},
+                'width': max(1, min(6, total // 5 + 1)) + (2 if is_common else 0),
+                'font': {'size': 0},
+                'title': f"<b>{subj_labels.get(sub,sub)} → {pb[-8:]}</b><br>{'<br>'.join(parts)}<br>Dur: {round(data['duration'],1)} min"
             })
             eid += 1
 
