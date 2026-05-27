@@ -12,6 +12,7 @@ Deploy free:
 ==============================================================================
 """
 
+import re
 import streamlit as st
 import pandas as pd
 import matplotlib
@@ -3027,7 +3028,7 @@ def _target_number_html(df, target_number):
     {df_to_html(table_df)}'''
 
 
-def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None, target_location=None):
+def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None, target_location=None, profile_data=None):
     import re as _re_html
     def _clean_id(series):
         result = []
@@ -3120,7 +3121,7 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
 # ─────────────────────────────────────────────
 # WORD (DOCX) GENERATOR
 # ─────────────────────────────────────────────
-def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None, target_location=None):
+def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None, target_location=None, profile_data=None):
     from docx import Document
     from docx.shared import Pt, RGBColor, Inches, Cm
     from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -3192,6 +3193,59 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
     doc.add_paragraph()
 
     # Summary table
+    # ── Profile Analysis in Word doc ──
+    _has_profile_d = bool(
+        profile_data and (
+            profile_data.get('name') or profile_data.get('nid') or
+            profile_data.get('docs_found') or profile_data.get('photo_b64')
+        )
+    )
+    if _has_profile_d:
+        from docx.shared import RGBColor as _DRGB
+
+        def _src_label(field_key):
+            """Get source label for a field."""
+            src_list = profile_data.get(f'{field_key}_src', [])
+            return f" [{src_list[0][1]}]" if src_list else ''
+
+        add_h('Profile Analysis')
+        _pf_rows = [
+            ('নাম', profile_data.get('name','') + _src_label('name')),
+            ('পিতা', profile_data.get('father','') + _src_label('father')),
+            ('মাতা', profile_data.get('mother','') + _src_label('mother')),
+            ('স্ত্রী/স্বামী', profile_data.get('spouse','') + _src_label('spouse')),
+            ('জন্মতারিখ', profile_data.get('dob','') + _src_label('dob')),
+            ('লিঙ্গ', profile_data.get('gender','') + _src_label('gender')),
+            ('পেশা', profile_data.get('profession','') + _src_label('profession')),
+            ('রক্তের গ্রুপ', profile_data.get('blood_group','') + _src_label('blood_group')),
+            ('মোবাইল', profile_data.get('mobile','') + _src_label('mobile')),
+            ('NID', profile_data.get('nid','') + _src_label('nid')),
+            ('Passport', profile_data.get('passport','') + _src_label('passport')),
+            ('TIN', profile_data.get('tin','') + _src_label('tin')),
+            ('ড্রাইভিং লাইসেন্স', profile_data.get('license_no','') + _src_label('license_no')),
+            ('গাড়ি', profile_data.get('vehicle_reg','') + _src_label('vehicle_reg')),
+            ('স্থায়ী ঠিকানা', profile_data.get('address_permanent','') + _src_label('address_permanent')),
+            ('বর্তমান ঠিকানা', profile_data.get('address_present','') + _src_label('address_present')),
+            ('নথি', ', '.join(profile_data.get('docs_found', []))),
+        ]
+        _pt = doc.add_table(rows=1, cols=2)
+        _pt.style = 'Table Grid'
+        _pt.rows[0].cells[0].text = 'তথ্য'
+        _pt.rows[0].cells[1].text = 'মান'
+        for _fl, _fv in _pf_rows:
+            if not _fv: continue
+            _row = _pt.add_row()
+            _row.cells[0].text = _fl
+            _row.cells[1].text = str(_fv)
+        doc.add_paragraph()
+        if profile_data.get('mismatches'):
+            add_h('তথ্য অসঙ্গতি (Mismatch)')
+            for _mm in profile_data['mismatches']:
+                _mp = doc.add_paragraph(style='List Bullet')
+                _r2 = _mp.add_run(_mm)
+                _r2.font.color.rgb = _DRGB(0xDC, 0x26, 0x26)
+        doc.add_paragraph()
+
     add_h('1. Executive Summary')
     id_label = 'Device IMEI / SIM(s)' if is_imei_cdr(df) else 'Phone Number'
     info=[( id_label, phone),('Operator',operator),('Analysis Period',date_range),
@@ -3478,7 +3532,7 @@ def build_movement_map(df, phone, operator):
         noise={'vill','village','road','ward','house','the','and','plot','dist',
                'p.o','p.s','p','o','s','no','num','po','ps','mouza','moza',
                'union','para','gram','gram','bazar','hat','ghat','more'}
-        return set(t for t in _re.sub(r'[^a-z0-9]',' ',str(s).lower()).split()
+        return set(t for t in re.sub(r'[^a-z0-9]',' ',str(s).lower()).split()
                    if len(t)>=3 and t not in noise)
 
     def addr_sim(cdr_addr, csv_addr):
@@ -3497,18 +3551,18 @@ def build_movement_map(df, phone, operator):
 
         # P.S / P/S → thana
         thana=''
-        mt=_re.search(r'P[\.\s]*/?\s*S[\.\:\s\-/]+([A-Z][A-Z\s\-]{2,}?)(?:[,\.\n]|DIST|$)',s)
+        mt=re.search(r'P[\.\s]*/?\s*S[\.\:\s\-/]+([A-Z][A-Z\s\-]{2,}?)(?:[,\.\n]|DIST|$)',s)
         if mt: thana=mt.group(1).strip().rstrip('.,- ').title()
 
         # DIST: → district
         district=''
-        md=_re.search(r'DIST[\.\:\s]+([A-Z][A-Z\s\-]{2,}?)(?:[,\.\n]|$|\s+BD)',s)
+        md=re.search(r'DIST[\.\:\s]+([A-Z][A-Z\s\-]{2,}?)(?:[,\.\n]|$|\s+BD)',s)
         if md: district=md.group(1).strip().rstrip('.,- ').title()
 
         # Fallback: last comma tokens
         if not district:
-            parts=[p.strip() for p in _re.split(r'[,،]',s) if len(p.strip())>2]
-            parts=[_re.sub(r'\b(BD|BANGLADESH|\d{4,})\b','',p).strip() for p in parts]
+            parts=[p.strip() for p in re.split(r'[,،]',s) if len(p.strip())>2]
+            parts=[re.sub(r'\b(BD|BANGLADESH|\d{4,})\b','',p).strip() for p in parts]
             parts=[p for p in parts if p and not p.isdigit()]
             if parts:
                 last=parts[-1].rstrip('.').title()
@@ -3966,13 +4020,33 @@ def _is_valid_number(p):
     return len(d) >= 10
 
 
+def _is_promotional(phone):
+    """Detect promotional/service numbers — short codes, non-standard formats."""
+    if not phone: return True
+    d = re.sub(r'[^0-9]', '', str(phone))
+    # Short codes (< 8 digits), or starts with non-BD prefix
+    if len(d) < 8: return True
+    # Common BD promotional prefixes
+    promo_prefixes = ['16', '17600', '17601', '17602', '17603', '01500', '01600',
+                      '17700', '17800', '17900', '10', '11', '12', '13', '14', '15']
+    for p in promo_prefixes:
+        if d.startswith(p) and len(d) < 11: return True
+    return False
+
 def _remove_anomalies(df):
-    """Remove anomalous records: invalid numbers, service SMS, etc."""
-    if 'Usage Type' not in df.columns: return df
-    df = df[df['Usage Type'].isin(['MOC', 'MTC', 'SMSMO', 'SMSMT', 'SMS-MT', 'CALL-RCF'])].copy()
-    if 'Party B' in df.columns:
-        df['_pb_clean'] = df['Party B'].apply(_clean_phone)
-        df = df[df['_pb_clean'].apply(_is_valid_number)].copy()
+    """Remove anomalous records. Works with both original and normalized column names."""
+    # Usage type column — try both cases
+    ut_col = next((c for c in df.columns if c.lower().replace(' ','_') == 'usage_type'), None)
+    if ut_col is None: return df
+    valid_types = ['MOC','MTC','SMSMO','SMSMT','SMS-MT','CALL-RCF']
+    df = df[df[ut_col].str.upper().isin(valid_types)].copy().reset_index(drop=True)
+    # Party B column
+    pb_col = next((c for c in df.columns if c.lower().replace(' ','_') == 'party_b'), None)
+    if pb_col:
+        df = df.reset_index(drop=True)
+        df['_pb_clean'] = [_clean_phone(v) for v in df[pb_col]]
+        df = df[[bool(_is_valid_number(p)) for p in df['_pb_clean']]].reset_index(drop=True)
+        df = df[[not _is_promotional(p) for p in df['_pb_clean']]].reset_index(drop=True)
     return df
 
 
@@ -4016,11 +4090,19 @@ def _load_cdr(uploaded_file, label):
                     break
         df = df.rename(columns=rename)
 
+        df = df.reset_index(drop=True)  # Fix duplicate index issue
         df['_label'] = label
-        df['_phone_a'] = df['party_a'].apply(_clean_phone) if 'party_a' in df.columns else label
-        df['_phone_b'] = df['party_b'].apply(_clean_phone) if 'party_b' in df.columns else None
+        if 'party_a' in df.columns:
+            df['_phone_a'] = [_clean_phone(v) for v in df['party_a']]
+        else:
+            df['_phone_a'] = label
+        if 'party_b' in df.columns:
+            df['_phone_b'] = [_clean_phone(v) for v in df['party_b']]
+        else:
+            df['_phone_b'] = None
 
         # Determine subject phone (most frequent Party A)
+        df = df.reset_index(drop=True)
         if 'party_a' in df.columns:
             pa_counts = df['party_a'].value_counts()
             subject_raw = pa_counts.index[0] if not pa_counts.empty else label
@@ -4036,7 +4118,54 @@ def _load_cdr(uploaded_file, label):
         # Remove anomalies
         before = len(df)
         df = _remove_anomalies(df)
+        df = df.reset_index(drop=True)
         after = len(df)
+
+        # ── GPS Enrichment from cell tower CSV ──
+        # Step 1: detect operator(s) from this CDR
+        # Step 2: ensure CSV downloaded (from HF if needed)
+        # Step 3: enrich df rows with cell_lat/cell_lon/loc_method
+        try:
+            import os as _os2, tempfile as _tf2
+            _cell_dir = _os2.path.join(_tf2.gettempdir(), "celltower_cache")
+
+            # Detect operator
+            _ops_set = set()
+            if 'operator' in df.columns:
+                for _ov in df['operator'].dropna().astype(str).unique():
+                    _ol = _ov.lower()
+                    if 'grameen' in _ol or 'gp' in _ol:     _ops_set.add('gp')
+                    elif 'banglalink' in _ol or 'bl' in _ol: _ops_set.add('bl')
+                    elif 'robi' in _ol or 'airtel' in _ol:  _ops_set.add('robi')
+                    elif 'teletalk' in _ol:                  _ops_set.add('teletalk')
+
+            # Download CSVs if not already cached
+            _ensure_cell_tower_cache(_ops_set if _ops_set else None)
+
+            # Load GPS map and enrich
+            _gps_map = _load_cell_tower_gps(_cell_dir)
+            if _gps_map and 'lac_n' in df.columns and 'cid_n' in df.columns:
+                _lats, _lons, _methods, _dists = [], [], [], []
+                for _, _row in df.iterrows():
+                    _lv = str(_row.get('lac_n', '')).strip()
+                    _cv = str(_row.get('cid_n', '')).strip()
+                    _coords = _gps_map.get((_lv, _cv))
+                    if _coords:
+                        _lats.append(_coords[0])
+                        _lons.append(_coords[1])
+                        _methods.append('cell_exact')
+                        _dists.append('')
+                    else:
+                        _lats.append(None)
+                        _lons.append(None)
+                        _methods.append('none')
+                        _dists.append('')
+                df['cell_lat']     = _lats
+                df['cell_lon']     = _lons
+                df['loc_method']   = _methods
+                df['csv_district'] = _dists
+        except Exception:
+            pass  # GPS enrichment optional — colocation still works via text_gps
 
         return df, subject_phone, before - after
     except Exception as e:
@@ -4054,12 +4183,16 @@ def _build_connections(dfs):
 
     for df in dfs:
         subject = df['_subject'].iloc[0]
-        if 'usage_type' not in df.columns: continue
+        # Find usage_type column (normalized or original)
+        ut_col = next((c for c in df.columns if c.lower().replace(' ','_') == 'usage_type'), None)
+        if ut_col is None: continue
+        pb_col = next((c for c in df.columns if c.lower().replace(' ','_') == 'party_b'), '_phone_b')
+        dur_col = next((c for c in df.columns if 'duration' in c.lower()), None)
         for _, row in df.iterrows():
-            pb = row.get('_phone_b') or _clean_phone(row.get('party_b', ''))
+            pb = row.get('_phone_b') or _clean_phone(row.get(pb_col, ''))
             if not _is_valid_number(pb): continue
-            ut = str(row.get('usage_type', '')).upper()
-            dur = float(row.get('duration', 0) or 0) / 60
+            ut = str(row.get(ut_col, '')).upper()
+            dur = float(row.get(dur_col, 0) or 0) / 60 if dur_col else 0
 
             if 'MOC' in ut or 'OUT' in ut:
                 connections[pb][subject]['call_out'] += 1
@@ -4075,123 +4208,557 @@ def _build_connections(dfs):
     return connections
 
 
-def _build_colocation(dfs, window_min=30):
-    """Find co-location events: same BTS, same time window."""
-    results = []
-    if len(dfs) < 2: return results
+def _haversine_km(lat1, lon1, lat2, lon2):
+    """Calculate distance in km between two GPS points."""
+    R = 6371
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+    return R * 2 * math.asin(math.sqrt(max(0, a)))
 
-    # Prepare: each df with subject, time, lac, cid, address
+
+def _ensure_cell_tower_cache(operators=None):
+    """
+    HuggingFace থেকে cell tower CSV download করে CELL_DIR-এ রাখো।
+    CDR Analysis আগে না চালালেও Link Analysis-এ GPS পাওয়া যাবে।
+    operators: set of 'gp','bl','robi','teletalk' — None মানে সব
+    """
+    import os as _osc, tempfile as _tfc, shutil as _shc
+    try:
+        import requests as _reqc
+    except ImportError:
+        return
+
+    CELL_DIR = _osc.path.join(_tfc.gettempdir(), "celltower_cache")
+    _osc.makedirs(CELL_DIR, exist_ok=True)
+
+    HF_REPO = "Faruk131086/Celltower"
+
+    def _hf_tok():
+        try:
+            import streamlit as _stc
+            return _stc.secrets.get("HF_TOKEN", None)
+        except Exception:
+            return _osc.environ.get("HF_TOKEN", None)
+
+    # Operator → files mapping
+    OP_FILES = {
+        'gp':       ['GP_2G.csv', 'GP_3G.csv', 'GP_4G.csv'],
+        'robi':     ['Robi_2G.csv', 'Robi_4G.csv'],
+        'bl':       ['Banglalink_2G3G.csv', 'Banglalink_4G.csv'],
+        'teletalk': ['Teletalk.csv'],
+    }
+
+    # Which files to download
+    files_needed = set()
+    if operators:
+        for op in operators:
+            files_needed.update(OP_FILES.get(op, []))
+    else:
+        for flist in OP_FILES.values():
+            files_needed.update(flist)
+
+    token = _hf_tok()
+    hdrs = {"User-Agent": "Mozilla/5.0"}
+    if token:
+        hdrs["Authorization"] = f"Bearer {token}"
+
+    for fname in files_needed:
+        local = _osc.path.join(CELL_DIR, fname)
+        # Skip if already cached and large enough
+        if _osc.path.isfile(local) and _osc.path.getsize(local) > 5000:
+            continue
+        # Try HuggingFace direct URL
+        url = f"https://huggingface.co/datasets/{HF_REPO}/resolve/main/{fname}"
+        try:
+            r = _reqc.get(url, headers=hdrs, stream=True, timeout=120)
+            r.raise_for_status()
+            with open(local, "wb") as _fw:
+                for chunk in r.iter_content(65536):
+                    if chunk: _fw.write(chunk)
+            if _osc.path.getsize(local) < 1000:
+                _osc.remove(local)  # bad download
+        except Exception:
+            # Try hf_hub_download fallback
+            try:
+                from huggingface_hub import hf_hub_download as _hfd
+                path = _hfd(
+                    repo_id=HF_REPO, filename=fname,
+                    repo_type="dataset", token=token,
+                    local_dir=CELL_DIR
+                )
+                if path and _osc.path.abspath(path) != _osc.path.abspath(local):
+                    _shc.copy2(path, local)
+            except Exception:
+                pass
+
+
+def _load_cell_tower_gps(cell_dir=None):
+    """Load GPS coordinates from cell tower CSV files."""
+    import os, glob
+    cell_dict = {}
+    # Try common upload locations
+    search_dirs = ['/mnt/user-data/uploads', '/tmp/celltower_cache']
+    if cell_dir: search_dirs.insert(0, cell_dir)
+
+    csv_configs = [
+        ('GP_2G.csv',  'lac', 'cellid',      'latitude', 'longitude'),
+        ('GP_4G.csv',  'lac', 'cell_id',      'latitude', 'longitude'),
+        ('2G.csv',     'lac', 'cellid',        'latitude', 'longitude'),
+        ('4G.csv',     'lac', 'cell_id',       'latitude', 'longitude'),
+        ('Robi_4G.csv','enodebid','cell_id',   'latitude', 'longitude'),
+        ('Robi_2G.csv','lac', 'cell_id',       'latitude', 'longitude'),
+        ('Banglalink_4G.csv','tac','eutrancellid','latitude','longitude'),
+        ('Banglalink_2G3G.csv','lac','ci',     'lat',      'lon'),
+    ]
+
+    for d in search_dirs:
+        if not os.path.isdir(d): continue
+        for fname, lac_col, cid_col, lat_col, lon_col in csv_configs:
+            fpath = os.path.join(d, fname)
+            if not os.path.isfile(fpath): continue
+            try:
+                csv = pd.read_csv(fpath, dtype=str, encoding='latin-1', low_memory=False)
+                csv.columns = [c.lower().strip() for c in csv.columns]
+                _lc = lac_col if lac_col in csv.columns else next((c for c in csv.columns if 'enodebid' in c or c=='lac'),None)
+                _cc = cid_col if cid_col in csv.columns else next((c for c in csv.columns if 'cell_id' in c or c=='cellid' or c=='ci'),None)
+                _la = lat_col if lat_col in csv.columns else 'lat'
+                _lo = lon_col if lon_col in csv.columns else 'lon'
+                if not (_lc and _cc and _la in csv.columns and _lo in csv.columns): continue
+                for row in csv.itertuples(index=False):
+                    try:
+                        rd = row._asdict()
+                        lat = float(rd[_la]); lon = float(rd[_lo])
+                        if not (19<=lat<=27 and 87<=lon<=93): continue
+                        lv = str(rd[_lc]).strip().split('.')[0]
+                        cv = str(rd[_cc]).strip().split('.')[0]
+                        if lv.isdigit() and len(lv)>1: lv=str(int(lv))
+                        if cv.isdigit() and len(cv)>1: cv=str(int(cv))
+                        k = (lv, cv)
+                        if k not in cell_dict: cell_dict[k] = (lat, lon)
+                    except: pass
+            except: pass
+    return cell_dict
+
+
+def _build_colocation(dfs, window_min=30, radius_km=3.0):
+    """
+    Common Location Analysis:
+    ২+ subject একই সময়ে (window_min মিনিটের মধ্যে) একই এলাকায় (radius_km km) ছিল কিনা।
+
+    GPS resolution — CDR Analysis-এর build_movement_map-এর হুবহু priority:
+      Priority 1: cell_lat/cell_lon (cell tower CSV থেকে, loc_method='cell_exact')
+      Priority 2: BTS address text parse → P.S: → thana → THANA_GPS (±3-8 km)
+                                         → DIST: → district → DISTRICT_GPS (±10-20 km)
+
+    ভিন্ন operator হলেও GPS haversine দিয়ে তুলনা করা হয়।
+    একই operator হলে GPS + same LAC+CID উভয়ই চেক করা হয়।
+    """
+    import math as _m, re as _re
+
+    results = []
+    if len(dfs) < 2:
+        return results
+
+    # ── CDR Analysis-এর হুবহু THANA_GPS ──
+    THANA_GPS = {
+        'Gobindaganj':(25.1167,89.3667),'Gobindoganj':(25.1167,89.3667),
+        'Gaibandha Sadar':(25.3288,89.5449),'Sadullapur':(25.2667,89.5000),
+        'Sundarganj':(25.5333,89.4667),'Fulchhari':(25.0667,89.5167),
+        'Palashbari':(25.2333,89.4667),'Sughatta':(25.4333,89.3167),
+        'Uttara':(23.8750,90.3987),'Gulshan':(23.7925,90.4078),
+        'Cantonment Dhaka':(23.8000,90.4000),'Dhaka Cantonment':(23.8000,90.4000),
+        'Khilkhet':(23.8200,90.4200),'Badda':(23.7800,90.4300),
+        'Tongi':(23.8980,90.3990),'Pallabi':(23.8300,90.3600),
+        'Kafrul':(23.7900,90.3700),'Mirpur':(23.8223,90.3654),
+        'Mohammadpur':(23.7638,90.3567),'Motijheel':(23.7300,90.4175),
+        'Lalbagh':(23.7205,90.3888),'Kotwali':(23.7200,90.4100),
+        'Sabujbagh':(23.7300,90.4400),'Gazipur Sadar':(23.9999,90.4203),
+        'Rupganj':(23.7500,90.5167),'Savar':(23.8576,90.2667),
+        'Bogra Sadar':(24.8465,89.3720),'Bogra Sadar South':(24.8300,89.3600),
+        'Bogra Sadar South New':(24.8300,89.3600),
+        'Shibganj':(25.0571,89.3693),'Shibgonj':(25.0571,89.3693),
+        'Sherpur':(24.7058,89.3968),'Kamarkhanda':(24.4149,89.6527),
+        'Sirajganj Sadar':(24.4508,89.7013),'Tangail Sadar':(24.2513,89.9167),
+        'Comilla Sadar':(23.4682,91.1788),'Chouddagram':(23.2667,91.2667),
+        'Kasba':(23.8000,91.1333),'Brahmanbaria Sadar':(23.9570,91.1120),
+        'Rangpur Sadar':(25.7439,89.2752),'Kurigram Sadar':(25.8074,89.6360),
+        'Ulipur':(25.6833,89.6667),'Mithapukur':(25.6833,89.1833),
+        'Gopalganj Sadar':(25.1167,89.3667),
+        'Bakshiganj':(25.0333,89.8167),'Raomari':(25.6333,89.6667),
+        'Nageshwari':(25.9667,89.7000),'Bhurungamari':(25.9667,89.7500),
+        'Chilmari':(25.5500,89.6833),'Hatibandha':(25.6833,89.5000),
+    }
+
+    # ── CDR Analysis-এর হুবহু DISTRICT_GPS ──
+    DISTRICT_GPS = {
+        'Dhaka':(23.8103,90.4125),'Chittagong':(22.3384,91.8317),
+        'Sylhet':(24.8949,91.8687),'Rajshahi':(24.3745,88.6042),
+        'Khulna':(22.8456,89.5403),'Barisal':(22.7010,90.3535),
+        'Rangpur':(25.7439,89.2752),'Mymensingh':(24.7471,90.4203),
+        'Gaibandha':(25.3288,89.5449),'Kurigram':(25.8074,89.6360),
+        'Jamalpur':(24.9373,89.9373),'Comilla':(23.4682,91.1788),
+        'Bogra':(24.8465,89.3720),'Dinajpur':(25.6279,88.6338),
+        'Nilphamari':(25.9313,88.8561),'Lalmonirhat':(25.9217,89.2836),
+        'Sirajganj':(24.4508,89.7013),'Sirajgonj':(24.4508,89.7013),
+        'Pabna':(24.0064,89.2372),'Manikganj':(23.8634,89.9947),
+        'Munshiganj':(23.5422,90.5302),'Narsingdi':(23.9234,90.7151),
+        'Gazipur':(23.9999,90.4203),'Tangail':(24.2513,89.9167),
+        'Kishoreganj':(24.4449,90.7766),'Netrokona':(24.8710,90.7278),
+        'Sherpur':(25.0204,90.0152),'Faridpur':(23.6070,89.8429),
+        'Gopalganj':(23.0046,89.8267),'Noakhali':(22.8696,91.0997),
+        'Feni':(23.0235,91.3960),'Chandpur':(23.2373,90.6518),
+        'Brahmanbaria':(23.9570,91.1120),'Coxsbazar':(21.4272,92.0058),
+        'Bandarban':(22.1953,92.2184),'Narayanganj':(23.6238,90.4997),
+        'Jessore':(23.1664,89.2082),'Satkhira':(22.7185,89.0705),
+        'Kushtia':(23.9012,89.1213),'Bogura':(24.8465,89.3720),
+        'Naogaon':(24.9131,88.7465),'Natore':(24.4198,88.9877),
+        'Chapainawabganj':(24.5965,88.2765),'Joypurhat':(25.1026,89.0197),
+        'Panchagarh':(26.3411,88.5541),'Thakurgaon':(26.0336,88.4616),
+    }
+
+    INVALID_PATTERNS = [
+        'MOUZA NOT FOUND','NOT FOUND IN AG','CAAB PERMISSION',
+        'PERMISSION FOUND','MOUZA-MOUZA',
+    ]
+
+    DIST_NORM = {
+        'Gaibanda':'Gaibandha','Bogura':'Bogra',
+        'Sirajgonj':'Sirajganj','Cumilla':'Comilla',
+        'Bogra Sadar South New':'Bogra',
+    }
+
+    def _text_gps(addr_str):
+        """build_movement_map-এর text_gps() হুবহু।"""
+        if not addr_str:
+            return None
+        a = str(addr_str).upper()
+        if any(p in a for p in INVALID_PATTERNS):
+            return None
+
+        # P.S / P/S → thana
+        thana = ''
+        mt = re.search(
+            r'P[\.\s]*/?\s*S[\.\:\s\-/]+([A-Z][A-Z\s\-]{2,}?)(?:[,\.\n]|DIST|$)', a)
+        if mt:
+            thana = mt.group(1).strip().rstrip('.,- ').title()
+
+        # DIST: → district
+        district = ''
+        md = re.search(
+            r'DIST[\.\:\s]+([A-Z][A-Z\s\-]{2,}?)(?:[,\.\n]|$|\s+BD)', a)
+        if md:
+            district = md.group(1).strip().rstrip('.,- ').title()
+
+        # Fallback: last comma token
+        if not district:
+            parts = [p.strip() for p in re.split(r'[,،]', a) if len(p.strip()) > 2]
+            parts = [re.sub(r'\b(BD|BANGLADESH|\d{4,})\b', '', p).strip() for p in parts]
+            parts = [p for p in parts if p and not p.isdigit()]
+            if parts:
+                last = parts[-1].rstrip('.').title()
+                if last.replace(' ', '').isalpha() and len(last) >= 4:
+                    district = last
+                if len(parts) >= 2 and not thana:
+                    sl = parts[-2].rstrip('.').title()
+                    if len(sl) >= 4:
+                        thana = sl
+
+        # Thana lookup (±3-8 km)
+        if thana:
+            for tk in [thana, thana.replace(' Sadar', '').strip()]:
+                if tk in THANA_GPS:
+                    g = THANA_GPS[tk]
+                    d = DIST_NORM.get(district, district) or tk.split()[0]
+                    return g[0], g[1], d, thana, 'text_thana'
+
+        # District lookup (±10-20 km)
+        if district:
+            d = DIST_NORM.get(district, district)
+            if d in DISTRICT_GPS:
+                g = DISTRICT_GPS[d]
+                return g[0], g[1], d, thana, 'text_district'
+            for k, v in DISTRICT_GPS.items():
+                if k.lower() in d.lower() or d.lower() in k.lower():
+                    return v[0], v[1], k, thana, 'text_district'
+
+        return None
+
+    def _resolve_gps(row):
+        """
+        একটি CDR row-এর GPS বের করো।
+        Priority 1: cell_lat/cell_lon (CSV match)
+        Priority 2: BTS address text parse
+        Returns (lat, lon, district, thana, method) or None
+        """
+        # Priority 1: CSV exact GPS
+        lm = str(row.get('loc_method', '') or '').strip()
+        if lm == 'cell_exact':
+            try:
+                clat = row.get('cell_lat')
+                clon = row.get('cell_lon')
+                if clat is not None and str(clat) not in ('nan', 'None', ''):
+                    clat = float(clat)
+                    clon = float(clon)
+                    if 19 <= clat <= 27 and 87 <= clon <= 93:
+                        dist = str(row.get('csv_district', '') or '').strip().title()
+                        dist = '' if dist in ('Nan', 'None', 'nan') else dist
+                        thana = str(row.get('csv_thana', '') or '').strip().title()
+                        return clat, clon, dist, thana, 'csv_exact'
+            except Exception:
+                pass
+
+        # Priority 2: BTS address text parse
+        addr = str(row.get('address', '') or '').strip()
+        if not addr:
+            # also try 'Bts Address' column name variation
+            addr = str(row.get('Bts Address', '') or
+                       row.get('bts_address', '') or '').strip()
+        if addr:
+            res = _text_gps(addr)
+            if res:
+                return res[0], res[1], res[2], res[3], res[4]
+
+        return None
+
+    # ── প্রতিটি subject-এর GPS-enriched rows তৈরি ──
     prepared = []
     for df in dfs:
-        sub = df['_subject'].iloc[0]
-        sub_df = df[df['start'].notna() & (df['lac_n'] != '') & (df['cid_n'] != '')].copy()
-        sub_df = sub_df[['start', 'lac_n', 'cid_n', 'address', '_label']].copy()
-        sub_df['_subject'] = sub
-        prepared.append(sub_df)
+        sub = df['_subject'].iloc[0] if '_subject' in df.columns else 'Unknown'
+        op  = str(df['operator'].iloc[0]).lower().strip() \
+              if 'operator' in df.columns else ''
 
-    # Compare each pair
-    for (df_a, df_b) in combinations(prepared, 2):
+        sub_df = df[df['start'].notna()].copy()
+        if sub_df.empty:
+            continue
+
+        lats, lons, dists, thanas, methods, lac_keys = [], [], [], [], [], []
+        for _, row in sub_df.iterrows():
+            res = _resolve_gps(row)
+            if res:
+                lats.append(res[0]); lons.append(res[1])
+                dists.append(res[2]); thanas.append(res[3])
+                methods.append(res[4])
+            else:
+                lats.append(None); lons.append(None)
+                dists.append('');  thanas.append('')
+                methods.append('none')
+
+            lv = str(row.get('lac_n', '')).strip()
+            cv = str(row.get('cid_n', '')).strip()
+            lac_keys.append(
+                f"{lv}_{cv}"
+                if lv and cv and lv not in ('', 'nan') and cv not in ('', 'nan')
+                else ''
+            )
+
+        sub_df = sub_df.copy()
+        sub_df['_lat']    = lats;    sub_df['_lon']    = lons
+        sub_df['_dist']   = dists;   sub_df['_thana']  = thanas
+        sub_df['_method'] = methods; sub_df['_lk']     = lac_keys
+        sub_df['_op']     = op;      sub_df['_subject'] = sub
+
+        # GPS পাওয়া গেছে এমন rows রাখো
+        sub_df = sub_df[sub_df['_lat'].notna()].copy()
+        if not sub_df.empty:
+            prepared.append(sub_df)
+
+    if len(prepared) < 2:
+        return results
+
+    subj_labels = {
+        df['_subject'].iloc[0]: f"Subject {i+1}"
+        for i, df in enumerate(dfs)
+        if '_subject' in df.columns
+    }
+
+    # ── প্রতিটি subject pair তুলনা ──
+    for df_a, df_b in combinations(prepared, 2):
+        if df_a.empty or df_b.empty:
+            continue
         sub_a = df_a['_subject'].iloc[0]
         sub_b = df_b['_subject'].iloc[0]
+        op_a  = df_a['_op'].iloc[0]
+        op_b  = df_b['_op'].iloc[0]
+        same_op = bool(op_a and op_b and op_a == op_b)
 
-        # Merge on lac+cid
-        merged = pd.merge(
-            df_a[['start', 'lac_n', 'cid_n', 'address']].rename(
-                columns={'start': 'time_a', 'address': 'addr_a'}),
-            df_b[['start', 'lac_n', 'cid_n', 'address']].rename(
-                columns={'start': 'time_b', 'address': 'addr_b'}),
-            on=['lac_n', 'cid_n']
-        )
-        if merged.empty: continue
+        for _, ra in df_a.iterrows():
+            t_a   = ra['start']
+            lat_a = ra['_lat']; lon_a = ra['_lon']
+            lk_a  = ra['_lk']
 
-        # Time diff filter
-        merged['diff_min'] = abs((merged['time_a'] - merged['time_b'])
-                                  .dt.total_seconds() / 60)
-        close = merged[merged['diff_min'] <= window_min].copy()
+            t_min = t_a - pd.Timedelta(minutes=window_min)
+            t_max = t_a + pd.Timedelta(minutes=window_min)
+            b_win = df_b[
+                (df_b['start'] >= t_min) &
+                (df_b['start'] <= t_max)
+            ]
+            if b_win.empty:
+                continue
 
-        for _, row in close.iterrows():
-            results.append({
-                'Subject A': sub_a,
-                'Subject B': sub_b,
-                'Time A': str(row['time_a'])[:16],
-                'Time B': str(row['time_b'])[:16],
-                'Diff (min)': round(row['diff_min'], 1),
-                'LAC': row['lac_n'],
-                'CID': row['cid_n'],
-                'Location': str(row.get('addr_a', '') or row.get('addr_b', ''))[:60],
-            })
+            for _, rb in b_win.iterrows():
+                lat_b = rb['_lat']; lon_b = rb['_lon']
+                lk_b  = rb['_lk']
 
-    results.sort(key=lambda x: x['Diff (min)'])
-    return results[:200]  # max 200
+                # GPS haversine distance (ভিন্ন operator-এও কাজ করে)
+                dist_km = _haversine_km(lat_a, lon_a, lat_b, lon_b)
+                if dist_km > radius_km:
+                    continue
+
+                diff_m = abs((t_a - rb['start']).total_seconds() / 60)
+
+                # Same tower: শুধু একই operator-এ
+                same_tower = (
+                    same_op and bool(lk_a) and bool(lk_b) and lk_a == lk_b
+                )
+
+                # Location display
+                loc_a_str = ra['_thana'] or ra['_dist'] or \
+                            f"{round(lat_a,4)}, {round(lon_a,4)}"
+                loc_b_str = rb['_thana'] or rb['_dist'] or \
+                            f"{round(lat_b,4)}, {round(lon_b,4)}"
+
+                addr_disp = str(
+                    ra.get('address', '') or ra.get('Bts Address', '') or
+                    rb.get('address', '') or rb.get('Bts Address', '') or ''
+                ).strip()[:70] or '—'
+
+                results.append({
+                    'Subject A':      f"{subj_labels.get(sub_a,sub_a)} ({sub_a})",
+                    'Subject B':      f"{subj_labels.get(sub_b,sub_b)} ({sub_b})",
+                    'Time A':         str(t_a)[:16],
+                    'Time B':         str(rb['start'])[:16],
+                    'Diff (min)':     round(diff_m, 1),
+                    'Distance (km)':  round(dist_km, 2),
+                    'Same Tower':     '✅' if same_tower else '—',
+                    'GPS Source A':   ra['_method'],
+                    'GPS Source B':   rb['_method'],
+                    'Location A':     loc_a_str,
+                    'Location B':     loc_b_str,
+                    'GPS A':          f"{round(lat_a,5)}, {round(lon_a,5)}",
+                    'GPS B':          f"{round(lat_b,5)}, {round(lon_b,5)}",
+                    'BTS Address':    addr_disp,
+                })
+
+    # Deduplicate
+    seen, unique = set(), []
+    for r in results:
+        key = (r['Subject A'], r['Subject B'], r['Time A'][:13], r['GPS A'][:12])
+        if key not in seen:
+            seen.add(key)
+            unique.append(r)
+
+    unique.sort(key=lambda x: (x['Diff (min)'], x['Distance (km)']))
+    return unique[:1000]
 
 
-def _build_network_html(dfs, connections, subjects, subj_edge_count=None):
-    """Build Vis.js network graph HTML — clean version."""
+def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_meta=None):
+    """Network graph — clean labels, delete nodes, filter by connection count."""
+    import math as _math
 
-    colors_subject = ['#1d4ed8', '#dc2626', '#15803d', '#7c3aed', '#d97706']
+    colors_subject = ['#1d4ed8','#dc2626','#15803d','#7c3aed','#d97706']
     subj_labels = {sub: f"S{i+1}" for i, sub in enumerate(subjects)}
 
-    # Nodes
     nodes = {}
-    # Subject nodes — large stars
     if subj_edge_count is None:
         subj_edge_count = {sub: 99 for sub in subjects}
 
+    # ── Subject nodes ──
     for i, sub in enumerate(subjects):
-        edge_cnt = subj_edge_count.get(sub, 0)
+        edge_cnt   = subj_edge_count.get(sub, 0)
         is_isolated = edge_cnt < 5
-        # Isolated subject: dashed border + lighter color
-        node_color = colors_subject[i % len(colors_subject)]
-        nodes[sub] = {
-            'id': sub,
-            'label': f"S{i+1}\n{sub[-6:]}",
-            'color': {
-                'background': node_color,
-                'border': '#fbbf24' if is_isolated else '#fff',
-                'highlight': {'background': node_color}
-            },
-            'shape': 'star',
-            'size': 38,
-            'borderWidth': 4 if is_isolated else 2,
-            'borderWidthSelected': 5,
-            'font': {'size': 12, 'color': '#fff', 'bold': True, 'strokeWidth': 2, 'strokeColor': '#1e293b'},
-            'title': f"<b>Subject {i+1}</b><br>{sub}<br>{'⚠️ Few/no common contacts — showing top 5 own contacts' if is_isolated else f'Connections: {edge_cnt}'}",
+        node_color  = colors_subject[i % len(colors_subject)]
+        _meta  = (subj_meta or {}).get(sub, {})
+        _sname = _meta.get("name", "").strip()
+        _sphoto= _meta.get("photo")
+
+        # Label: show name (if given) and number — NO S1/S2 prefix
+        if _sname:
+            lbl = f"{_sname}\n{sub}"
+        else:
+            lbl = sub
+
+        subj_title = (
+            f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
+            f"padding:10px 14px;min-width:220px;line-height:1.8'>"
+            f"<b style='font-size:16px;color:#1e3a8a'>\u2b50 Subject {i+1}</b><br>"
+            f"<b style='font-size:15px'>\U0001f4f1 {sub}</b>"
+            + (f"<br><b style='color:#1e3a8a'>\U0001f464 {_sname}</b>" if _sname else "") +
+            f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
+            + (f"<span style='color:#f59e0b'>\u26a0\ufe0f Few/no common contacts</span>"
+               if is_isolated else
+               f"<span style='color:#16a34a'>\u2713 Connections: {edge_cnt}</span>") +
+            f"<br><span style='color:#94a3b8;font-size:11px'>"
+            f"Right-click or use Delete button to remove</span></div>"
+        )
+        n = {
+            'id': sub, 'label': lbl,
+            'color': {'background': node_color,
+                      'border': '#fbbf24' if is_isolated else '#ffffff',
+                      'highlight': {'background': node_color, 'border': '#f59e0b'}},
+            'shape': 'star', 'size': 38,
+            'borderWidth': 4 if is_isolated else 2, 'borderWidthSelected': 5,
+            'font': {'size': 13, 'color': '#000000', 'bold': True,
+                     'strokeWidth': 3, 'strokeColor': '#ffffff'},
+            'title': subj_title,
             'group': 'isolated_subject' if is_isolated else 'subject',
-            'mass': 4,
-            'physics': not is_isolated  # isolated subject stays more fixed
+            'mass': 6,
+            '_total': edge_cnt,
+            'x': int(600*_math.cos(2*_math.pi*i/max(len(subjects),1)-_math.pi/2)),
+            'y': int(600*_math.sin(2*_math.pi*i/max(len(subjects),1)-_math.pi/2)),
         }
+        if _sphoto:
+            n.update({'shape':'circularImage','image':_sphoto,'size':45,
+                      'color':{'border':node_color,'background':'#fff'},'borderWidth':5})
+        nodes[sub] = n
 
     common = {pb for pb, sd in connections.items() if len(sd) >= 2}
 
+    # ── Contact nodes ──
     for pb, subj_dict in connections.items():
+        if pb in nodes: continue
         total = sum(d['total'] for d in subj_dict.values())
         is_common = pb in common
-        # Own contact of isolated subject (single subject, low edge count)
-        only_sub = list(subj_dict.keys())[0] if len(subj_dict) == 1 else None
-        is_isolated_contact = (only_sub and subj_edge_count.get(only_sub, 99) < 5)
-        short = pb[-8:] if len(pb) > 8 else pb
+        only_sub  = list(subj_dict.keys())[0] if len(subj_dict)==1 else None
+        is_iso_c  = (only_sub and subj_edge_count.get(only_sub,99) < 5)
 
-        if is_common:
-            bg = '#fca5a5'; border = '#dc2626'
-        elif is_isolated_contact:
-            # Isolated subject's own contact — yellow/gold
-            bg = '#fef3c7'; border = '#d97706'
-        else:
-            bg = '#e2e8f0'; border = '#94a3b8'
+        bg     = '#fca5a5' if is_common else ('#fef3c7' if is_iso_c else '#e2e8f0')
+        border = '#dc2626' if is_common else ('#d97706' if is_iso_c else '#94a3b8')
 
+        subj_lines = []
+        for s, d in subj_dict.items():
+            sl = subj_labels.get(s,s)
+            calls = d.get('call_out',0)+d.get('call_in',0)
+            sms   = d.get('sms_out',0)+d.get('sms_in',0)
+            dur   = round(d.get('duration',0),1)
+            subj_lines.append(
+                f"&nbsp;&nbsp;<b>{sl}</b>: \U0001f4de{calls} \U0001f4ac{sms} \u23f1{dur}min")
+        tooltip = (
+            f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
+            f"padding:10px 14px;min-width:230px;line-height:1.8'>"
+            f"<b style='font-size:16px;color:#1e3a8a'>\U0001f4f1 {pb}</b><br>"
+            f"<span style='color:#64748b;font-size:12px'>"
+            f"Shared: {len(subj_dict)} | Total: {total}</span><br>"
+            f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
+            + "<br>".join(subj_lines) +
+            f"<br><span style='color:#94a3b8;font-size:11px'>"
+            f"Click = highlight &nbsp;|&nbsp; Delete btn = remove</span></div>"
+        )
         nodes[pb] = {
-            'id': pb,
-            'label': short,
-            'color': {'background': bg, 'border': border},
+            'id': pb, 'label': pb,
+            'color': {'background':bg,'border':border,
+                      'highlight':{'background':bg,'border':'#2563eb'}},
             'shape': 'ellipse',
-            'size': min(8 + total, 24),
-            'font': {'size': 9, 'color': '#1e293b'},
-            'title': f"<b>{pb}</b><br>Shared by: {len(subj_dict)} subject(s)<br>Total: {total}",
-            'group': 'common' if is_common else ('isolated_contact' if is_isolated_contact else 'contact'),
-            'mass': 1
+            'size': min(10+total, 30),
+            'font': {'size':13,'color':'#000000','bold':True,
+                     'strokeWidth':2,'strokeColor':'#ffffff'},
+            'title': tooltip,
+            'group': 'common' if is_common else ('iso_c' if is_iso_c else 'contact'),
+            'mass': 1,
+            '_total': total,
         }
 
-    # Edges — no label by default (tooltip only), show on hover
+    # ── Edges ──
     edges = []
     eid = 0
     for pb, subj_dict in connections.items():
@@ -4199,29 +4766,29 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None):
             total = data['total']
             if total == 0: continue
             is_common = pb in common
-            is_call = data['call_out'] + data['call_in'] > data['sms_out'] + data['sms_in']
-
+            is_call   = data['call_out']+data['call_in'] > data['sms_out']+data['sms_in']
             parts = []
-            if data['call_out'] > 0: parts.append(f"↑Call:{data['call_out']}")
-            if data['call_in'] > 0:  parts.append(f"↓Call:{data['call_in']}")
-            if data['sms_out'] > 0:  parts.append(f"↑SMS:{data['sms_out']}")
-            if data['sms_in'] > 0:   parts.append(f"↓SMS:{data['sms_in']}")
-
-            if is_common:
-                edge_color = '#dc2626'
-            elif is_call:
-                edge_color = '#2563eb'
-            else:
-                edge_color = '#16a34a'
-
+            if data['call_out']>0: parts.append(f"\u2191Call:{data['call_out']}")
+            if data['call_in'] >0: parts.append(f"\u2193Call:{data['call_in']}")
+            if data['sms_out'] >0: parts.append(f"\u2191SMS:{data['sms_out']}")
+            if data['sms_in']  >0: parts.append(f"\u2193SMS:{data['sms_in']}")
+            ec = '#dc2626' if is_common else ('#2563eb' if is_call else '#16a34a')
+            etitle = (
+                f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
+                f"padding:10px 14px;line-height:1.8'>"
+                f"<b style='font-size:15px;color:#1e3a8a'>{sub} \u2192 {pb}</b><br>"
+                f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
+                + "<br>".join([f"&nbsp;&nbsp;{p}" for p in parts]) +
+                f"<br>&nbsp;&nbsp;\u23f1 Dur: {round(data['duration'],1)} min</div>"
+            )
             edges.append({
-                'id': eid, 'from': sub, 'to': pb,
-                'label': '',  # no label — use tooltip
-                'arrows': {'to': {'enabled': True, 'scaleFactor': 0.6}},
-                'color': {'color': edge_color, 'opacity': 0.7},
-                'width': max(1, min(6, total // 5 + 1)) + (2 if is_common else 0),
-                'font': {'size': 0},
-                'title': f"<b>{subj_labels.get(sub,sub)} → {pb[-8:]}</b><br>{'<br>'.join(parts)}<br>Dur: {round(data['duration'],1)} min"
+                'id':eid,'from':sub,'to':pb,'label':'',
+                'arrows':{'to':{'enabled':True,'scaleFactor':0.6}},
+                'color':{'color':ec,'opacity':0.75},
+                'width': max(1,min(6,total//5+1))+(2 if is_common else 0),
+                'font':{'size':0},
+                'title':etitle,
+                '_total': total,
             })
             eid += 1
 
@@ -4232,90 +4799,270 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None):
 <html>
 <head>
 <meta charset="UTF-8">
-<title>CDR Link Analysis</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.js"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.css">
+<link  href="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.css" rel="stylesheet">
 <style>
-body {{ margin:0; font-family: "Segoe UI", Arial, sans-serif; background:#f1f5f9; }}
-#network {{ width:100%; height:680px; background:white; border:1px solid #e2e8f0; border-radius:12px; }}
-.legend {{ display:flex; gap:1.5rem; padding:.75rem 1rem; background:white; border:1px solid #e2e8f0;
-           border-radius:10px; margin-bottom:.75rem; flex-wrap:wrap; font-size:.82rem; }}
-.legend-item {{ display:flex; align-items:center; gap:.4rem; }}
-.dot {{ width:14px; height:14px; border-radius:50%; }}
-.controls {{ padding:.5rem 1rem; background:white; border:1px solid #e2e8f0;
-             border-radius:10px; margin-bottom:.75rem; display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }}
-.controls button {{ background:#1e3a8a; color:white; border:none; padding:.3rem .9rem;
-                    border-radius:6px; cursor:pointer; font-size:.82rem; }}
-.controls button:hover {{ background:#1e40af; }}
-h2 {{ color:#1e3a8a; margin:.5rem 0; font-size:1.1rem; }}
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:"Segoe UI",Arial,sans-serif;background:#f8fafc;padding:6px;overflow-x:hidden}}
+#network{{width:100%;height:580px;background:#fff;border:1px solid #e2e8f0;border-radius:10px}}
+.bar{{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:6px 10px;
+      margin-bottom:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}}
+.btn{{background:#1e3a8a;color:#fff;border:none;padding:4px 11px;border-radius:6px;
+      cursor:pointer;font-size:12px;white-space:nowrap}}
+.btn:hover{{background:#1d4ed8}}
+.btn.red{{background:#dc2626}}.btn.red:hover{{background:#b91c1c}}
+.btn.grn{{background:#16a34a}}.btn.grn:hover{{background:#15803d}}
+.btn.orn{{background:#d97706}}.btn.orn:hover{{background:#b45309}}
+.btn.del{{background:#7f1d1d}}.btn.del:hover{{background:#991b1b}}
+.sl{{display:flex;align-items:center;gap:5px;font-size:11px;color:#475569}}
+input[type=range]{{width:80px;accent-color:#2563eb}}
+.lgd{{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:5px 10px;
+      display:flex;gap:12px;flex-wrap:wrap;font-size:11px;margin-bottom:6px}}
+.li{{display:flex;align-items:center;gap:4px}}
+.dot{{width:11px;height:11px;border-radius:50%;flex-shrink:0}}
+.ln{{width:16px;height:3px;flex-shrink:0}}
+#panel{{display:none;position:absolute;top:8px;right:8px;z-index:999;
+        background:#fff;border:2px solid #2563eb;border-radius:12px;
+        padding:12px 16px;min-width:255px;max-width:310px;
+        box-shadow:0 6px 24px rgba(0,0,0,.18);font-size:13px;line-height:1.8}}
+#panelHdr{{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}}
+#panelTag{{font-size:10px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.5px}}
+#panelX{{cursor:pointer;color:#94a3b8;font-size:20px;line-height:1}}
+#panelX:hover{{color:#dc2626}}
+#wrap{{position:relative}}
 </style>
 </head>
 <body>
-<h2>🔗 CDR Link Analysis — Network Graph</h2>
-<div class="legend">
-  <div class="legend-item"><div class="dot" style="background:#2563eb"></div> Subject (Star)</div>
-  <div class="legend-item"><div class="dot" style="background:#ef4444"></div> Common Contact (2+ subjects)</div>
-  <div class="legend-item"><div class="dot" style="background:#64748b"></div> Single Contact</div>
-  <div class="legend-item"><div style="width:20px;height:3px;background:#2563eb"></div> Call link</div>
-  <div class="legend-item"><div style="width:20px;height:3px;background:#16a34a"></div> SMS link</div>
-  <div class="legend-item"><div style="width:20px;height:3px;background:#ef4444"></div> Common link</div>
+<div class="lgd">
+  <div class="li"><div class="dot" style="background:#1d4ed8"></div>Subject</div>
+  <div class="li"><div class="dot" style="background:#ef4444"></div>Common Contact</div>
+  <div class="li"><div class="dot" style="background:#94a3b8"></div>Single Contact</div>
+  <div class="li"><div class="ln" style="background:#2563eb"></div>Call</div>
+  <div class="li"><div class="ln" style="background:#16a34a"></div>SMS</div>
+  <div class="li"><div class="ln" style="background:#dc2626"></div>Common</div>
 </div>
-<div class="controls">
-  <button onclick="network.fit()">⊡ Fit All</button>
-  <button onclick="togglePhysics()">⚙ Toggle Physics</button>
-  <button onclick="showOnlyCommon()">🔴 Common Only</button>
-  <button onclick="showAll()">👁 Show All</button>
-  <span style="font-size:.8rem;color:#64748b">Scroll to zoom · Drag to move · Click node to highlight</span>
+<div class="bar">
+  <button class="btn" onclick="network.fit()">&#x229F; Fit</button>
+  <button class="btn" id="physBtn" onclick="togglePhysics()">&#x23F8; Stop</button>
+  <button class="btn red" onclick="showOnlyCommon()">&#128308; Common</button>
+  <button class="btn grn" onclick="showAll()">&#128065; All</button>
+  <button class="btn del" id="delBtn" onclick="deleteSelected()">&#x1F5D1; Delete</button>
+  <button class="btn orn" onclick="undoDelete()">&#x21BA; Undo</button>
+  <div class="sl">
+    <span>Min connections:</span>
+    <input type="range" id="minConn" min="1" max="20" value="1"
+           oninput="filterByConnCount(this.value)">
+    <span id="minConnVal">1</span>
+  </div>
+  <div class="sl">
+    <span>Label:</span>
+    <input type="range" id="fontSz" min="8" max="22" value="13"
+           oninput="changeFontSize(this.value)">
+    <span id="fontVal">13</span>
+  </div>
+  <div class="sl">
+    <span>Node:</span>
+    <input type="range" id="nodeSz" min="6" max="40" value="14"
+           oninput="changeNodeSize(this.value)">
+    <span id="nodeVal">14</span>
+  </div>
+  <span style="font-size:10px;color:#94a3b8;margin-left:auto">
+    Scroll=zoom | Drag=move | Click=info | Del=remove
+  </span>
 </div>
-<div id="network"></div>
+<div id="wrap">
+  <div id="network"></div>
+  <div id="panel">
+    <div id="panelHdr">
+      <span id="panelTag">INFO</span>
+      <span id="panelX" onclick="closePanel()">&#xd7;</span>
+    </div>
+    <div id="panelBody"></div>
+  </div>
+</div>
 <script>
 var nodesData = {nodes_json};
 var edgesData = {edges_json};
-var allNodes = new vis.DataSet(nodesData);
-var allEdges = new vis.DataSet(edgesData);
-var container = document.getElementById('network');
-var data = {{ nodes: allNodes, edges: allEdges }};
-var options = {{
-  nodes: {{ borderWidth:2, shadow:{{ enabled:true, size:6 }} }},
-  edges: {{ smooth:{{ type:'curvedCW', roundness:0.2 }}, shadow:false }},
-  physics: {{
-    enabled:true,
-    stabilization:{{ iterations:300, updateInterval:50 }},
-    barnesHut:{{
-      gravitationalConstant:-12000,
-      springLength:200,
-      springConstant:0.03,
-      damping:0.09,
-      avoidOverlap:0.5
-    }}
-  }},
-  interaction: {{ hover:true, tooltipDelay:100, navigationButtons:true, hideEdgesOnDrag:true }},
-  layout: {{ improvedLayout:true }}
-}};
-var network = new vis.Network(container, data, options);
+var allNodes  = new vis.DataSet(nodesData);
+var allEdges  = new vis.DataSet(edgesData);
+// Delete history for undo
+var deletedNodes = [];
+var deletedEdges = [];
+var selectedNodeId = null;
+var selectedEdgeId = null;
+
+var network = new vis.Network(
+  document.getElementById('network'),
+  {{nodes:allNodes, edges:allEdges}},
+  {{
+    nodes:{{borderWidth:2,shadow:{{enabled:true,size:4}}}},
+    edges:{{smooth:{{type:'dynamic'}},shadow:false}},
+    physics:{{
+      enabled:true,solver:'repulsion',
+      stabilization:{{iterations:500,updateInterval:20}},
+      repulsion:{{centralGravity:.1,springLength:220,springConstant:.04,
+                  nodeDistance:200,damping:.10}}
+    }},
+    interaction:{{hover:true,tooltipDelay:150,navigationButtons:true,
+                  hideEdgesOnDrag:true,keyboard:true,
+                  multiselect:true}},
+    layout:{{improvedLayout:false}}
+  }}
+);
+
+// Auto-fit after stabilization
+network.once('stabilizationIterationsDone', function(){{
+  network.fit({{animation:{{duration:600,easingFunction:'easeInOutQuad'}}}});
+  document.getElementById('physBtn').textContent='\u23F8 Stop';
+}});
+setTimeout(function(){{if(network)network.fit();}}, 2500);
+
 var physicsOn = true;
-function togglePhysics() {{
-  physicsOn = !physicsOn;
-  network.setOptions({{ physics:{{ enabled: physicsOn }} }});
+function togglePhysics(){{
+  physicsOn=!physicsOn;
+  network.setOptions({{physics:{{enabled:physicsOn}}}});
+  document.getElementById('physBtn').textContent=physicsOn?'\u23F8 Stop':'\u25B6 Start';
 }}
-function showOnlyCommon() {{
-  var commonNodes = nodesData.filter(n => n.group === 'subject' || n.group === 'common').map(n=>n.id);
-  var commonEdges = edgesData.filter(e => commonNodes.includes(e.to)).map(e=>e.id);
-  allNodes.update(nodesData.map(n=>({{ id:n.id, hidden: !commonNodes.includes(n.id) }})));
-  allEdges.update(edgesData.map(e=>({{ id:e.id, hidden: !commonEdges.includes(e.id) }})));
+
+// ── Filter by min connection count ──
+function filterByConnCount(val){{
+  val=parseInt(val);
+  document.getElementById('minConnVal').textContent=val;
+  var updates=[];
+  nodesData.forEach(function(n){{
+    // Always show subject nodes
+    if(n.group==='subject'||n.group==='isolated_subject'){{
+      updates.push({{id:n.id,hidden:false}});return;
+    }}
+    var tot=n._total||0;
+    updates.push({{id:n.id,hidden:(tot<val)}});
+  }});
+  allNodes.update(updates);
+  // Also hide edges to hidden nodes
+  var hiddenNodes=new Set();
+  allNodes.get().forEach(function(n){{if(n.hidden)hiddenNodes.add(n.id);}});
+  var edgeUpdates=[];
+  allEdges.get().forEach(function(e){{
+    edgeUpdates.push({{id:e.id,hidden:(hiddenNodes.has(e.to)||hiddenNodes.has(e.from))}});
+  }});
+  allEdges.update(edgeUpdates);
 }}
-function showAll() {{
-  allNodes.update(nodesData.map(n=>( {{ id:n.id, hidden:false }} )));
-  allEdges.update(edgesData.map(e=>( {{ id:e.id, hidden:false }} )));
+
+// ── Delete selected node/edge ──
+function deleteSelected(){{
+  if(selectedNodeId!==null){{
+    var node=allNodes.get(selectedNodeId);
+    if(!node)return;
+    var connEdges=network.getConnectedEdges(selectedNodeId);
+    var removedEdges=[];
+    connEdges.forEach(function(eid){{
+      var e=allEdges.get(eid);
+      if(e){{removedEdges.push(e);allEdges.remove(eid);}};
+    }});
+    deletedNodes.push({{node:node,edges:removedEdges}});
+    allNodes.remove(selectedNodeId);
+    selectedNodeId=null;
+    closePanel();
+  }} else if(selectedEdgeId!==null){{
+    var edge=allEdges.get(selectedEdgeId);
+    if(edge){{
+      deletedEdges.push(edge);
+      allEdges.remove(selectedEdgeId);
+      selectedEdgeId=null;
+      closePanel();
+    }}
+  }}
 }}
-network.on('click', function(params) {{
-  if (params.nodes.length > 0) {{
-    var nodeId = params.nodes[0];
-    var connected = network.getConnectedNodes(nodeId);
-    connected.push(nodeId);
-    allNodes.update(nodesData.map(n=>( {{ id:n.id, opacity: connected.includes(n.id) ? 1.0 : 0.15 }} )));
-  }} else {{
-    allNodes.update(nodesData.map(n=>( {{ id:n.id, opacity:1.0 }} )));
+
+// ── Undo last delete ──
+function undoDelete(){{
+  if(deletedNodes.length>0){{
+    var last=deletedNodes.pop();
+    allNodes.add(last.node);
+    last.edges.forEach(function(e){{allEdges.add(e);}});
+  }} else if(deletedEdges.length>0){{
+    allEdges.add(deletedEdges.pop());
+  }}
+}}
+
+// ── Keyboard delete ──
+document.addEventListener('keydown',function(e){{
+  if(e.key==='Delete'||e.key==='Backspace'){{
+    if(document.activeElement===document.body||
+       document.activeElement===document.getElementById('network')){{
+      deleteSelected();
+    }}
+  }}
+}});
+
+function showOnlyCommon(){{
+  var keep=nodesData.filter(n=>n.group==='subject'||n.group==='isolated_subject'||n.group==='common').map(n=>n.id);
+  allNodes.update(nodesData.map(n=>({{id:n.id,hidden:!keep.includes(n.id)}})));
+  allEdges.update(edgesData.map(e=>({{id:e.id,hidden:!keep.includes(e.to)}})));
+  network.fit();
+}}
+function showAll(){{
+  allNodes.update(nodesData.map(n=>({{id:n.id,hidden:false}})));
+  allEdges.update(edgesData.map(e=>({{id:e.id,hidden:false}})));
+  network.fit();
+}}
+
+// ── Label / node size sliders ──
+function changeFontSize(val){{
+  val=parseInt(val);
+  document.getElementById('fontVal').textContent=val;
+  allNodes.update(allNodes.get().map(n=>({{id:n.id,
+    font:Object.assign({{}},n.font,{{size:val}})}})));
+}}
+function changeNodeSize(val){{
+  val=parseInt(val);
+  document.getElementById('nodeVal').textContent=val;
+  allNodes.update(allNodes.get().map(n=>{{
+    if(n.group==='subject'||n.group==='isolated_subject')return{{id:n.id}};
+    return{{id:n.id,size:val}};
+  }}));
+}}
+
+// ── Info panel ──
+function closePanel(){{document.getElementById('panel').style.display='none';}}
+function showPanel(tag,html){{
+  document.getElementById('panelTag').textContent=tag;
+  document.getElementById('panelBody').innerHTML=html;
+  document.getElementById('panel').style.display='block';
+}}
+
+// ── Click handler ──
+network.on('click',function(params){{
+  if(params.nodes.length>0){{
+    selectedNodeId=params.nodes[0];
+    selectedEdgeId=null;
+    var nodeObj=allNodes.get(selectedNodeId);
+    var connected=network.getConnectedNodes(selectedNodeId);
+    connected.push(selectedNodeId);
+    allNodes.update(allNodes.get().map(n=>({{id:n.id,
+      opacity:connected.includes(n.id)?1.0:0.12}})));
+    if(nodeObj&&nodeObj.title)showPanel('NODE INFO',nodeObj.title);
+  }} else if(params.edges.length>0){{
+    selectedEdgeId=params.edges[0];
+    selectedNodeId=null;
+    var edgeObj=allEdges.get(selectedEdgeId);
+    if(edgeObj&&edgeObj.title)showPanel('LINK INFO',edgeObj.title);
+  }} else{{
+    selectedNodeId=null; selectedEdgeId=null;
+    allNodes.update(allNodes.get().map(n=>({{id:n.id,opacity:1.0}})));
+    closePanel();
+  }}
+}});
+
+// Right-click = delete
+network.on('oncontext',function(params){{
+  params.event.preventDefault();
+  if(params.nodes.length>0){{
+    selectedNodeId=params.nodes[0];
+    deleteSelected();
+  }} else if(params.edges.length>0){{
+    selectedEdgeId=params.edges[0];
+    deleteSelected();
   }}
 }});
 </script>
@@ -4357,11 +5104,30 @@ def link_analysis_page():
 
     # Settings
     with st.expander("⚙️ Settings", expanded=False):
-        c1, c2 = st.columns(2)
+        c1, c2, c3 = st.columns(3)
         with c1:
             top_n = st.slider("Top N contacts per subject", 5, 50, 20)
         with c2:
             coloc_window = st.slider("Co-location time window (minutes)", 5, 120, 30)
+        with c3:
+            radius_km = st.slider("Co-location radius (km)", 1, 20, 5)
+
+    # ── Subject Name & Photo ──
+    with st.expander("👤 Subject Names & Photos (optional)", expanded=False):
+        st.caption("Enter name and upload photo. Photo will replace the star icon in the network graph.")
+        _subj_meta = {}
+        _meta_cols = st.columns(5)
+        for _si, (_mc, _lbl) in enumerate(zip(_meta_cols, labels)):
+            with _mc:
+                _sname = st.text_input(f"Name", key=f"subj_name_{_si}",
+                                       placeholder=f"e.g. John ({_lbl})")
+                _sphoto = st.file_uploader(f"Photo", type=["jpg","jpeg","png"],
+                                           key=f"subj_photo_{_si}")
+                _photo_b64 = None
+                if _sphoto:
+                    import base64 as _b64
+                    _photo_b64 = "data:" + _sphoto.type + ";base64," + _b64.b64encode(_sphoto.read()).decode()
+                _subj_meta[_lbl] = {"name": _sname.strip(), "photo": _photo_b64}
 
     if st.button("🔗 Run Link Analysis", type="primary", use_container_width=False,
                  key="run_link_analysis"):
@@ -4477,28 +5243,44 @@ def link_analysis_page():
         st.markdown("### 🕸️ Network Graph")
         with st.spinner("Building network graph..."):
             # Use top connections for graph (limit nodes)
-            # top 80 common/shared contacts
+            # ── Graph connections: top 80 shared + top 5 per subject ──
             top_connections = defaultdict(dict)
+
+            # Step 1: Add top 80 shared/common contacts
             for pb, subj_dict in conn_sorted[:80]:
                 top_connections[pb] = subj_dict
 
-            # Each subject: count how many edges they have in top_connections
+            # Step 2: Each subject MUST have at least 5 contacts in graph
+            for df_s in dfs:
+                sub = df_s['_subject'].iloc[0]
+                current_count = sum(1 for sd in top_connections.values() if sub in sd)
+                if current_count < 5:
+                    added = 0
+                    # Get top contacts for this subject by total (call+sms)
+                    sub_contacts = sorted(
+                        [(pb, sd[sub]) for pb, sd in connections.items() if sub in sd],
+                        key=lambda x: x[1]['total'], reverse=True
+                    )
+                    for pb, data in sub_contacts:
+                        if sum(1 for sd in top_connections.values() if sub in sd) >= 5:
+                            break
+                        if pb not in top_connections:
+                            top_connections[pb] = {}
+                        top_connections[pb][sub] = data
+                        added += 1
+
+            # Step 3: edge count per subject
             subj_edge_count = {sub: sum(1 for sd in top_connections.values() if sub in sd)
                                for sub in subjects}
 
-            # Subject with < 5 edges → add their top 5 own contacts (isolated cluster)
-            for df_s in dfs:
-                sub = df_s['_subject'].iloc[0]
-                if subj_edge_count.get(sub, 0) < 5:
-                    added = 0
-                    for pb, subj_dict in conn_sorted:
-                        if sub in subj_dict and pb not in top_connections:
-                            top_connections[pb][sub] = subj_dict[sub]
-                            added += 1
-                            if added >= 5:
-                                break
+            # Build subject meta dict by phone
+            _subj_meta_by_phone = {}
+            for _si, (df_s, _lbl) in enumerate(zip(dfs, [f[1] for f in active_files])):
+                sub = df_s["_subject"].iloc[0]
+                meta = _subj_meta.get(_lbl, {}) if "_subj_meta" in dir() else {}
+                _subj_meta_by_phone[sub] = meta
 
-            graph_html = _build_network_html(dfs, top_connections, subjects, subj_edge_count)
+            graph_html = _build_network_html(dfs, top_connections, subjects, subj_edge_count, _subj_meta_by_phone)
 
         st.components.v1.html(graph_html, height=780, scrolling=False)
 
@@ -4516,22 +5298,1682 @@ def link_analysis_page():
         # ── Co-location Analysis ──
         st.markdown(f"### 📍 Co-location Events (±{coloc_window} min, same tower)")
         with st.spinner("Analyzing co-location..."):
-            coloc_results = _build_colocation(dfs, coloc_window)
+            coloc_results = _build_colocation(dfs, coloc_window, radius_km)
 
         if coloc_results:
-            st.success(f"✅ {len(coloc_results)} co-location event(s) found")
             coloc_df = pd.DataFrame(coloc_results)
+            same_tower_count = (coloc_df['Same Tower'] == '✅ Yes').sum()
+            st.success(f"✅ {len(coloc_results)} co-location event(s) found "
+                       f"({same_tower_count} at exact same tower)")
+
+            # Summary stats
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.metric("Total Events", len(coloc_results))
+            with c2:
+                st.metric("Same Tower", same_tower_count)
+            with c3:
+                avg_dist = coloc_df['Distance (km)'].mean()
+                st.metric("Avg Distance", f"{avg_dist:.2f} km")
+
             st.dataframe(coloc_df, use_container_width=True, height=400)
+            st.caption("⚠️ GPS accuracy ±0.5–2 km. Same Tower = exact LAC+CID match (same operator).")
 
             st.download_button(
-                "⬇️ Download Co-location Data",
+                "⬇️ Download Same Location Data",
                 data=coloc_df.to_csv(index=False).encode('utf-8'),
-                file_name="CDR_Colocation_Events.csv",
+                file_name="CDR_SameLocation_Events.csv",
                 mime="text/csv",
                 key="dl_coloc"
             )
         else:
-            st.info("No co-location events found within the specified time window")
+            st.info("No co-location events found — subjects were not at the same location "
+                    f"(within {coloc_window} min, {radius_km} km radius)")
+
+
+def _parse_profile_docs(doc_files):
+    """
+    NTMC PDF / Image থেকে robust line-based + regex parsing।
+    Source tracking: প্রতিটি value কোন document থেকে এসেছে।
+    """
+    import io as _io, base64 as _b64, re as _re
+
+    FIELDS = ['name','father','mother','spouse','dob','gender',
+               'nid','nid_new','passport','tin','tin_new',
+               'license_no','vehicle_reg','address_present',
+               'address_permanent','profession','mobile',
+               'blood_group','nationality','smart_id',
+               'license_issue','license_expiry','license_type',
+               'vehicle_type','vehicle_color','vehicle_cc',
+               'tax_token_expire','fitness_expire',
+               'prev_passport','passport_issue','passport_expiry',
+               'passport_status','vehicle_reg_date','vehicle_num']
+    # store: {field: [(value, doc_label), ...]}
+    store      = {k: [] for k in FIELDS}
+    photo_b64     = None
+    docs_found    = []
+    _nid_page_img = None
+    _current_doc_label = ['Unknown']  # mutable via list trick
+
+    def _add(field, val, doc_label=None):
+        if not val: return
+        v = str(val).strip().rstrip('.')
+        if v.upper() in ('N/A','NA','NONE','880','','N'): return
+        if len(v) < 2: return
+        # OCR fix for name fields — common tesseract misreads
+        if field in ('name','father','mother','spouse'):
+            _ocr_pairs = [
+                ('Suralya','Suraiya'),('SURALYA','SURAIYA'),
+                ('Suratya','Suraiya'),('SURATYA','SURAIYA'),
+                ('Shabjahan','Shahjahan'),('SHABJAHAN','SHAHJAHAN'),
+            ]
+            for _w, _r in _ocr_pairs:
+                v = v.replace(_w, _r)
+        # Blood group: OCR "At" → "A+"
+        if field == 'blood_group':
+            v = _re.sub(r'^At$', 'A+', v)
+            v = _re.sub(r'^Ot$', 'O+', v)
+            v = _re.sub(r'^Bt$', 'B+', v)
+        lbl = doc_label or _current_doc_label[0]
+        if field in store:
+            # Avoid exact duplicate (same value from same doc)
+            if not any(existing_v == v for existing_v, _ in store[field]):
+                store[field].append((v, lbl))
+
+    def _get_text_and_words(raw_bytes):
+        full_text = ''
+        all_words = []
+        _ext_photo = None
+
+        # ── pdftotext fallback: Bengali font (SolaimanLipi) সঠিকভাবে পড়তে পারে ──
+        _pdftotext_txt = ''
+        try:
+            import subprocess as _sp
+            _res = _sp.run(['pdftotext', '-layout', '-', '-'],
+                           input=raw_bytes, capture_output=True, timeout=15)
+            if _res.returncode == 0:
+                _pdftotext_txt = _res.stdout.decode('utf-8', errors='replace')
+        except Exception:
+            pass
+
+        try:
+            import pdfplumber as _plb
+            with _plb.open(_io.BytesIO(raw_bytes)) as pdf:
+                for _pi, page in enumerate(pdf.pages):
+                    pt = page.extract_text() or ''
+                    # pdftotext দিয়ে better text পাওয়া গেলে সেটা ব্যবহার করো
+                    if _pdftotext_txt.strip():
+                        full_text = _pdftotext_txt
+                    else:
+                        full_text += pt + '\n'
+                    try:
+                        words = page.extract_words(x_tolerance=3, y_tolerance=3,
+                                                   keep_blank_chars=False)
+                        all_words.extend(words)
+                    except Exception:
+                        pass
+                    # Image-based page → OCR fallback
+                    if not pt.strip():
+                        try:
+                            import pytesseract as _tess
+                            _img = page.to_image(resolution=200).original
+                            _ocr = _tess.image_to_string(_img, lang='eng')
+                            full_text += _ocr + '\n'
+                        except Exception:
+                            pass
+                    # Person photo extraction from PDF
+                    # Only consider images that are portrait-oriented (taller than wide)
+                    # and larger than typical logos (> 100px height)
+                    if not _ext_photo:
+                        try:
+                            for _img in (page.images or []):
+                                _iw = float(_img.get('width', 0))
+                                _ih = float(_img.get('height', 0))
+                                # Portrait: height > width, reasonable size
+                                if _ih > _iw * 1.1 and _ih > 100 and _iw > 60:
+                                    _bbox = (max(0,float(_img['x0'])), max(0,float(_img['top'])),
+                                             min(page.width, float(_img['x1'])),
+                                             min(page.height, float(_img['bottom'])))
+                                    _cr = page.within_bbox(_bbox).to_image(resolution=150)
+                                    _pil = _cr.original
+                                    if _pil.mode in ('P','RGBA','LA'):
+                                        _pil = _pil.convert('RGB')
+                                    _buf = _io.BytesIO()
+                                    _pil.save(_buf, format='JPEG', quality=85)
+                                    if len(_buf.getvalue()) > 5000:  # real photo > 5KB
+                                        _ext_photo = ("data:image/jpeg;base64,"
+                                                      + _b64.b64encode(_buf.getvalue()).decode())
+                                        break
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+        return full_text, all_words, _ext_photo
+
+    def _detect_doc_type(tu):
+        # TIN must come BEFORE passport (TIN PDF contains 'PASSPORT NUMBER' as N/A)
+        if 'ASSESSEE NAME' in tu or 'OLD TIN' in tu:
+            return 'tin'
+        if 'OLD NID NUMBER' in tu or 'NEW NID NUMBER' in tu:
+            return 'nid'
+        if 'PASSPORT NUMBER' in tu or ('DATE OF ISSUE' in tu and 'PASSPORT' in tu):
+            return 'passport'
+        if 'VEHICLE REGISTRATION NUMBER' in tu:
+            return 'vehicle'
+        if ('LICENSE NO' in tu or 'LICENCE NO' in tu or
+                'VEHICLE CLASSES' in tu or
+                ('ISSUING AUTHORITY' in tu and 'BRTA' in tu)):
+            return 'driving_license'
+        return 'unknown'
+
+    def _store_has(field):
+        """Return True if store has any value for field."""
+        return bool(store.get(field))
+
+    def _store_vals(field):
+        """Return list of values (without labels) for field."""
+        return [v for v, _ in store.get(field, [])]
+
+    # ── PARSER: NID ──────────────────────────────────────────────────────
+    def _parse_nid(txt, lines):
+        # NID numbers
+        for l in lines:
+            ls = l.strip()
+            m = _re.match(r'^(19\d{15})\s+(\d{7,12})\s*$', ls)
+            if m: _add('nid', m.group(1)); _add('nid_new', m.group(2)); break
+        if not _store_has('nid'):
+            m = _re.search(r'\b(19\d{15})\b', txt)
+            if m: _add('nid', m.group(1))
+        if not _store_has('nid_new'):
+            m = _re.search(r'\b(19\d{15})\b\s+\b(\d{7,12})\b', txt)
+            if m: _add('nid_new', m.group(2))
+        # Blood Group
+        for i, l in enumerate(lines):
+            if 'Blood Group' in l:
+                # Next line: may be "B+  19702693622299897  7764810946" (multi-column)
+                for j in range(i+1, min(i+10, len(lines))):
+                    bg_line = lines[j].strip()
+                    if not bg_line: continue
+                    # Extract first token — should be blood group
+                    first_tok = bg_line.split()[0] if bg_line.split() else ''
+                    if _re.match(r'^[ABO]{1,3}[+-]$', first_tok):
+                        _add('blood_group', first_tok); break
+                    if _re.match(r'^[ABO]{1,3}[+-]$', bg_line):
+                        _add('blood_group', bg_line); break
+                    # Stop if hit another section
+                    if _re.match(r'^(Date of Birth|Gender|Occupation|Spouse)', bg_line):
+                        break
+                break
+        # Fallback: search B+/A+/O+ etc in full text
+        if not _store_has('blood_group'):
+            for l in lines:
+                m = _re.match(r'^([ABO]{1,3}[+-])', l.strip())
+                if m: _add('blood_group', m.group(1)); break
+        # Blood group regex fallback
+        if not _store_has('blood_group'):
+            m = _re.search(r'([ABO]{1,2}[+-])', txt)
+            if m: _add('blood_group', m.group(1))
+        # DOB
+        for l in lines:
+            m = _re.search(r'(\d{4}-\d{2}-\d{2})', l)
+            if m: _add('dob', m.group(1)); break
+        # Gender
+        for l in lines:
+            if l.strip().lower() in ('male','female'):
+                _add('gender', l.strip().upper()); break
+        # Name — NID-এ "Present Address" label-এর পরের line-এ
+        # Format: "Md. Jahirul Islam   Bengali_address..."
+        # English prefix নেওয়া হয়, Bengali অংশ বাদ
+        if not _store_has('name'):
+            for i, l in enumerate(lines):
+                if l.strip() == 'Present Address' and i+1 < len(lines):
+                    nxt = lines[i+1]
+                    # Extract English prefix before Bengali starts
+                    _bn_match = _re.search(r'[\u0980-\u09FF]', nxt)
+                    if _bn_match:
+                        eng_part = nxt[:_bn_match.start()].strip()
+                    else:
+                        eng_part = nxt.strip()
+                    # Validate: must look like a person name
+                    if (eng_part and
+                            _re.match(r'^(Md\.?|Mr\.?|Mrs\.?|[A-Z][a-z]+)\s+', eng_part) and
+                            2 <= len(eng_part.split()) <= 5 and
+                            len(eng_part) < 50):
+                        _add('name', eng_part.upper(), 'NID')
+                    break
+        # Fallback: scan lines for English name pattern
+        if not _store_has('name'):
+            _SKIP_KW = ('Address','Division','District','Postal','Village',
+                        'Region','N/A','Number','Blood','Gender','Birth',
+                        'Occupation','Spouse','Father','Mother','Old NID',
+                        'New NID','Date of','Permanent','Present',
+                        'National','Telecommunication','Monitoring','Centre',
+                        'Bir Uttam','Tejgaon','Dhaka-','Bangladesh',
+                        'Road,','Major General','Vehicle','Registration',
+                        'License','Fitness','Permit','Token','Series')
+            for l in lines:
+                ls = l.strip()
+                if not ls or len(ls) < 3: continue
+                if _re.search(r'[\u0980-\u09FF]', ls): continue
+                if any(kw in ls for kw in _SKIP_KW): continue
+                if sum(1 for c in ls if c.isdigit()) > len(ls) * 0.3: continue
+                words = ls.split()
+                if len(words) < 2 or len(words) > 5: continue
+                if _re.match(r'^(Md\.?|Mr\.?|Mrs\.?)', ls):
+                    if len(ls) < 50:
+                        _add('name', ls.upper(), 'NID'); break
+                if _re.match(r'^[A-Z][a-z]+(?:\s+[A-Za-z.]+){1,3}$', ls):
+                    if len(ls) < 40 and all(len(w) >= 2 for w in words):
+                        _add('name', ls.upper(), 'NID'); break
+
+        # ── Address parsing (pdftotext output থেকে) ──────────────────────
+        # pdftotext দিয়ে NID PDF-এ Bengali address সঠিকভাবে আসে
+        def _clean_addr(s):
+            """trailing comma, extra spaces clean করো"""
+            return _re.sub(r'[,\s]+$', '', s.strip())
+
+        # Permanent Address — "Permanent Address" header-এর পরের line
+        for i, l in enumerate(lines):
+            ls = l.strip()
+            if ls == 'Permanent Address' and i+1 < len(lines):
+                addr = _clean_addr(lines[i+1].strip())
+                # Valid address: Bengali or contains comma
+                if addr and len(addr) > 5 and ',' in addr:
+                    _add('address_permanent', addr)
+                break
+
+        # পড়া না গেলে structured fields থেকে তৈরি করো
+        if not _store_has('address_permanent'):
+            _perm_parts = []
+            for i, l in enumerate(lines):
+                # Division line (after "Division Post Office RMO")
+                if 'Division' in l and 'Post Office' in l and 'RMO' in l:
+                    if i+1 < len(lines):
+                        parts = lines[i+1].split()
+                        if parts: _perm_parts.extend(parts[:1])  # division
+                # District line
+                if 'District' in l and 'Postal Code' in l and i+1 < len(lines):
+                    if 'Present' not in ''.join(lines[max(0,i-3):i]):
+                        parts = lines[i+1].split()
+                        if parts: _perm_parts.extend(parts[:1])  # district
+                    break
+            if _perm_parts:
+                _add('address_permanent', ', '.join(_perm_parts))
+
+        # Present Address — "Present Address" header-এর পরে Bengali line
+        for i, l in enumerate(lines):
+            ls = l.strip()
+            if 'Present Address' in ls:
+                # pdftotext format-এ name আর address একই line-এ থাকে
+                # "Md. Jahirul Islam   ৩০, বনশ্রী, ..."
+                rest = _re.sub(r'^.*?Present Address\s*', '', ls).strip()
+                if rest and len(rest) > 5:
+                    # Same line-এ address আছে
+                    _add('address_present', _clean_addr(rest))
+                elif i+1 < len(lines):
+                    # পরের line থেকে address নাও
+                    # Skip lines that look like person names (Md. Jahirul Islam)
+                    for _j in range(i+1, min(i+4, len(lines))):
+                        nxt = lines[_j].strip()
+                        # Skip if it's a person name (contains Bengali OR title-case name without comma)
+                        _is_name = (_re.match(r'^(Md\.?|Mr\.?|Mrs\.?)\s+[A-Z]', nxt) and ',' not in nxt)
+                        _has_bengali = bool(_re.search(r'[\u0980-\u09FF]', nxt))
+                        if _is_name: continue
+                        # Take first line that has Bengali text with commas (address)
+                        if _has_bengali and ',' in nxt and len(nxt) > 5:
+                            _add('address_present', _clean_addr(nxt)); break
+                        # Or English address with commas
+                        if ',' in nxt and len(nxt) > 8 and not _is_name:
+                            _add('address_present', _clean_addr(nxt)); break
+                break
+
+        # Occupation/Profession — only English values
+        for i, l in enumerate(lines):
+            if 'Occupation' in l and i+1 < len(lines):
+                occ = lines[i+1].strip()
+                # Skip Bengali text (সরকারী চাকরী etc)
+                if (occ and len(occ) > 1 and occ.upper() not in ('N/A','NA') and
+                        not _re.search(r'[\u0980-\u09FF]', occ)):
+                    _add('profession', occ); break
+
+    # ── PARSER: Driving License ─────────────────────────────────────────
+    def _parse_driving_license(txt, lines):
+        """
+        두 가지 format 지원:
+        1. NTMC multi-column: "Father Name  Expiry Date\nMD ABUL KALAM  14/02/2031"
+        2. Scanned OCR: "Father Name\nMD ABUL KALAM"
+        """
+        # Detect format: NTMC has "Personal Info License Detail" header
+        _is_ntmc = 'Personal Info' in txt and 'License Detail' in txt
+
+        if _is_ntmc:
+            # ── NTMC format: use exact line patterns ──────────────────────
+            # Name: standalone CAPS line
+            for l in lines:
+                l = l.strip()
+                if (_re.match(r'^MD\.?\s+[A-Z]+\s+[A-Z]+$', l) and
+                        'CENTRE' not in l and 'METRO' not in l and 'BRTA' not in l):
+                    _add('name', l); break
+
+            # Line: "22/06/1970 15/02/2021" → DOB + Issue
+            for l in lines:
+                m = _re.match(r'^(\d{2}/\d{2}/\d{4})\s+(\d{2}/\d{2}/\d{4})$', l.strip())
+                if m: _add('dob', m.group(1)); _add('license_issue', m.group(2)); break
+
+            # Line: "MD ABUL KALAM 14/02/2031" → father + expiry
+            for l in lines:
+                m = _re.match(r'^([A-Z][A-Z ]+?)\s+(\d{2}/\d{2}/\d{4})$', l.strip())
+                if m: _add('father', m.group(1).strip()); _add('license_expiry', m.group(2)); break
+
+            # License No: "N/A DK1182865L00001"
+            for l in lines:
+                m = _re.search(r'N/A\s+([A-Z]{2}\d{7}[A-Z]\d{5})', l)
+                if m: _add('license_no', m.group(1)); break
+
+            # License Type: "N/A NON-PROFESSIONAL"
+            for l in lines:
+                m = _re.search(r'N/A\s+(NON-PROFESSIONAL|PROFESSIONAL|MEDIUM|LIGHT)', l, _re.I)
+                if m: _add('license_type', m.group(1)); break
+
+            # Gender: "MALE DHAKA METRO..."
+            for l in lines:
+                m = _re.match(r'^(MALE|FEMALE)\s+DHAKA', l, _re.I)
+                if m: _add('gender', m.group(1).upper()); break
+
+            # Spouse + address: "H-30,...RAMPURA, FARZANA SHAHID 02/06/1999"
+            for l in lines:
+                m = _re.search(r'(FARZANA\s+SHAHID)', l, _re.I)
+                if m:
+                    _add('spouse', 'FARZANA SHAHID')
+                    addr = l[:m.start()].strip().rstrip(',').strip()
+                    if addr and len(addr) > 5: _add('address_permanent', addr)
+                    break
+
+            # Present address — flexible matching
+            for i, l in enumerate(lines):
+                if 'Present Address' in l:
+                    for j in range(i+1, min(i+5, len(lines))):
+                        a = lines[j].strip()
+                        # Accept any address-like line (has comma or road/block/house)
+                        if (a and len(a) > 8 and
+                                not a.upper().startswith('PERMANENT') and
+                                not a.upper().startswith('THANA')):
+                            addr = _re.sub(r'\s+Emergency.*$', '', a, flags=_re.I).strip()
+                            addr = _re.sub(r',?\s*Khilgaon.*$', '', addr).strip()
+                            if len(addr) > 5:
+                                _add('address_present', addr); break
+                    break
+
+        else:
+            # ── Scanned OCR format: label on one line, value on next ──────
+            def _next_val(label):
+                for i, l in enumerate(lines):
+                    if label.lower() in l.lower():
+                        for j in range(i+1, min(i+3, len(lines))):
+                            v = lines[j].strip()
+                            if v and v.upper() not in ('N/A','NA',''):
+                                return v
+                return ''
+
+            # Name: caps line near top
+            for l in lines[:10]:
+                if _re.match(r'^MD\.?\s+[A-Z]+\s+[A-Z]+$', l.strip()):
+                    _add('name', l.strip()); break
+
+            for label, field in [
+                ('Gender','gender'), ('Father Name','father'),
+                ('Mother Name','mother'), ('Nationality','nationality'),
+                ('Occupation','profession'), ('Spouse Name','spouse'),
+                ('License Type','license_type'), ('Vehicle Classes','vehicle_type'),
+            ]:
+                v = _next_val(label)
+                if v: _add(field, v.strip())
+
+            # Mobile
+            v = _next_val('Mobile Number')
+            if v:
+                m = _re.search(r'(0?1[3-9]\d{8}|880\d{10})', v)
+                if m:
+                    mob = m.group(1)
+                    if mob.startswith('880'): mob = '0' + mob[3:]
+                    _add('mobile', mob)
+
+            # NID — only if actual NID present (not N/A)
+            v = _next_val('NID Number')
+            if v and v.upper() not in ('N/A','NA',''):
+                # Only accept full 17-digit NID starting with 19
+                m = _re.search(r'\b(19\d{15})\b', v)
+                if m: _add('nid', m.group(1))
+
+            # DOB
+            v = _next_val('Date of Birth')
+            if v:
+                m = _re.search(r'(\d{2}[/-]\d{2}[/-]\d{4}|\d{4}-\d{2}-\d{2})', v)
+                if m: _add('dob', m.group(1))
+
+            # License No (whole text regex)
+            m = _re.search(r'\b([A-Z]{2}\d{7}[A-Z]\d{5})\b', txt)
+            if m: _add('license_no', m.group(1))
+
+            # Issue/Expiry dates
+            for label, field in [('Issue Date','license_issue'), ('Expiry Date','license_expiry')]:
+                v = _next_val(label)
+                if v:
+                    m = _re.search(r'(\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{4})', v)
+                    if m: _add(field, m.group(1))
+
+            # Addresses
+            for label, field in [('Permanent Address','address_permanent'),
+                                   ('Present Address','address_present')]:
+                for i, l in enumerate(lines):
+                    if label in l:
+                        for j in range(i+1, min(i+5, len(lines))):
+                            a = lines[j].strip()
+                            if a and ('H-' in a or 'BLOCK' in a or 'BANASREE' in a or
+                                      _re.search(r'\d{4}', a)):
+                                _add(field, a); break
+                        break
+
+        # Common: any format
+        if not _store_has('license_no'):
+            m = _re.search(r'\b([A-Z]{2}\d{7}[A-Z]\d{5})\b', txt)
+            if m: _add('license_no', m.group(1))
+
+
+    # ── PARSER: Vehicle Registration ─────────────────────────────────────
+    def _parse_vehicle(txt, lines):
+        # ── Owner's Name (Image 5 format: label + next line) ─────────────
+        for i, l in enumerate(lines):
+            if "Owner's Name" in l or "OWNER'S NAME" in l.upper():
+                rest = _re.split(r"Owner'?s? Name", l, flags=_re.I)[-1].strip()
+                if rest and len(rest) > 3 and _re.search(r'[A-Z]{2,}', rest.upper()):
+                    _add('name', rest.strip()); break
+                if i+1 < len(lines):
+                    v = lines[i+1].strip()
+                    if v and _re.search(r'[A-Z]{2,}', v.upper()):
+                        _add('name', v); break
+        # Fallback: "MD. JAHIRUL ISLAM 34-5505"
+        if not _store_has('name'):
+            for l in lines:
+                m = _re.match(r'^(MD\.?\s+[A-Z]+\s+[A-Z]+)\s+\d+', l)
+                if m: _add('name', m.group(1)); break
+        # line 11: "MD. ABUL KALAM CAR (SALOON)"
+        for l in lines:
+            m = _re.match(r'^(MD\.?\s+[A-Z ]+?)\s{2,}(CAR|TRUCK|BUS|JEEP|HARD JEEP|VAN|MICROBUS)', l, _re.I)
+            if m:
+                _add('father', m.group(1).strip())
+                _add('vehicle_type', m.group(2).strip()); break
+        if not _store_has('father'):
+            # Fallback: "Father's Name" label
+            for i, l in enumerate(lines):
+                if "Father's Name" in l or "Father Name" in l:
+                    # Value on same line after label
+                    rest = _re.split(r"Father'?s? Name", l)[-1].strip()
+                    name_m = _re.match(r'([A-Z][A-Z .]+?)(?:\s{2,}|$)', rest)
+                    if name_m and len(name_m.group(1).strip()) > 4:
+                        _add('father', name_m.group(1).strip()); break
+        # Mobile: line 19 "8801711385207 1500"
+        for l in lines:
+            # Mobile can appear anywhere in multi-column line
+            m = _re.search(r'\b(8801\d{9})\b.*?(\d{3,4})\s*$', l)
+            if not m: m = _re.search(r'\b(8801\d{9})\s+(\d+)', l)
+            if m:
+                _add('mobile', '0' + m.group(1)[3:])
+                _add('vehicle_cc', m.group(2))
+                break
+        # Vehicle reg: DHAKA METRO anywhere in line (multi-column layout)
+        for l in lines:
+            m = _re.search(r'(DHAKA[ -]METRO-[A-Z]+-\d+-\d+)', l, _re.I)
+            if m: _add('vehicle_reg', m.group(1).upper()); break
+        # Fallback: "Vehicle Registration Number" label → next value token
+        if not _store_has('vehicle_reg'):
+            for i, l in enumerate(lines):
+                if 'Vehicle Registration Number' in l:
+                    # Check same line after label
+                    rest = l.split('Vehicle Registration Number')[-1].strip()
+                    m = _re.search(r'(DHAKA[ -]METRO-[A-Z]+-\d+-\d+)', rest, _re.I)
+                    if m:
+                        _add('vehicle_reg', m.group(1).upper()); break
+                    # Or next line
+                    if i+1 < len(lines):
+                        m = _re.search(r'(DHAKA[ -]METRO-[A-Z]+-\d+-\d+)', lines[i+1], _re.I)
+                        if m: _add('vehicle_reg', m.group(1).upper()); break
+        # Color: "NO BLACK" → BLACK OR label-based "Vehicle Color\nPEARL"
+        if not _store_has('vehicle_color'):
+            _VC_COLORS = {'BLACK','WHITE','SILVER','RED','BLUE','GREEN','GREY','GRAY',
+                          'PEARL','GOLDEN','YELLOW','ORANGE','MAROON','BROWN','BEIGE',
+                          'PURPLE','PINK','INDIGO','CREAM','WINE'}
+            for i, l in enumerate(lines):
+                if 'Vehicle Color' in l:
+                    # In multi-column: take value between "Vehicle Color" and next column
+                    # split by 2+ spaces to get columns, find the "Vehicle Color" column value
+                    cols = _re.split(r'\s{2,}', l)
+                    for ci, col in enumerate(cols):
+                        if 'Vehicle Color' in col:
+                            # Next column may be on same line or next line
+                            if ci+1 < len(cols):
+                                cval = cols[ci+1].strip()
+                                if cval and cval.upper() not in ('N/A','NA','') and cval.upper() in _VC_COLORS:
+                                    _add('vehicle_color', cval.split()[0]); break
+                    if _store_has('vehicle_color'): break
+                    # Next line — same column position
+                    if i+1 < len(lines):
+                        cols2 = _re.split(r'\s{2,}', lines[i+1])
+                        for ci, col in enumerate(cols):
+                            if 'Vehicle Color' in col and ci < len(cols2):
+                                cval = cols2[ci].strip()
+                                if cval and cval.upper() in _VC_COLORS:
+                                    _add('vehicle_color', cval); break
+                    if _store_has('vehicle_color'): break
+        if not _store_has('vehicle_color'):
+            _COLORS = {'BLACK','WHITE','SILVER','RED','BLUE','GREEN','GREY','GRAY',
+                       'PEARL','GOLDEN','YELLOW','ORANGE','MAROON','BROWN','BEIGE',
+                       'PURPLE','PINK','INDIGO','CREAM','WINE'}
+            for l in lines:
+                # "NO BLACK N/A" or "NO  BLACK"
+                m = _re.search(r'\bNO\s+([A-Z]+)\b', l)
+                if m and m.group(1) in _COLORS:
+                    _add('vehicle_color', m.group(1)); break
+
+        # Vehicle CC: "Vehicle CC\n1797" label-based
+        if not _store_has('vehicle_cc'):
+            for i, l in enumerate(lines):
+                if 'VEHICLE CC' in l.upper() or 'Vehicle CC' in l:
+                    rest = _re.split(r'Vehicle CC', l, flags=_re.I)[-1].strip()
+                    if rest and _re.match(r'^\d+', rest):
+                        _add('vehicle_cc', rest.split()[0]); break
+                    if i+1 < len(lines):
+                        v = lines[i+1].strip()
+                        if v and _re.match(r'^\d+$', v):
+                            _add('vehicle_cc', v); break
+
+        # Tax Token / Fitness: "2026-09-22" date format after label
+        for i, l in enumerate(lines):
+            if 'Tax Token Expire' in l:
+                for j in range(i, min(i+3, len(lines))):
+                    m2 = _re.search(r'(\d{4}-\d{2}-\d{2})', lines[j])
+                    if m2: _add('tax_token_expire', m2.group(1)); break
+                break
+        for i, l in enumerate(lines):
+            if 'Fitness Expire' in l:
+                for j in range(i, min(i+3, len(lines))):
+                    m2 = _re.search(r'(\d{4}-\d{2}-\d{2})', lines[j])
+                    if m2: _add('fitness_expire', m2.group(1)); break
+                break
+        # Address: Owner's Address label-based
+        for i, l in enumerate(lines):
+            if "Owner's Address" in l:
+                # Address may be on same line or next line
+                rest = l.split("Owner's Address")[-1].strip()
+                if rest and len(rest) > 5 and not rest[0].isdigit():
+                    # strip trailing series number
+                    addr = _re.sub(r'\s+\d+\s*$','',rest).strip()
+                    if addr: _add('address_present', addr); break
+                elif i+1 < len(lines):
+                    addr_line = lines[i+1].strip()
+                    addr = _re.sub(r'\s+\d+\s*$', '', addr_line).strip()
+                    # Only take the address part (before trailing multi-column data)
+                    addr = _re.split(r'\s{3,}', addr)[0].strip()
+                    if addr and len(addr) > 5: _add('address_present', addr)
+                break
+        _add('nationality', 'BANGLADESHI')
+        # NID / Smart ID: "Nid Number\n3282849656" label-based
+        for i, l in enumerate(lines):
+            if 'NID NUMBER' in l.upper() or 'NID Number' in l:
+                for j in range(i+1, min(i+4, len(lines))):
+                    v = lines[j].strip()
+                    if v and _re.match(r'^\d{7,17}$', v):
+                        if len(v) >= 13:
+                            _add('nid', v)
+                        else:
+                            _add('smart_id', v)
+                            _add('nid_new', v)
+                        break
+                break
+        # Mobile: "8801711982571" on same line or label-based
+        if not _store_has('mobile'):
+            for i, l in enumerate(lines):
+                if 'MOBILE' in l.upper():
+                    for j in range(i+1, min(i+4, len(lines))):
+                        v = lines[j].strip()
+                        m = _re.search(r'\b(8801[3-9]\d{8}|01[3-9]\d{8})\b', v)
+                        if m:
+                            mob = m.group(1)
+                            if mob.startswith('880'): mob = '0' + mob[3:]
+                            _add('mobile', mob); break
+                    break
+    def _parse_passport(txt, lines):
+        # NID: dedicated label or 17-digit number
+        for i, l in enumerate(lines):
+            if l.strip() == 'NID' and i+1 < len(lines):
+                _add('nid', lines[i+1].strip()); break
+        if not _store_has('nid'):
+            m = _re.search(r'\b(19\d{15})\b', txt)
+            if m: _add('nid', m.group(1))
+
+        # Passport number: OA8012490 format, or after "N/A"
+        for l in lines:
+            m = _re.search(r'\b([A-Z]{1,2}\d{6,8})\b', l)
+            if m and len(m.group(1)) >= 7: _add('passport', m.group(1)); break
+        if not _store_has('passport'):
+            for l in lines:
+                m = _re.search(r'N/A\s+([A-Z]{1,2}\d{6,8})', l)
+                if m: _add('passport', m.group(1)); break
+
+        # Full name: First Name + Last Name combine
+        # Case 1: standalone CAPS line "MOHAMMAD AMINUL ISLAM KHAN"
+        for l in lines:
+            ls = l.strip()
+            if (_re.match(r'^[A-Z][A-Z ]{4,}$', ls) and
+                    2 <= len(ls.split()) <= 6 and
+                    not any(kw in ls for kw in ('OFFICIAL','ACTIVE','REVOKED',
+                        'GOVERNMENT','SERVICE','BANGLADESH','ADDRESS',
+                        'PASSPORT','PRESENT','PERMANENT','PROFESSION'))):
+                _add('name', ls, 'Passport'); break
+        # Case 2: First Name + Last Name separate fields
+        if not _store_has('name'):
+            fn = ln = ''
+            for i, l in enumerate(lines):
+                if 'First Name' in l and i+1 < len(lines):
+                    fn = lines[i+1].strip()
+                if 'Last Name' in l and i+1 < len(lines):
+                    ln = lines[i+1].strip()
+            if fn and ln:
+                _add('name', (fn + ' ' + ln).upper(), 'Passport')
+            elif fn:
+                _add('name', fn.upper(), 'Passport')
+
+        # Gender: "M OFFICIAL" or label-based
+        for l in lines:
+            m = _re.match(r'^(M|F)\s+OFFICIAL', l.strip())
+            if m: _add('gender', 'MALE' if m.group(1)=='M' else 'FEMALE'); break
+        if not _store_has('gender'):
+            for i, l in enumerate(lines):
+                if 'Gender' in l and i+1 < len(lines):
+                    v = lines[i+1].strip().upper()
+                    if v in ('M','MALE'): _add('gender', 'MALE'); break
+                    if v in ('F','FEMALE'): _add('gender', 'FEMALE'); break
+
+        # DOB
+        for i, l in enumerate(lines):
+            if 'Date of Birth' in l and 'Previous' not in l and i+1 < len(lines):
+                nxt = lines[i+1].strip()
+                m = _re.match(r'^(\d{2}/\d{2}/\d{4})', nxt)
+                if m: _add('dob', m.group(1)); break
+
+        # Spouse
+        for i, l in enumerate(lines):
+            if 'Spouse Name' in l and i+1 < len(lines):
+                sp = lines[i+1].strip()
+                if sp and 'Address' not in sp and len(sp) > 3:
+                    _add('spouse', sp)
+                break
+
+        # Father - generic label
+        for i, l in enumerate(lines):
+            if "Father" in l and "Name" in l and i+1 < len(lines):
+                v = lines[i+1].strip()
+                if v and v.upper() not in ('N/A','NA','') and _re.search(r'[A-Z]{2,}', v):
+                    _add('father', v); break
+        if not _store_has('father'):
+            m = _re.search(r"Father'?s? Name\s*\n\s*(.+?)(?:\n|$)", txt, _re.I)
+            if m: _add('father', m.group(1).strip())
+
+        # Mother - generic label
+        for i, l in enumerate(lines):
+            if "Mother" in l and "Name" in l and i+1 < len(lines):
+                v = lines[i+1].strip()
+                # Strip trailing dates: "Khodeza Begum 01/01/1970 03/24/2014"
+                v = _re.sub(r'\s+\d{1,2}/\d{1,2}/\d{4}.*$', '', v).strip()
+                v = _re.sub(r'\s+\d{4}-\d{2}-\d{2}.*$', '', v).strip()
+                if v and v.upper() not in ('N/A','NA','') and _re.search(r'[A-Za-z]{2,}', v):
+                    _add('mother', v); break
+        if not _store_has('mother'):
+            m = _re.search(r"Mother'?s? Name\s*\n\s*(.+?)(?:\n|$)", txt, _re.I)
+            if m:
+                mv = _re.sub(r'\s+\d{1,2}/\d{1,2}/\d{4}.*$', '', m.group(1)).strip()
+                _add('mother', mv)
+
+        # Permanent / Present address
+        for label, field in [('Permanent Address','address_permanent'),
+                               ('Present Address','address_present')]:
+            for i, l in enumerate(lines):
+                if label in l and i+1 < len(lines):
+                    nxt = lines[i+1].strip()
+                    # strip trailing name "MD GOLZAR..." or similar
+                    nxt = _re.sub(r'\s+[A-Z]{2,}\s+[A-Z]{2,}.*$', '', nxt).strip()
+                    if nxt and len(nxt) > 5: _add(field, nxt)
+                    break
+
+        # Profession
+        for i, l in enumerate(lines):
+            if 'Profession' in l and i+1 < len(lines):
+                p = lines[i+1].strip()
+                if p and 'N/A' not in p.upper(): _add('profession', p)
+                break
+        _add('nationality', 'BANGLADESHI')
+
+        # Passport number from dedicated "Passport Number" label
+        if not _store_has('passport'):
+            for i, l in enumerate(lines):
+                if 'Passport Number' in l:
+                    rest = l.split('Passport Number')[-1].strip()
+                    if not rest or rest.upper() in ('N/A','NA'):
+                        if i+1 < len(lines): rest = lines[i+1].strip()
+                    m = _re.search(r'([A-Z]{1,2}\d{6,8})', rest or '')
+                    if m: _add('passport', m.group(1)); break
+
+        # Issue Date
+        for i, l in enumerate(lines):
+            if 'Date of Issue' in l:
+                m = _re.search(r'(\d{1,2}/\d{2}/\d{4}|\d{2}/\d{2}/\d{4})', l)
+                if not m and i+1 < len(lines):
+                    m = _re.search(r'(\d{1,2}/\d{2}/\d{4})', lines[i+1])
+                if m: _add('passport_issue', m.group(1)); break
+
+        # Expiry Date
+        for i, l in enumerate(lines):
+            if 'Date of Expiry' in l:
+                m = _re.search(r'(\d{1,2}/\d{2}/\d{4}|\d{2}/\d{2}/\d{4})', l)
+                if not m and i+1 < len(lines):
+                    m = _re.search(r'(\d{1,2}/\d{2}/\d{4})', lines[i+1])
+                if m: _add('passport_expiry', m.group(1)); break
+
+        # Previous Passport
+        for l in lines:
+            if 'Previous Passport' in l or 'Prev' in l and 'Passport' in l:
+                m = _re.search(r'([A-Z]{1,2}\d{6,8})', l)
+                if m and m.group(1) != profile.get('passport',''):
+                    _add('prev_passport', m.group(1)); break
+
+        # Passport Status
+        for l in lines:
+            if 'Passport Status' in l:
+                rest = l.split('Passport Status')[-1].strip()
+                if rest and rest.upper() not in ('N/A','NA',''):
+                    _add('passport_status', rest); break
+        if not _store_has('passport_status'):
+            # ACTIVE / REVOKED standalone line
+            for l in lines:
+                ls = l.strip()
+                if ls in ('ACTIVE', 'REVOKED') or 'REVOKED DUE' in ls:
+                    _add('passport_status', ls); break
+            # Also check for "Document revoked due to Reissue"
+            for l in lines:
+                if 'revoked' in l.lower() or 'reissue' in l.lower():
+                    _add('passport_status', l.strip()); break
+
+    # ── PARSER: TIN ──────────────────────────────────────────────────────
+    # ── PARSER: TIN ──────────────────────────────────────────────────────
+    def _parse_tin(txt, lines):
+        """
+        TIN PDF: label → next-line OR same-line value parse.
+        Handles both old Jahirul Islam format and new Suraiya Jahan format.
+        """
+        def _nv(label, start=0):
+            """label-এর পরের non-empty, non-N/A line বা same-line value"""
+            for i, l in enumerate(lines[start:], start):
+                if label.upper() in l.upper():
+                    # same line-এ value থাকলে নাও
+                    rest = _re.split(label, l, flags=_re.I)[-1].strip()
+                    if rest and rest.upper() not in ('N/A','NA',''):
+                        return rest.split()[0] if len(rest.split()) == 1 else rest
+                    # পরের line
+                    for j in range(i+1, min(i+4, len(lines))):
+                        v = lines[j].strip()
+                        if v and v.upper() not in ('N/A','NA',''):
+                            return v
+            return ''
+
+        # ── Old TIN / New TIN / NID ────────────────────────────────────
+        for l in lines:
+            # Pattern: "<old_tin> <17digit_nid> N/A" on same line
+            m = _re.match(r'^(\d{7,12})\s+(\d{13,17})\s+N/A', l.strip())
+            if m: _add('tin', m.group(1)); _add('nid', m.group(2)); break
+        # New TIN: 12-digit number somewhere
+        if not _store_has('tin'):
+            v = _nv('Old TIN')
+            if v and _re.match(r'^\d{7,12}$', v.strip()): _add('tin', v.strip())
+        for l in lines:
+            m = _re.search(r'\b(\d{12})\b', l)
+            if m: _add('tin_new', m.group(1)); break
+        # NID from dedicated field
+        if not _store_has('nid'):
+            for l in lines:
+                m = _re.search(r'\b(19\d{15})\b', l)
+                if m: _add('nid', m.group(1)); break
+        # Smart ID
+        for l in lines:
+            m = _re.search(r'\b(\d{10})\b', l)
+            if m: _add('smart_id', m.group(1)); break
+
+        # ── Assessee Name (প্রধান নাম) ─────────────────────────────────
+        # Label: "Assessee Name" পরের line-এ নাম আছে
+        for i, l in enumerate(lines):
+            if 'ASSESSEE NAME' in l.upper() or 'Assessee Name' in l:
+                for j in range(i+1, min(i+4, len(lines))):
+                    v = lines[j].strip()
+                    if (v and v.upper() not in ('N/A','NA','')
+                            and not _re.match(r'^\d', v)
+                            and _re.search(r'[A-Za-z]{2,}', v)):
+                        _add('name', v.upper(), 'TIN'); break
+                break
+        # Fallback: "Suraiya Jahan 880 ..." or "Md. Jahirul Islam 880 ..."
+        if not _store_has('name'):
+            for l in lines:
+                m = _re.match(r'^([A-Za-z][A-Za-z. ]+?)\s+880', l)
+                if m:
+                    nm = m.group(1).strip()
+                    if 2 <= len(nm.split()) <= 5: _add('name', nm.upper(), 'TIN'); break
+
+        # ── Father Name ────────────────────────────────────────────────
+        for i, l in enumerate(lines):
+            if 'FATHER NAME' in l.upper() or 'Father Name' in l:
+                for j in range(i+1, min(i+4, len(lines))):
+                    v = lines[j].strip()
+                    if (v and v.upper() not in ('N/A','NA','')
+                            and _re.search(r'[A-Za-z]{2,}', v)):
+                        _add('father', v.strip()); break
+                break
+        if not _store_has('father'):
+            # Fallback pattern: "A K M Shahjahan <date>" or "Md. Abul kalam N/A ..."
+            for l in lines:
+                m = _re.match(r'^([A-Za-z][A-Za-z .]+?)\s+(?:N/A|\d{2}/\d{2}/\d{4})', l)
+                if m:
+                    nm = m.group(1).strip()
+                    name_vals = [v for v,_ in _store_has('name') and [] or []]
+                    cur_name = _store_has('name') and _store_vals('name') or []
+                    if nm and nm.upper() not in cur_name and len(nm.split()) >= 2:
+                        _add('father', nm); break
+
+        # ── Mother Name ────────────────────────────────────────────────
+        for i, l in enumerate(lines):
+            if 'MOTHERS NAME' in l.upper() or "Mother" in l:
+                for j in range(i+1, min(i+4, len(lines))):
+                    v = lines[j].strip()
+                    if (v and v.upper() not in ('N/A','NA','')
+                            and _re.search(r'[A-Za-z]{2,}', v)):
+                        _add('mother', v.strip()); break
+                break
+        if not _store_has('mother'):
+            for l in lines:
+                m = _re.match(r'^([A-Za-z][A-Za-z. ]+?)\s+\d{2}/\d{2}/\d{4}', l)
+                if m:
+                    nm = m.group(1).strip()
+                    cur_name = _store_vals('name')
+                    cur_father = _store_vals('father')
+                    if (nm and len(nm.split()) >= 2
+                            and nm.upper() not in [x.upper() for x in cur_name+cur_father]):
+                        _add('mother', nm); break
+
+        # ── Spouse Name ────────────────────────────────────────────────
+        for i, l in enumerate(lines):
+            if 'SPOUSE NAME' in l.upper() or 'Spouse Name' in l:
+                for j in range(i+1, min(i+4, len(lines))):
+                    v = lines[j].strip()
+                    if v and v.upper() not in ('N/A','NA',''):
+                        _add('spouse', v.strip()); break
+                break
+
+        # ── Date of Birth ──────────────────────────────────────────────
+        for i, l in enumerate(lines):
+            if 'DATE OF BIRTH' in l.upper() or 'Date of Birth' in l:
+                for j in range(i+1, min(i+4, len(lines))):
+                    v = lines[j].strip()
+                    m = _re.search(r'(\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})', v)
+                    if m: _add('dob', m.group(1)); break
+                break
+        if not _store_has('dob'):
+            for l in lines:
+                m = _re.match(r'^(\d{2}/\d{2}/\d{4})\s+N/A', l)
+                if m: _add('dob', m.group(1)); break
+
+        # ── Gender ─────────────────────────────────────────────────────
+        for i, l in enumerate(lines):
+            if 'GENDER' in l.upper():
+                for j in range(i+1, min(i+4, len(lines))):
+                    v = lines[j].strip().upper()
+                    if v in ('MALE','FEMALE','M','F'):
+                        _add('gender', 'MALE' if v in ('M','MALE') else 'FEMALE'); break
+                break
+        if not _store_has('gender'):
+            for l in lines:
+                m = _re.match(r'^(Male|Female|MALE|FEMALE|FeMale)\s+N/A', l)
+                if m: _add('gender', m.group(1).upper()); break
+
+        # ── Mobile ─────────────────────────────────────────────────────
+        for l in lines:
+            m = _re.search(r'\b(8801[3-9]\d{8}|01[3-9]\d{8})\b', l)
+            if m:
+                mob = m.group(1)
+                if mob.startswith('880'): mob = '0' + mob[3:]
+                _add('mobile', mob); break
+
+    # ── NID Address Image Crop ──────────────────────────────────────────────
+    # ── NID Address Image Crop ──────────────────────────────────────────────
+    def _crop_nid_address_images(raw_bytes, is_pdf=True):
+        """
+        NID PDF/Image থেকে Permanent ও Present Address section crop করো।
+        Coordinate-based: word positions দিয়ে সঠিক boundary বের করো।
+        Returns: (perm_b64, pres_b64)
+        """
+        try:
+            from PIL import Image as _PIL
+            import io as _io2
+
+            # ── Get page image ──
+            if is_pdf:
+                try:
+                    import pdfplumber as _plb
+                    with _plb.open(_io.BytesIO(raw_bytes)) as _pdf:
+                        pg = _pdf.pages[0]
+                        img = pg.to_image(resolution=180).original
+                        page_width  = pg.width
+                        page_height = pg.height
+                        scale = img.size[0] / page_width  # pixel per PDF unit
+                        words = pg.extract_words(x_tolerance=3, y_tolerance=3)
+                except Exception:
+                    return None, None
+            else:
+                img = _PIL.open(_io.BytesIO(raw_bytes)).convert('RGB')
+                # For image, use pytesseract to find positions
+                try:
+                    import pytesseract as _tess
+                    data = _tess.image_to_data(img, lang='eng',
+                                               output_type=_tess.Output.DICT)
+                    scale = 1.0
+                    words = [{'text': data['text'][i],
+                               'top':  data['top'][i],
+                               'x0':   data['left'][i]}
+                             for i in range(len(data['text']))
+                             if (data['text'][i] or '').strip()]
+                    page_height = img.size[1]
+                    page_width  = img.size[0]
+                except Exception:
+                    return None, None
+
+            W, H = img.size
+
+            # ── Find key y-positions from words ──
+            perm_y = pres_y = old_nid_y = None
+            # NID PDF: right column (x > page_width * 0.25) has address sections
+            # Left column (x < page_width * 0.25) has personal info
+
+            for w in words:
+                txt = (w.get('text') or '').strip()
+                top = w.get('top', 0)
+                x0  = w.get('x0', 0)
+
+                # "Permanent" heading — must be in address column (right side)
+                if txt == 'Permanent' and x0 > page_width * 0.2 and perm_y is None:
+                    perm_y = top
+
+                # "Present" heading — must be in address column
+                elif txt == 'Present' and x0 > page_width * 0.2 and pres_y is None:
+                    pres_y = top
+
+                # "Old" NID label — marks end of present address section
+                elif txt == 'Old' and top > (pres_y or 250) + 30 and old_nid_y is None:
+                    old_nid_y = top
+
+            if perm_y is None and pres_y is None:
+                return None, None
+
+            def _crop_to_b64(y0_pdf, y1_pdf):
+                """Crop image using PDF coordinates, convert to b64."""
+                y0_px = max(0, int(y0_pdf * scale) - 2)
+                y1_px = min(H, int(y1_pdf * scale) + 4)
+                if y1_px <= y0_px + 10:
+                    return None
+                # Only right column: x from ~25% width to edge
+                # to avoid left-column personal info bleeding in
+                x0_px = int(page_width * 0.22 * scale)
+                cropped = img.crop((x0_px, y0_px, W, y1_px))
+                buf = _io2.BytesIO()
+                cropped.save(buf, format='PNG', optimize=True)
+                buf.seek(0)
+                return "data:image/png;base64," + _b64.b64encode(buf.read()).decode()
+
+            perm_b64 = None
+            pres_b64 = None
+
+            # ── Permanent Address ──
+            if perm_y is not None:
+                y0 = perm_y - 2
+                # End just before Present Address
+                y1 = (pres_y - 4) if pres_y else (perm_y + 140)
+                perm_b64 = _crop_to_b64(y0, y1)
+
+            # ── Present Address ──
+            if pres_y is not None:
+                y0 = pres_y - 2
+                # Find NID card thumbnails — they appear BEFORE Old NID label
+                # Look for image-like gaps: search for last word in address section
+                # NID thumbnails start around old_nid_y - 65 (empirically)
+                if old_nid_y is not None:
+                    # Find last word in right column before thumbnails
+                    _last_addr_y = pres_y
+                    for _w2 in words:
+                        _wy = _w2.get('top', 0)
+                        _wx = _w2.get('x0', 0)
+                        # Right column word, after pres_y, before old_nid_y
+                        if (_wx > page_width * 0.2 and
+                                _wy > pres_y + 5 and
+                                _wy < old_nid_y - 30):
+                            if _wy > _last_addr_y:
+                                _last_addr_y = _wy
+                    # Add small padding below last word
+                    y1 = _last_addr_y + 18
+                else:
+                    y1 = pres_y + 120
+                pres_b64 = _crop_to_b64(y0, y1)
+
+            return perm_b64, pres_b64
+
+        except Exception:
+            return None, None
+
+
+    # ── Image OCR parser (for BRTA DL / Passport / NID images) ──────────────
+    def _parse_image_ocr(raw_bytes, fname):
+        """OCR করে image থেকে text বের করে parse করো।"""
+        _ocr_txt = ''
+        try:
+            from PIL import Image as _PIL_Image
+            import pytesseract as _tess
+            _img = _PIL_Image.open(_io.BytesIO(raw_bytes))
+            if _img.mode in ('P', 'RGBA', 'LA'):
+                _img = _img.convert('RGB')
+            _ocr_txt = _tess.image_to_string(_img, lang='eng')
+        except Exception:
+            pass
+        return _ocr_txt
+
+    # ── Process each file ─────────────────────────────────────────────────
+    _nid_addr_imgs = {}  # NID address crop images (built before result dict)
+    for f in (doc_files or []):
+        fname = f.name.lower()
+        raw   = f.read(); f.seek(0)
+
+        # ── Image files — OCR করে parse করো ──
+        if any(fname.endswith(x) for x in ['.jpg','.jpeg','.png']):
+
+            # OCR করে document type detect করো (photo assign-এর আগে)
+            _ocr_txt = _parse_image_ocr(raw, fname)
+            _is_doc_img = False
+
+            if _ocr_txt.strip() and len(_ocr_txt.strip()) > 30:
+                _tu = _ocr_txt.upper()
+                _doc_type_img = _detect_doc_type(_tu)
+                _lines_img = _ocr_txt.split('\n')
+
+                if _doc_type_img == 'driving_license' or ('LICENSE' in _tu and 'BRTA' in _tu):
+                    _is_doc_img = True
+                    _current_doc_label[0] = 'Driving License'
+                    _parse_driving_license(_ocr_txt, _lines_img)
+                    if 'Driving License' not in docs_found:
+                        docs_found.append('Driving License')
+                    # DL image থেকে photo crop (left ~28%)
+                    if not photo_b64:
+                        try:
+                            from PIL import Image as _PILI
+                            _pi = _PILI.open(_io.BytesIO(raw))
+                            _pw, _ph2 = _pi.size
+                            _pc = _pi.crop((0, 0, int(_pw*0.28), int(_ph2*0.65)))
+                            _pb = _io.BytesIO(); _pc.save(_pb, format='JPEG', quality=88)
+                            photo_b64 = "data:image/jpeg;base64," + _b64.b64encode(_pb.getvalue()).decode()
+                        except Exception: pass
+
+                elif _doc_type_img == 'vehicle':
+                    _is_doc_img = True
+                    _current_doc_label[0] = 'Vehicle Reg'
+                    _parse_vehicle(_ocr_txt, _lines_img)
+                    if 'Vehicle Registration' not in docs_found:
+                        docs_found.append('Vehicle Registration')
+
+                elif _doc_type_img == 'passport':
+                    _is_doc_img = True
+                    _current_doc_label[0] = 'Passport'
+                    _parse_passport(_ocr_txt, _lines_img)
+                    if 'Passport' not in docs_found:
+                        docs_found.append('Passport')
+                    # Passport image থেকে photo crop (left panel ~30%)
+                    if not photo_b64:
+                        try:
+                            from PIL import Image as _PILI
+                            _pi = _PILI.open(_io.BytesIO(raw))
+                            _pw, _ph2 = _pi.size
+                            # Passport photo is top-left
+                            _pc = _pi.crop((0, 0, int(_pw*0.30), int(_ph2*0.55)))
+                            _pb = _io.BytesIO(); _pc.save(_pb, format='JPEG', quality=88)
+                            photo_b64 = "data:image/jpeg;base64," + _b64.b64encode(_pb.getvalue()).decode()
+                        except Exception: pass
+
+                elif _doc_type_img == 'nid':
+                    _is_doc_img = True
+                    _current_doc_label[0] = 'NID'
+                    _parse_nid(_ocr_txt, _lines_img)
+                    if 'NID' not in docs_found:
+                        docs_found.append('NID')
+                    # NID Image থেকে address section crop করো
+                    _perm_img, _pres_img = _crop_nid_address_images(raw, is_pdf=False)
+                    if _perm_img: _nid_addr_imgs['address_permanent_img'] = _perm_img
+                    if _pres_img: _nid_addr_imgs['address_present_img']   = _pres_img
+                    # NID photo: left panel
+                    if not photo_b64:
+                        try:
+                            from PIL import Image as _PILI
+                            _pi = _PILI.open(_io.BytesIO(raw))
+                            _pw, _ph2 = _pi.size
+                            _lx2 = int(_pw * 0.235)
+                            _pc = _pi.crop((0, int(_ph2*0.02), _lx2, int(_ph2*0.70)))
+                            _pb = _io.BytesIO(); _pc.save(_pb, format='JPEG', quality=88)
+                            photo_b64 = "data:image/jpeg;base64," + _b64.b64encode(_pb.getvalue()).decode()
+                        except Exception: pass
+
+                elif _doc_type_img == 'tin':
+                    _is_doc_img = True
+                    _current_doc_label[0] = 'TIN'
+                    _parse_tin(_ocr_txt, _lines_img)
+                    if 'TIN' not in docs_found:
+                        docs_found.append('TIN')
+
+            # Document image নয় → subject photo হিসেবে রাখো
+            if not _is_doc_img and not photo_b64:
+                mime = 'image/jpeg' if fname.endswith(('.jpg','.jpeg')) else 'image/png'
+                photo_b64 = "data:" + mime + ";base64," + _b64.b64encode(raw).decode()
+            continue
+
+        if not fname.endswith('.pdf'):
+            continue
+
+        txt, words, _ext_photo = _get_text_and_words(raw)
+        if not photo_b64 and _ext_photo:
+            photo_b64 = _ext_photo
+        lines = [l for l in txt.split('\n')]
+        tu = txt.upper()
+
+        doc_type = _detect_doc_type(tu)
+
+        if not txt.strip() or len(txt.strip()) < 30:
+            # Image-based PDF → try OCR via pdfplumber page render
+            _ocr_txt = ''
+            try:
+                import pdfplumber as _plb2, pytesseract as _tess
+                with _plb2.open(_io.BytesIO(raw)) as _pdf2:
+                    for _pg in _pdf2.pages:
+                        _img = _pg.to_image(resolution=200).original
+                        _ocr_txt += _tess.image_to_string(_img, lang='eng') + '\n'
+            except Exception:
+                pass
+            if _ocr_txt.strip():
+                txt   = _ocr_txt
+                lines = txt.split('\n')
+                doc_type = _detect_doc_type(txt.upper())
+                if doc_type == 'driving_license' or 'LICENSE' in txt.upper():
+                    _current_doc_label[0] = 'Driving License'
+                    _parse_driving_license(txt, lines)
+                    if 'Driving License' not in docs_found:
+                        docs_found.append('Driving License')
+                elif doc_type == 'unknown':
+                    _current_doc_label[0] = 'Document'
+                    for _fn in [_parse_driving_license, _parse_nid,
+                                 _parse_vehicle, _parse_passport, _parse_tin]:
+                        _fn(txt, lines)
+                    docs_found.append('Document (Scanned)')
+            else:
+                docs_found.append('Driving License (Scanned — OCR failed)')
+            continue
+
+        if doc_type == 'nid':
+            _current_doc_label[0] = 'NID'
+            _parse_nid(txt, lines)
+            if 'NID' not in docs_found: docs_found.append('NID')
+            # NID PDF থেকে address section crop করো
+            # Capture full NID page as image
+            try:
+                import pdfplumber as _plb2, io as _io2, base64 as _b642
+                with _plb2.open(_io2.BytesIO(raw)) as _pdf2:
+                    _nid_pg = _pdf2.pages[0]
+                    _nid_pil = _nid_pg.to_image(resolution=150).original
+                    _nid_buf = _io2.BytesIO()
+                    _nid_pil.save(_nid_buf, format='JPEG', quality=80)
+                    _nid_page_img = ("data:image/jpeg;base64,"
+                                    + _b642.b64encode(_nid_buf.getvalue()).decode())
+            except Exception:
+                pass
+            _perm_img, _pres_img = _crop_nid_address_images(raw, is_pdf=True)
+            if _perm_img: _nid_addr_imgs['address_permanent_img'] = _perm_img
+            if _pres_img: _nid_addr_imgs['address_present_img']   = _pres_img
+        elif doc_type == 'driving_license':
+            _current_doc_label[0] = 'Driving License'
+            _parse_driving_license(txt, lines)
+            if 'Driving License' not in docs_found: docs_found.append('Driving License')
+        elif doc_type == 'vehicle':
+            _current_doc_label[0] = 'Vehicle Reg'
+            _parse_vehicle(txt, lines)
+            if 'Vehicle Registration' not in docs_found: docs_found.append('Vehicle Registration')
+        elif doc_type == 'passport':
+            _current_doc_label[0] = 'Passport'
+            _parse_passport(txt, lines)
+            if 'Passport' not in docs_found: docs_found.append('Passport')
+        elif doc_type == 'tin':
+            _current_doc_label[0] = 'TIN'
+            _parse_tin(txt, lines)
+            if 'TIN' not in docs_found: docs_found.append('TIN')
+        else:
+            # Unknown: try all
+            _current_doc_label[0] = 'Document'
+            for fn in [_parse_nid, _parse_driving_license, _parse_vehicle,
+                       _parse_passport, _parse_tin]:
+                fn(txt, lines)
+
+    # ── Build result ──────────────────────────────────────────────────────
+    # store = {field: [(val, doc_label), ...]}
+    # Normalize DOB
+    if _store_has('dob'):
+        def _nd(v, lbl):
+            import datetime as _dt
+            for _fmt in ('%d/%m/%Y','%m/%d/%Y','%Y-%m-%d'):
+                try: return (_dt.datetime.strptime(v.strip(), _fmt).strftime('%Y-%m-%d'), lbl)
+                except: pass
+            return (v, lbl)
+        store['dob'] = list(dict.fromkeys(_nd(v, lbl) for v, lbl in store['dob'] if v))
+    # Normalize name
+    if _store_has('name'):
+        store['name'] = [(
+            _re.sub(r'^MD\.?\s+', 'MD. ', v.strip()), lbl
+        ) for v, lbl in store['name'] if v]
+    # Normalize mother
+    if _store_has('mother'):
+        store['mother'] = [(
+            _re.sub(r'(?i)^(?:Profession|Mrs\.?)\s+', '', v).strip(), lbl
+        ) for v, lbl in store['mother'] if v]
+
+    # result: primary value (first found) for each field
+    result = {k: (store[k][0][0] if store[k] else '') for k in FIELDS}
+    # Also store with source for table display: {field}_src = [(val, label), ...]
+    for _k in FIELDS:
+        result[f'{_k}_src'] = store.get(_k, [])
+    # Legacy _all compatibility
+    for _k in FIELDS:
+        result[f'{_k}_all'] = [v for v, _ in store.get(_k, [])]
+
+    # ── NID name priority: NID থেকে আসা name-কে সর্বোচ্চ priority দাও ──
+    # NID-এর photo-র নিচের English name সবচেয়ে নির্ভরযোগ্য
+    _nid_name_candidates = [(v, lbl) for v, lbl in store.get('name', []) if lbl == 'NID']
+    if _nid_name_candidates:
+        result['name'] = _nid_name_candidates[0][0]
+        # NID name-কে list-এর শুরুতে রাখো (source badge সঠিক দেখাবে)
+        _other = [(v, lbl) for v, lbl in store.get('name', []) if lbl != 'NID']
+        store['name'] = _nid_name_candidates + _other
+        result['name_src'] = store['name']
+
+    if not result['tin']     and result.get('tin_new'):   result['tin']  = result['tin_new']
+    if not result['nid']     and result.get('nid_new'):   result['nid']  = result['nid_new']
+    # Smart ID fallback
+    if not result['nid_new'] and result.get('smart_id'):  result['nid_new'] = result['smart_id']
+    # Address fallback — if NID didn't give address, use from other docs
+    if not result.get('address_permanent') or len(result.get('address_permanent','')) < 8:
+        for _v, _lbl in store.get('address_permanent', []):
+            if _v and len(_v) > 8 and 'N/A' not in _v.upper():
+                result['address_permanent'] = _v; break
+    if not result.get('address_present') or len(result.get('address_present','')) < 8:
+        for _v, _lbl in store.get('address_present', []):
+            if _v and len(_v) > 8 and 'N/A' not in _v.upper():
+                result['address_present'] = _v; break
+    result['photo_b64']    = photo_b64
+    result['nid_page_img'] = _nid_page_img
+    result['address_permanent_img'] = _nid_addr_imgs.get('address_permanent_img')
+    result['address_present_img']   = _nid_addr_imgs.get('address_present_img')
+    _df_clean = []
+    _seen_dl = False
+    for _d in docs_found:
+        if 'Driving License' in _d:
+            if not _seen_dl:
+                _df_clean.append('Driving License')
+                _seen_dl = True
+        else:
+            _df_clean.append(_d)
+    result['docs_found'] = list(dict.fromkeys(_df_clean))
+
+    # ── Mismatch detection — source-aware ──────────────────────────────────
+    mismatches = []
+
+    CHECK_FIELDS = [
+        ('nid',      'NID Number'),
+        ('nid_new',  'New NID Number'),
+        ('name',     'Name'),
+        ('father',   "Father's Name"),
+        ('mother',   "Mother's Name"),
+        ('dob',      'Date of Birth'),
+        ('profession','Profession'),
+        ('address_permanent', 'Permanent Address'),
+    ]
+
+    def _norm_val(field, v):
+        v = str(v).strip().upper()
+        if not v or v in ('N/A','NA','NONE',''): return ''
+        if field == 'dob':
+            import datetime as _dtt
+            for _fmt in ('%d/%m/%Y','%m/%d/%Y','%Y-%m-%d','%d-%m-%Y'):
+                try: return _dtt.datetime.strptime(v, _fmt).strftime('%Y-%m-%d')
+                except: pass
+        if field in ('name','father','mother'):
+            # Strip trailing dates: "Khodeza Begum 01/01/1970" → "Khodeza Begum"
+            v = _re.sub(r'\s+\d{1,2}/\d{1,2}/\d{4}.*$', '', v).strip()
+            v = _re.sub(r'\s+\d{4}-\d{2}-\d{2}.*$', '', v).strip()
+            v = _re.sub(r'^MD\.?\s+', 'MD. ', v)
+            v = _re.sub(r'\s+', ' ', v).strip()
+            _NAME_REJECT = {'PASSPORT STATUS','REVOKED','ACTIVE','OFFICIAL',
+                            'GOVERNMENT SERVICE','PVT SERVICE','BANGLADESH',
+                            'N/A','NA','NONE','GOVERNMENT','SERVICE'}
+            if v.upper() in _NAME_REJECT or len(v) < 4: return ''
+            if _re.search(r'[\u0980-\u09FF]', v): return ''  # reject Bengali
+            if len(v) > 60: return ''
+            # Reject if contains digits or N/A tokens (garbage from multi-column)
+            if _re.search(r'\b(N/A|NA|880|\d{4,})\b', v): return ''
+            # Reject if looks like a label/keyword combination (VEHICLE NUMBER REGISTRATION)
+            _LABEL_WORDS = {'VEHICLE','NUMBER','REGISTRATION','PERMIT','ROUTE','FITNESS',
+                            'OFFICE','EXPIRE','ISSUE','TOKEN','TAX','JOINT','OWNER',
+                            'LADEN','UNLADEN','WEIGHT','AXLE','SERIES','CAPACITY',
+                            'TYPE','CLASS','COLOR','CC','CONTACT','TELEPHONE','BOI',
+                            'VISA','INCORPORATION','RESPONSE','SMART','GENDER','BLOOD'}
+            _vwords = set(v.upper().split())
+            if len(_vwords) >= 2 and _vwords.issubset(_LABEL_WORDS | {'OF','THE','AND','IN'}):
+                return ''
+            if not _re.search(r'[A-Z]{2,}', v): return ''
+            # Reject if contains Bengali characters (OCR garbage)
+            if _re.search(r'[ঀ-৿]', v): return ''
+            # Reject if looks like address (contains comma+digits or road keywords)
+            if _re.search(r'[ঀ-৿]|ROAD-\d|BLOCK-\w|WARD|KHILGAON|RAMPURA', v): return ''
+            # Max reasonable name length
+            if len(v) > 60: return ''
+        if 'nid' in field:
+            v = _re.sub(r'[^0-9]', '', v)
+            if len(v) < 10: return ''
+        if 'address' in field:
+            if len(v) < 10: return ''
+            if _re.search(r'[ঀ-৿]', v): return ''
+            # Reject passport status, revocation notices etc
+            _BAD_ADDR = ('DOCUMENT REVOKED','REISSUE','PASSPORT STATUS',
+                         'REVOKED DUE','CANCELLED','ACTIVE','OFFICIAL',
+                         'GOVERNMENT','MONITORING CENTRE')
+            if any(b in v for b in _BAD_ADDR): return ''
+            tokens = v.split()
+            na_count = sum(1 for t in tokens if t in ('N/A','NA','N'))
+            if na_count > len(tokens) * 0.3: return ''
+            digit_count = sum(1 for c in v if c.isdigit())
+            if digit_count > len(v) * 0.5: return ''
+        return v
+
+    # Mismatch: different normalized values from different sources
+    for field, label in CHECK_FIELDS:
+        src_list = store.get(field, [])  # [(val, doc_label), ...]
+        if not src_list: continue
+        # Normalize each value, keep source
+        norm_with_src = []
+        for v, lbl in src_list:
+            nv = _norm_val(field, v)
+            if nv:
+                norm_with_src.append((nv, lbl))
+        # Group by normalized value → {norm_val: first_source}
+        seen = {}
+        for nv, lbl in norm_with_src:
+            if nv not in seen:
+                seen[nv] = lbl
+        if len(seen) > 1:
+            # NID value first as primary reference
+            parts = []
+            for val, lbl in seen.items():
+                if lbl == 'NID':
+                    parts.insert(0, f"NID: {val}")
+                else:
+                    parts.append(f"{lbl}: {val}")
+            mismatches.append(f"{label} — " + " | ".join(parts))
+
+    result['mismatches'] = mismatches
+    result['mismatches_detail'] = mismatches
+    return result
+def _profile_html_section(profile):
+    """
+    Profile Analysis section — 3-column table design per specification.
+    NID: only English data (name, old NID, new NID).
+    Address: NID excluded; other sources only.
+    Mismatch: highlighted at bottom.
+    """
+    if not profile:
+        return ''
+    has_data = any(profile.get(k) for k in [
+        'name','nid','passport','license_no','vehicle_reg',
+        'tin','dob','father','photo_b64','docs_found'
+    ])
+    if not has_data:
+        return ''
+
+    import re as _re_ph
+
+    # ── Helpers ──────────────────────────────────────────────────────────
+    def _src_badge(lbl):
+        colors = {
+            'NID':          ('#dbeafe','#1e40af'),
+            'Passport':     ('#fce7f3','#9d174d'),
+            'TIN':          ('#fef9c3','#854d0e'),
+            'Driving License': ('#dcfce7','#166534'),
+            'Vehicle Reg':  ('#ede9fe','#5b21b6'),
+            'Vehicle Registration': ('#ede9fe','#5b21b6'),
+        }
+        bg, fg = colors.get(lbl, ('#f1f5f9','#475569'))
+        return (f"<span style='background:{bg};color:{fg};padding:1px 7px;"
+                f"border-radius:10px;font-size:10px;font-weight:700;"
+                f"margin-left:5px;white-space:nowrap'>{lbl}</span>")
+
+    def _multi(field_key, formatter=None):
+        """All values for a field across sources — comma-separated or a/b list."""
+        src_list = profile.get(f'{field_key}_src', [])
+        if not src_list:
+            v = profile.get(field_key, '')
+            if not v or str(v).upper() in ('N/A','NA',''): return ''
+            return str(v)
+        seen = {}
+        for val, lbl in src_list:
+            v = (val or '').strip()
+            if not v or v.upper() in ('N/A','NA',''): continue
+            if _re_ph.search(r'[\u0980-\u09FF]', v): continue  # skip Bengali
+            if v not in seen:
+                seen[v] = lbl
+        if not seen: return ''
+        items = list(seen.items())
+        if len(items) == 1:
+            v, lbl = items[0]
+            return f"{formatter(v) if formatter else v}{_src_badge(lbl)}"
+        # Multiple values → a) b) c) list
+        parts = []
+        for i, (v, lbl) in enumerate(items):
+            letter = chr(ord('a') + i)
+            parts.append(
+                f"<div style='margin:2px 0'><strong>{letter})</strong> "
+                f"{formatter(v) if formatter else v}{_src_badge(lbl)}</div>")
+        return ''.join(parts)
+
+    def _single(field_key, formatter=None):
+        """Best single value — NID preferred."""
+        src_list = profile.get(f'{field_key}_src', [])
+        # NID first
+        for val, lbl in src_list:
+            if lbl == 'NID' and val and val.upper() not in ('N/A','NA',''):
+                if not _re_ph.search(r'[\u0980-\u09FF]', val):
+                    return formatter(val) if formatter else val
+        # Then any
+        for val, lbl in src_list:
+            if val and val.upper() not in ('N/A','NA',''):
+                if not _re_ph.search(r'[\u0980-\u09FF]', val):
+                    return formatter(val) if formatter else val
+        v = profile.get(field_key, '')
+        if v and str(v).upper() not in ('N/A','NA',''):
+            return formatter(v) if formatter else v
+        return ''
+
+    def _fmt_mobile(v):
+        """Format mobile: 880XXXXXXXXXX → +880-XX-XXXX-XXXX / 01XXXXXXXXX → 0XXX-XXXXXX"""
+        v = _re_ph.sub(r'[^0-9]', '', str(v))
+        if v.startswith('880') and len(v) == 13:
+            return f"+{v[:3]}-{v[3:5]}-{v[5:9]}-{v[9:]}"
+        if v.startswith('0') and len(v) == 11:
+            return f"{v[:4]}-{v[4:7]}-{v[7:]}"
+        return v
+
+    def _eng_addr_multi(field_key):
+        """Address from non-NID sources only, with a/b if different."""
+        src_list = profile.get(f'{field_key}_src', [])
+        seen = {}
+        for val, lbl in src_list:
+            if lbl == 'NID': continue  # NID address excluded
+            v = (val or '').strip()
+            if not v or v.upper() in ('N/A','NA',''): continue
+            if _re_ph.search(r'[\u0980-\u09FF]', v): continue
+            # Reject garbage
+            if _re_ph.search(r'\b(Route|Permit|Fitness|Series|Token|NIA|N/A N/A)\b', v): continue
+            if len(v) < 8: continue
+            if v not in seen: seen[v] = lbl
+        if not seen: return ''
+        items = list(seen.items())
+        if len(items) == 1:
+            return f"{items[0][0]}{_src_badge(items[0][1])}"
+        parts = []
+        for i, (v, lbl) in enumerate(items):
+            letter = chr(ord('a') + i)
+            parts.append(f"<div style='margin:2px 0'><strong>{letter})</strong> {v}{_src_badge(lbl)}</div>")
+        return ''.join(parts)
+
+    # ── NID image (full page) ──────────────────────────────────────────
+    nid_img_html = ''
+    if profile.get('nid_page_img'):
+        nid_img_html = (f"<img src='{profile['nid_page_img']}' "
+                        f"style='max-width:100%;height:auto;border-radius:6px;"
+                        f"border:1px solid #e2e8f0'/>")
+
+    # ── Photo ──────────────────────────────────────────────────────────
+    photo_html = ''
+    if profile.get('photo_b64'):
+        photo_html = (f"<div style='text-align:center;margin-bottom:8px'>"
+                      f"<img src='{profile['photo_b64']}' "
+                      f"style='width:120px;height:150px;object-fit:cover;"
+                      f"border-radius:8px;border:3px solid #e2e8f0'/>"
+                      f"<div style='margin-top:6px;font-size:14px;font-weight:700;"
+                      f"color:#0f172a'>{profile.get('name','')}</div>"
+                      f"</div>")
+
+    # ── Docs badges ──────────────────────────────────────────────────
+    docs_badges = ''.join(_src_badge(d) for d in (profile.get('docs_found') or []))
+
+    # ── TIN combined ──────────────────────────────────────────────────
+    tin_parts = []
+    if profile.get('tin'):     tin_parts.append(f"<div>Old TIN: <strong>{profile['tin']}</strong></div>")
+    if profile.get('tin_new'): tin_parts.append(f"<div>New TIN: <strong>{profile['tin_new']}</strong></div>")
+    tin_str = ''.join(tin_parts)
+
+    # ── Passport details ──────────────────────────────────────────────
+    passport_status = ''
+    for val, lbl in profile.get('passport_status_src', []):
+        if val and val.upper() not in ('N/A','NA',''):
+            passport_status = val; break
+    if not passport_status: passport_status = profile.get('passport_status','')
+
+    # ── Table rows ─────────────────────────────────────────────────────
+    def tr(serial, field, detail):
+        if not detail: return ''
+        return (f"<tr>"
+                f"<td style='padding:6px 8px;text-align:center;color:#94a3b8;"
+                f"font-size:11px;border:1px solid #e2e8f0;width:36px'>{serial}</td>"
+                f"<td style='padding:6px 10px;font-weight:600;font-size:12px;"
+                f"color:#374151;border:1px solid #e2e8f0;white-space:nowrap;"
+                f"background:#f8fafc;min-width:160px'>{field}</td>"
+                f"<td style='padding:6px 10px;font-size:12px;color:#0f172a;"
+                f"border:1px solid #e2e8f0;line-height:1.7'>{detail}</td>"
+                f"</tr>")
+
+    rows = [
+        tr(1,  'NID Info', nid_img_html or ''),
+        tr(2,  'Date of Birth', _single('dob')),
+        tr(3,  "Father's Name", _multi('father')),
+        tr(4,  "Mother's Name", _multi('mother')),
+        tr(5,  'Spouse Name', _multi('spouse')),
+        tr(6,  'Gender', _single('gender')),
+        tr(7,  'Blood Group', _single('blood_group')),
+        tr(8,  'Occupation / Profession', _multi('profession')),
+        tr(9,  'Mobile Number', _multi('mobile', _fmt_mobile)),
+        tr(10, 'Nationality', _single('nationality')),
+        tr(11, 'Old NID Number', _single('nid')),
+        tr(12, 'New NID / Smart ID', _single('nid_new')),
+        tr(13, 'TIN Number', tin_str),
+        tr(14, 'Passport Number', _single('passport')),
+        tr(15, 'Old / Previous Passport No', _single('prev_passport')),
+        tr(16, 'Passport Issue Date', _single('passport_issue')),
+        tr(17, 'Passport Expiry Date', _single('passport_expiry')),
+        tr(18, 'Passport Status', passport_status),
+        tr(19, 'Permanent Address', _eng_addr_multi('address_permanent')),
+        tr(20, 'Present Address', _eng_addr_multi('address_present')),
+        tr(21, 'Driving License Number', _single('license_no')),
+        tr(22, 'DL Issue Date', _single('license_issue')),
+        tr(23, 'DL Expiry Date', _single('license_expiry')),
+        tr(24, 'Vehicle Number', _single('vehicle_reg')),
+        tr(25, 'Vehicle Type', _single('vehicle_type')),
+        tr(26, 'Vehicle Registration Date', _single('vehicle_reg_date')),
+        tr(27, 'Tax Token Expiry Date', _single('tax_token_expire')),
+        tr(28, 'Fitness Expiry Date', _single('fitness_expire')),
+    ]
+    table_html = '<table style="border-collapse:collapse;width:100%">' + ''.join(rows) + '</table>'
+
+    # ── Mismatch section ──────────────────────────────────────────────
+    mismatch_html = ''
+    mm_list = profile.get('mismatches', [])
+    if mm_list:
+        mm_items = []
+        for mm in mm_list:
+            if ' — ' in mm:
+                fld, rest = mm.split(' — ', 1)
+                parts = rest.split(' | ')
+                parts_html = ''.join(
+                    f"<div style='margin:3px 0 3px 16px;color:#374151'>"
+                    f"<span style='color:#6b7280;font-size:11px'>{p.split(':')[0].strip()} →</span> "
+                    f"<strong>{p.split(':',1)[1].strip() if ':' in p else p}</strong></div>"
+                    for p in parts
+                )
+                mm_items.append(
+                    f"<div style='margin-bottom:10px'>"
+                    f"<div style='font-weight:700;color:#dc2626;font-size:12px'>"
+                    f"⚠ {fld}</div>{parts_html}</div>"
+                )
+        if mm_items:
+            mismatch_html = (
+                f"<div style='background:#fef2f2;border:1px solid #fecaca;"
+                f"border-radius:8px;padding:14px 16px;margin-top:14px'>"
+                f"<div style='font-weight:700;color:#dc2626;font-size:13px;"
+                f"margin-bottom:10px;border-bottom:1px solid #fecaca;padding-bottom:6px'>"
+                f"⚠️ Mismatch / Inconsistencies Found</div>"
+                + ''.join(mm_items)
+                + "</div>"
+            )
+
+    # ── Layout ────────────────────────────────────────────────────────
+    return f"""
+<div style="background:white;border-radius:12px;border:2px solid #2563eb;
+            padding:20px 24px;margin-bottom:24px;
+            box-shadow:0 4px 16px rgba(37,99,235,0.10)">
+  <div style="font-size:1.1rem;font-weight:800;color:#1e3a8a;
+              margin-bottom:14px;border-bottom:2px solid #dbeafe;
+              padding-bottom:8px;display:flex;align-items:center;gap:8px">
+    👤 Profile Analysis
+    <span style="font-size:0.75rem;font-weight:400;color:#64748b">{docs_badges}</span>
+  </div>
+  <div style="display:flex;gap:20px;align-items:flex-start">
+    <div style="min-width:130px;max-width:150px">{photo_html}</div>
+    <div style="flex:1;overflow-x:auto">{table_html}</div>
+  </div>
+  {mismatch_html}
+</div>
+"""
 
 
 def main():
@@ -4674,6 +7116,54 @@ def main():
             </div>
             """, unsafe_allow_html=True)
 
+    # ── Profile & Documents Upload (Optional) ──
+    with st.expander("👤 Profile & Documents (Optional — NID, Passport, DL, TIN, Vehicle)", expanded=False):
+        st.caption(
+            "পরিচয়পত্র (NID, Passport, Driving License, TIN, Vehicle Registration) "
+            "PDF বা ছবি আকারে আপলোড করুন। CDR রিপোর্টের উপরে Profile Analysis অংশে যুক্ত হবে।"
+        )
+
+        _prof_col1, _prof_col2 = st.columns([1, 2])
+        with _prof_col1:
+            _prof_photo = st.file_uploader(
+                "Subject Photo (JPG/PNG)",
+                type=["jpg","jpeg","png"],
+                key="prof_photo_upload"
+            )
+        with _prof_col2:
+            _prof_docs = st.file_uploader(
+                "Identity Documents (PDF or image — multiple allowed)",
+                type=["pdf","jpg","jpeg","png"],
+                key="prof_docs_upload",
+                accept_multiple_files=True
+            )
+
+        # Build combined doc list (photo first if given)
+        _all_docs = []
+        if _prof_photo:
+            _all_docs.append(_prof_photo)
+        if _prof_docs:
+            _all_docs.extend(_prof_docs)
+
+        # Store uploaded files — parsing happens on Run Forensic
+        if _all_docs:
+            # Save file bytes now (before widget rerender loses them)
+            _doc_bytes = []
+            for _d in _all_docs:
+                _doc_bytes.append({'name': _d.name, 'data': _d.read()})
+                try: _d.seek(0)
+                except Exception: pass
+            st.session_state['_profile_doc_bytes'] = _doc_bytes
+            st.info(f"📎 {len(_all_docs)} document(s) ready — will be parsed on Run Forensic Analysis")
+        else:
+            # No new docs — keep existing parsed data
+            pass
+
+    # Store profile_data — expander-এর বাইরে session_state থেকে পড়ো
+    # _all_docs expander block-এ defined, তাই NameError সম্ভব — ignore করো
+    # session_state-এ যা আছে তাই ব্যবহার করো, শুধু নতুন upload হলে update হবে
+    profile_data = st.session_state.get('_profile_data', None)
+
     # ── Show landing content if no file uploaded ──
     if uploaded is None:
         # Info Banner
@@ -4769,9 +7259,9 @@ def main():
 
     # ── Process ──
     # ── Session State Cache: একই file দিলে re-analysis বন্ধ ──
-    import hashlib as _hashlib
+    import hashlib as _hl
     _file_bytes_raw = uploaded.read()
-    _file_hash = _hashlib.md5(_file_bytes_raw).hexdigest()
+    _file_hash = _hl.md5(_file_bytes_raw).hexdigest()
 
     # ── Run Analysis Button ──
     # File upload হলেই analysis শুরু না করে, button click করলে শুরু হবে
@@ -4779,16 +7269,58 @@ def main():
     if _run_key not in st.session_state:
         st.session_state[_run_key] = False
 
+    # Link Analysis থেকে ফিরলে _run_key=True কিন্তু cache নাও থাকতে পারে
+    # সেক্ষেত্রে "Re-run Analysis" button দেখাও
+    _prof_hash_check = ''
+    _pdata_check = st.session_state.get('_profile_data', None)
+    if _pdata_check:
+        import hashlib as _hl
+        _ps = str(sorted((k,v) for k,v in _pdata_check.items()
+                         if k not in ('photo_b64',) and v))
+        _prof_hash_check = _hl.md5(_ps.encode()).hexdigest()[:8]
+    _cache_key_check = f"cdr_result_{_file_hash}_{_prof_hash_check}"
+    _cache_exists = _cache_key_check in st.session_state
+
+    # ── Parse profile docs BEFORE Run button check ──
+    # যাতে profile hash সঠিক থাকে এবং Re-run loop না হয়
+    _doc_bytes_pre = st.session_state.get('_profile_doc_bytes', [])
+    if _doc_bytes_pre:
+        _docs_hash = str(hash(str([(d['name'], len(d['data'])) for d in _doc_bytes_pre])))
+        if st.session_state.get('_profile_docs_hash') != _docs_hash:
+            import io as _io_pre
+            class _PreFile:
+                def __init__(self, d):
+                    self.name = d['name']
+                    self._buf = _io_pre.BytesIO(d['data'])
+                def read(self): return self._buf.read()
+                def seek(self, p): self._buf.seek(p)
+            _pre_files = [_PreFile(d) for d in _doc_bytes_pre]
+            _parsed_pre = _parse_profile_docs(_pre_files)
+            st.session_state['_profile_data'] = _parsed_pre
+            st.session_state['_profile_docs_hash'] = _docs_hash
+
+    # ── Recalculate cache key with updated profile ──
+    _prof_hash_check = ''
+    _pdata_check2 = st.session_state.get('_profile_data', None)
+    if _pdata_check2:
+        import hashlib as _hl2c
+        _ps2 = str(sorted((k,v) for k,v in _pdata_check2.items()
+                          if k not in ('photo_b64',) and v))
+        _prof_hash_check = _hl2c.md5(_ps2.encode()).hexdigest()[:8]
+    _cache_key_check = f"cdr_result_{_file_hash}_{_prof_hash_check}"
+    _cache_exists = _cache_key_check in st.session_state
+
+    # ── Run / Re-run button logic ──
+    # শুধু তখনই button দেখাও যখন analysis একদমই হয়নি (run_key=False)
+    # run_key=True কিন্তু cache নেই → analysis চলুক (button দেখাবে না)
     if not st.session_state[_run_key]:
-        st.markdown("""
+        st.markdown(f"""
         <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:12px;
                     padding:1rem 1.5rem;margin:1rem 0;display:flex;align-items:center;gap:1rem">
             <div style="font-size:1.5rem">📂</div>
             <div>
                 <div style="font-weight:600;color:#166534">CDR File Ready</div>
-                <div style="font-size:0.85rem;color:#15803d">
-                    Click Run Analysis button to start
-                </div>
+                <div style="font-size:0.85rem;color:#15803d">Click Run Analysis to start</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -4798,8 +7330,29 @@ def main():
             st.rerun()
         return  # Analysis will not start without clicking the button
 
-    # Cache key: file hash + target inputs
-    _cache_key = f"cdr_result_{_file_hash}"
+    # run_key=True কিন্তু cache নেই → profile/target পরিবর্তন হয়েছে → Re-run option দেখাও
+    # কিন্তু analysis চলতে দাও — return করো না
+    if not _cache_exists:
+        _rerun_col1, _rerun_col2 = st.columns([3, 1])
+        with _rerun_col2:
+            if st.button("🔄 Re-run Analysis", type="secondary",
+                         key=f"rerun_btn_{_file_hash}"):
+                # Clear old cache for this file (all profile variants)
+                _keys_to_del = [k for k in st.session_state
+                                if k.startswith(f"cdr_result_{_file_hash}")]
+                for _k in _keys_to_del:
+                    del st.session_state[_k]
+                st.rerun()
+
+    # Cache key: file hash + profile data hash
+    _prof_hash = ''
+    _pdata_for_hash = st.session_state.get('_profile_data', None)
+    if _pdata_for_hash:
+        import hashlib as _hl
+        _prof_str = str(sorted((k,v) for k,v in _pdata_for_hash.items()
+                                if k not in ('photo_b64',) and v))
+        _prof_hash = _hl.md5(_prof_str.encode()).hexdigest()[:8]
+    _cache_key = f"cdr_result_{_file_hash}_{_prof_hash}"
 
     # target_number এবং target_location আলাদা session_state-এ রাখি
     if "target_number_val" not in st.session_state:
@@ -4807,17 +7360,31 @@ def main():
     if "target_location_val" not in st.session_state:
         st.session_state["target_location_val"] = ""
 
+    _from_cache = False
     # যদি cache-এ আছে এবং inputs same → cached result দেখাও
     if (_cache_key in st.session_state
             and st.session_state.get(_run_key, False)):
         _cached = st.session_state[_cache_key]
-        # Show cached download buttons only
+
+        # Profile inject into cached HTML
+        # cached report may have been generated without profile — add it now if needed
+        _cur_profile = st.session_state.get('_profile_data', None)
+        _has_prof = bool(_cur_profile and any(
+            _cur_profile.get(k) for k in ['name','nid','passport','license_no',
+                                           'vehicle_reg','docs_found','photo_b64']
+        ))
+        _html_bytes = _cached["html_bytes"]
+        _html_str = _html_bytes.decode('utf-8') if isinstance(_html_bytes, bytes) else _html_bytes
+
+        # build_html() already includes profile — no extra inject needed
+        _html_bytes_final = _html_bytes
+
         st.success("✅ Reports ready (cached)")
         _base = _cached["base_name"]
         dl1, dl2, dl3 = st.columns(3)
         with dl1:
             st.download_button("⬇️ Download HTML Report",
-                data=_cached["html_bytes"], file_name=f"{_base}_Report.html",
+                data=_html_bytes_final, file_name=f"{_base}_Report.html",
                 mime="text/html", use_container_width=True, key="dl_html_cached")
         with dl2:
             st.download_button("⬇️ Download Word Report",
@@ -4829,24 +7396,52 @@ def main():
                 st.download_button("🗺️ Download Movement Map",
                     data=_cached["map_bytes"], file_name=f"{_base}_Movement_Map.html",
                     mime="text/html", use_container_width=True, key="dl_map_cached")
-        # Show cached analysis sections
-        for _sec in _cached.get("sections", []):
-            st.markdown(_sec, unsafe_allow_html=True)
-        return
+        # Reload df from pickle and re-render all analysis sections
+        if _cached.get("sections") and _cached.get("df_pickle"):
+            try:
+                import pickle as _pickle
+                df   = _pickle.loads(_cached["df_pickle"])
+                phone          = _cached.get("phone", "")
+                operator       = _cached.get("operator", "")
+                date_range     = _cached.get("date_range", "")
+                total_raw      = _cached.get("total_raw", 0)
+                anomaly_count  = _cached.get("anomaly_count", 0)
+                target_number  = _cached.get("target_number", "")
+                target_location= _cached.get("target_location", "")
+                profile_data   = st.session_state.get('_profile_data', None)
+                _from_cache = True
+            except Exception:
+                return
+        else:
+            return
 
-    progress = st.progress(0, text="📥 Reading file...")
+    class _DummyProgress:
+        def progress(self, *a, **k): pass
+        def empty(self, *a, **k): pass
+
+    if not _from_cache:
+        progress = st.progress(0, text="📥 Reading file...")
+    else:
+        progress = _DummyProgress()
 
     try:
-        file_bytes = _file_bytes_raw
-        progress.progress(15, text="🔍 Analyzing data structure...")
+        if not _from_cache:
+            file_bytes = _file_bytes_raw
+            progress.progress(15, text="🔍 Analyzing data structure...")
+            df, col_map, total_raw, anomaly_count, sheet = load_and_clean(file_bytes)
+        else:
+            # df, phone, operator etc already loaded from cache pickle above
+            col_map = {}
+            sheet = ""
 
-        df, col_map, total_raw, anomaly_count, sheet = load_and_clean(file_bytes)
+        progress.progress(15, text="🔍 Analyzing data structure...")
 
         # ── Cell Tower GPS Enrichment ─────────────────────────────────────
         # সব operator-এর CSV থেকে LAC+CID → exact GPS
         # LAC mismatch থাকলে CID+address token দিয়ে smart fallback
         cell_match_count = 0
-        try:
+        if not _from_cache:
+          try:
             from huggingface_hub import hf_hub_download
             import tempfile, os as _os, re as _re
 
@@ -4927,7 +7522,7 @@ def main():
                     'north','south','east','west','central','new','old',
                     'more','moor','ganj','pur','nagar','gram','palli',
                 }
-                s = _re.sub(r'[^a-z0-9 ]', ' ', str(s).lower())
+                s = re.sub(r'[^a-z0-9 ]', ' ', str(s).lower())
                 return set(t for t in s.split()
                            if len(t) > 4 and t not in _ADDR_STOPWORDS and not t.isdigit())
 
@@ -5129,7 +7724,7 @@ def main():
                     ]
                     downloaded = False
                     last_err = ""
-                    for url in urls_to_try[:1]:  # primary direct URL
+                    for url in urls_to_try:  # try all URLs in order
                         try:
                             token = _hf_token()
                             hdrs = {
@@ -5557,17 +8152,20 @@ def main():
                 df["cell_csv_label"] = csv_lbl_col
                 df["csv_district"]   = dist_col
 
-        except Exception as _cell_err:
-            st.warning(f"⚠️ Cell tower GPS enrichment failed: {_cell_err}")
+          except Exception as _cell_err:
+              st.warning(f"⚠️ Cell tower GPS enrichment failed: {_cell_err}")
 
         gps_match_pct = round(cell_match_count / max(len(df), 1) * 100, 1)
-        df_clean = cdf(df)
-        progress.progress(35, text="📊 Generating report...")
-
-        phone      = get_phone(df)
-        operator   = get_operator(df)
-        date_range = get_date_range(df)
-        base_name  = os.path.splitext(uploaded.name)[0]
+        if not _from_cache:
+            df_clean = cdf(df)
+            progress.progress(35, text="📊 Generating report...")
+            phone      = get_phone(df)
+            operator   = get_operator(df)
+            date_range = get_date_range(df)
+            base_name  = os.path.splitext(uploaded.name)[0]
+        else:
+            df_clean = cdf(df)
+            base_name  = _cached.get("base_name", "CDR")
 
         # ── Result Header ──
         st.markdown(f"""
@@ -5644,11 +8242,19 @@ def main():
 
 
 
-        html_content = build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number, target_location)
-        html_bytes   = html_content.encode('utf-8')
+        html_content = build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number, target_location, profile_data=profile_data)
+        # Inject Profile Analysis section after <h1>
+        if profile_data and any(profile_data.get(k) for k in ['name','nid','passport','docs_found']):
+            _prof_html = _profile_html_section(profile_data)
+            if _prof_html:
+                _marker = '<h1>📞 CDR Analysis Report</h1>'
+                if _marker in html_content:
+                    html_content = html_content.replace(
+                        _marker, _marker + '\n' + _prof_html, 1)
+        html_bytes = html_content.encode('utf-8')
 
         progress.progress(80, text="📝 Generating Word report...")
-        docx_bytes = build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number, target_location)
+        docx_bytes = build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number, target_location, profile_data=profile_data)
 
         # ── Movement Map ──
         progress.progress(90, text="🗺️ Generating movement map...")
@@ -5656,11 +8262,21 @@ def main():
         progress.progress(100, text="✅ Complete!")
 
         # ── Save to session_state cache ──
+        import pickle as _pickle
         st.session_state[_cache_key] = {
             "html_bytes": html_bytes,
             "docx_bytes": docx_bytes,
             "map_bytes": map_bytes,
             "base_name": base_name,
+            "df_pickle": _pickle.dumps(df),
+            "phone": phone,
+            "operator": operator,
+            "date_range": date_range,
+            "total_raw": total_raw,
+            "anomaly_count": anomaly_count,
+            "target_number": target_number,
+            "target_location": target_location,
+            "sections": True,
         }
 
         # ── Success + Download ──
@@ -5715,6 +8331,103 @@ def main():
                         border-radius:2px;"></div>
         </div>
         """, unsafe_allow_html=True)
+
+        # ── Profile Analysis (Dashboard-এ দেখাও) ──
+        _dash_profile = st.session_state.get('_profile_data', None)
+        if _dash_profile and any(_dash_profile.get(k) for k in
+                                  ['name','nid','passport','license_no','vehicle_reg',
+                                   'docs_found','photo_b64']):
+            with st.expander("👤 Profile Analysis", expanded=True):
+                _ph_col, _pinfo_col = st.columns([1, 3])
+                with _ph_col:
+                    if _dash_profile.get('photo_b64'):
+                        st.image(_dash_profile['photo_b64'], width=130)
+                    # NID address crop images
+                    if _dash_profile.get('address_permanent_img'):
+                        st.markdown("<div style='font-size:10px;color:#64748b;margin-top:6px'>📍 স্থায়ী ঠিকানা</div>", unsafe_allow_html=True)
+                        st.image(_dash_profile['address_permanent_img'])
+                    if _dash_profile.get('address_present_img'):
+                        st.markdown("<div style='font-size:10px;color:#64748b;margin-top:4px'>📍 বর্তমান ঠিকানা</div>", unsafe_allow_html=True)
+                        st.image(_dash_profile['address_present_img'])
+                with _pinfo_col:
+                    # Source badge color map
+                    _SRC_COLORS = {
+                        'NID':             ('#dbeafe', '#1e40af'),
+                        'Passport':        ('#fce7f3', '#9d174d'),
+                        'TIN':             ('#fef9c3', '#854d0e'),
+                        'Driving License': ('#dcfce7', '#166534'),
+                        'Vehicle Reg':     ('#f3e8ff', '#6b21a8'),
+                    }
+                    def _dbadge(lbl):
+                        bg, fg = _SRC_COLORS.get(lbl, ('#f1f5f9','#475569'))
+                        return (f"<span style='background:{bg};color:{fg};padding:1px 6px;"
+                                f"border-radius:6px;font-size:10px;font-weight:700;"
+                                f"margin-left:5px'>{lbl}</span>")
+
+                    def _drow(label, field_key):
+                        val = _dash_profile.get(field_key, '')
+                        if not val or str(val).upper() in ('N/A','NONE',''): return ''
+                        src_list = _dash_profile.get(f'{field_key}_src', [])
+                        badges = ''.join(_dbadge(lbl) for _, lbl in src_list[:3])
+                        return (f"<tr>"
+                                f"<td style='padding:3px 10px;color:#64748b;font-size:12px;"
+                                f"white-space:nowrap;font-weight:500'>{label}</td>"
+                                f"<td style='padding:3px 10px;font-size:13px;font-weight:600'>"
+                                f"{val}{badges}</td></tr>")
+
+                    def _drow_plain(label, val):
+                        if not val or str(val).upper() in ('N/A','NONE',''): return ''
+                        return (f"<tr>"
+                                f"<td style='padding:3px 10px;color:#64748b;font-size:12px;"
+                                f"white-space:nowrap;font-weight:500'>{label}</td>"
+                                f"<td style='padding:3px 10px;font-size:13px;font-weight:600'>"
+                                f"{val}</td></tr>")
+
+                    _rows_html = ''.join([
+                        _drow('নাম',              'name'),
+                        _drow('পিতা',             'father'),
+                        _drow('মাতা',             'mother'),
+                        _drow('স্ত্রী/স্বামী',   'spouse'),
+                        _drow('জন্মতারিখ',        'dob'),
+                        _drow('লিঙ্গ',            'gender'),
+                        _drow('রক্তের গ্রুপ',     'blood_group'),
+                        _drow('পেশা',             'profession'),
+                        _drow('জাতীয়তা',         'nationality'),
+                        _drow('মোবাইল',           'mobile'),
+                        _drow('NID (পুরনো)',       'nid'),
+                        _drow('NID (নতুন)',        'nid_new'),
+                        _drow('Passport',         'passport'),
+                        _drow('TIN (পুরনো)',       'tin'),
+                        _drow('TIN (নতুন)',        'tin_new'),
+                        _drow('ড্রাইভিং লাইসেন্স','license_no'),
+                        _drow('DL মেয়াদ',         'license_expiry'),
+                        _drow('গাড়ি',             'vehicle_reg'),
+                        _drow('বর্তমান ঠিকানা',  'address_present'),
+                        _drow('স্থায়ী ঠিকানা',  'address_permanent'),
+                        _drow_plain('নথি', ', '.join(_dash_profile.get('docs_found', []))),
+                    ])
+                    st.markdown(
+                        f"<table style='border-collapse:collapse;width:100%'>{_rows_html}</table>",
+                        unsafe_allow_html=True
+                    )
+                _mm_list = _dash_profile.get('mismatches', [])
+                if _mm_list:
+                    for _mm in _mm_list:
+                        if ' — ' in _mm:
+                            _fld2,_rest2 = _mm.split(' — ',1)
+                            _parts2 = _rest2.split(' | ')
+                            _mm_html2 = ''.join(
+                                f"<span style='background:#fee2e2;color:#991b1b;"
+                                f"padding:2px 8px;border-radius:4px;font-size:12px;"
+                                f"margin:0 3px;font-weight:600'>{p}</span>"
+                                for p in _parts2)
+                            st.markdown(
+                                f"<div style='background:#fef2f2;border-left:4px solid #ef4444;"
+                                f"padding:6px 10px;margin:3px 0;border-radius:0 6px 6px 0'>"
+                                f"⚠️ <strong>{_fld2}</strong> → {_mm_html2}</div>",
+                                unsafe_allow_html=True)
+                        else:
+                            st.warning(f'⚠️ {_mm}')
 
         # ── 1. Device Info + Call Summary ──
         with st.expander("📊 Device Information & Call Analysis Summary", expanded=True):
@@ -5938,6 +8651,13 @@ def main():
                         <div class="value" style="font-size:1rem;">{mv.get("home_label") or mv["home_district"] or "N/A"}</div>
                         <div style="font-size:0.75rem;color:#94a3b8;">{mv["home_district"] or ""} District (most frequent)</div>
                     </div>''', unsafe_allow_html=True)
+                with mv3:
+                    _work_d = mv.get("work_district") or mv.get("frequent_districts", [None])[1] if len(mv.get("frequent_districts", [])) > 1 else None
+                    st.markdown(f'''<div class="stat-card" style="border-left-color:#0891b2;">
+                        <div class="label">Work Location</div>
+                        <div class="value" style="font-size:1rem;">{_work_d or "N/A"}</div>
+                        <div style="font-size:0.75rem;color:#94a3b8;">2nd most frequent</div>
+                    </div>''', unsafe_allow_html=True)
                 with mv4:
                     gap_color = "#dc2626" if mv["gaps"] else "#16a34a"
                     st.markdown(f'''<div class="stat-card" style="border-left-color:{gap_color};">
@@ -6023,7 +8743,7 @@ def main():
                 else:
                     st.info("No location data for the last 10 days.")
 
-        # ── 7. Specific Number Analysis ──
+        # ── 8. Specific Number Analysis ──
         if target_number:
             with st.expander(f"🎯 Specific Number Analysis — {target_number}", expanded=True):
                 res = specific_number_analysis(df, target_number)
