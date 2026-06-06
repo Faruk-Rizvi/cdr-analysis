@@ -279,20 +279,72 @@ st.set_page_config(
 # ─────────────────────────────────────────────
 # LOGIN SYSTEM
 # ─────────────────────────────────────────────
-# User credentials — username: password (plain text, local deployment only)
-# To add/remove users: edit this dict
-_USERS = {
-    "faruk13": "NSI&2026",
-    "nsi1":    "NSI&2026",
-    "nsi2":    "NSI&2026",
-    "nsi3":    "NSI&2026",
-}
+# Passwords stored as bcrypt hashes in .streamlit/secrets.toml
+# under [passwords] section. NEVER store plaintext passwords in code.
+#
+# secrets.toml format:
+#   [passwords]
+#   faruk13 = "$2b$12$..."   ← bcrypt hash of the real password
+#   nsi1    = "$2b$12$..."
+#
+# To generate a new hash (run once locally):
+#   python -c "import bcrypt; print(bcrypt.hashpw(b'YOUR_PASSWORD', bcrypt.gensalt(12)).decode())"
+#
+# Fallback: if secrets not configured (local dev), uses env var CDR_USERS
+# Format: "user1:hash1,user2:hash2"
+
+import bcrypt as _bcrypt
+import os as _os
+
+def _load_password_store() -> dict:
+    """Load bcrypt hashes from st.secrets or env var. Never plaintext."""
+    store = {}
+    # Priority 1: st.secrets [passwords]
+    try:
+        pw_section = st.secrets.get("passwords", {})
+        for uname, hashed in pw_section.items():
+            store[uname.strip().lower()] = hashed.strip()
+        if store:
+            return store
+    except Exception:
+        pass
+    # Priority 2: env var CDR_USERS (CI/CD or Docker)
+    env_users = _os.environ.get("CDR_USERS", "")
+    if env_users:
+        for pair in env_users.split(","):
+            if ":" in pair:
+                u, h = pair.split(":", 1)
+                store[u.strip().lower()] = h.strip()
+        if store:
+            return store
+    # Priority 3: local dev fallback — read from .streamlit/secrets.toml manually
+    # (in case st.secrets fails outside Streamlit context)
+    try:
+        import tomllib as _toml
+        _sf = _os.path.join(_os.path.dirname(__file__), ".streamlit", "secrets.toml")
+        if _os.path.exists(_sf):
+            with open(_sf, "rb") as _f:
+                _data = _toml.load(_f)
+            for u, h in _data.get("passwords", {}).items():
+                store[u.strip().lower()] = h.strip()
+    except Exception:
+        pass
+    return store
+
+_PASSWORD_STORE = _load_password_store()
 
 def _check_login(username: str, password: str) -> bool:
-    user = _USERS.get(username.strip().lower())
-    if user is None:
+    """Verify credentials using bcrypt. Constant-time comparison."""
+    uname = username.strip().lower()
+    hashed = _PASSWORD_STORE.get(uname)
+    if not hashed:
+        # Dummy check to prevent timing attack on username enumeration
+        _bcrypt.checkpw(b"dummy", b"$2b$12$" + b"x" * 53)
         return False
-    return _hmac.compare_digest(user, password)
+    try:
+        return _bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
 
 import time as _time_mod   # session timeout-এর জন্য — login page-এর আগে দরকার
 
@@ -399,10 +451,16 @@ if _idle_secs > _SESSION_TIMEOUT:
 # Activity timestamp আপডেট করো
 st.session_state["_last_active"] = _now
 
-# Timeout message দেখাও (login page-এ)
-# এটা _login_page()-এর আগে set হয় — কিন্তু authenticated=False হলে
-# উপরের flow-এ আগেই st.stop() হয়ে যেত, তাই এখানে পৌঁছায় না।
-# Timeout message login page-এ দেখানোর জন্য _login_page()-এ handle করা হয়।
+# ── Session timeout warning (৫ মিনিট বাকি থাকলে) ─────────────────────────
+_remaining_secs = _SESSION_TIMEOUT - _idle_secs
+if 0 < _remaining_secs <= 300:   # শেষ ৫ মিনিট
+    _rem_min = int(_remaining_secs // 60)
+    _rem_sec = int(_remaining_secs % 60)
+    st.sidebar.warning(
+        f"⏰ Session expires in **{_rem_min}m {_rem_sec}s** — "
+        f"any action will reset the timer.",
+        icon="⚠️"
+    )
 
 # ─────────────────────────────────────────────
 # CUSTOM CSS — Professional Design
@@ -4321,7 +4379,7 @@ def movement_pattern_analysis(df):
             top_locations.append({
                 "name":     _lbl,
                 "district": _disp_dist,
-                "gps":      f"{round(_coord[0],5)}, {round(_coord[1],5)}" if _coord else "",
+                "gps":      f"{round(_coord[0],6)}, {round(_coord[1],6)}" if _coord else "",
                 "count":    int(_cnt),
                 "address":  str(_addr)[:70],
             })
@@ -4456,7 +4514,7 @@ def _movement_html(mv):
                 <td style="padding:0.7rem 1rem; font-weight:700;">
                     {t["district"] or t["upazila"]}</td>
                 <td style="padding:0.7rem 1rem; text-align:center; font-family:monospace; font-size:0.82rem; color:#1e3a8a;">
-                    {"✅ " + str(round(float(t["lat"]),5)) + "<br>" + str(round(float(t["lon"]),5)) if t.get("lat") else "—"}
+                    {"✅ " + str(round(float(t["lat"]),6)) + "<br>" + str(round(float(t["lon"]),6)) if t.get("lat") else "—"}
                 </td>
                 <td style="padding:0.7rem 1rem; text-align:center;">
                     <span style="background:#dbeafe;color:#1e40af;border-radius:12px;
@@ -6469,13 +6527,13 @@ def build_movement_map(df, phone, operator, mv_data=None):
 
     # ── Leaflet JS ──
     js=[]
-    coords=[[round(s['lat'],5),round(s['lon'],5)] for s in steps]
+    coords=[[round(s['lat'],6),round(s['lon'],6)] for s in steps]
     js.append("var coords="+_json.dumps(coords)+";")
     js.append("var route=L.polyline.antPath(coords,{color:'#1d4ed8',weight:3,opacity:0.75,delay:600,dashArray:[14,18],pulseColor:'#93c5fd',paused:false,reverse:false}).addTo(map);")
 
     for i in range(len(steps)-1):
         p1=steps[i]; p2=steps[i+1]
-        ml=round((p1['lat']+p2['lat'])/2,5); mlo=round((p1['lon']+p2['lon'])/2,5)
+        ml=round((p1['lat']+p2['lat'])/2,6); mlo=round((p1['lon']+p2['lon'])/2,6)
         b=bearing(p1['lat'],p1['lon'],p2['lat'],p2['lon'])
         dk=hav(p1['lat'],p1['lon'],p2['lat'],p2['lon'])
         col=get_color(p2['km'],home_dist_val,p2['district'])
@@ -6491,7 +6549,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
         js.append("L.marker([{ml},{mlo}],{{icon:L.divIcon({{html:{svg},iconSize:[26,26],iconAnchor:[13,13],className:''}}),zIndexOffset:-50}}).addTo(map).bindTooltip('{tip}',{{sticky:true}});".format(ml=ml,mlo=mlo,svg=_json.dumps(svg),tip=tip))
 
     for i,s in enumerate(steps):
-        num=i+1; la=round(s['lat'],5); lo=round(s['lon'],5)
+        num=i+1; la=round(s['lat'],6); lo=round(s['lon'],6)
         km=s['km']; col=get_color(km,home_dist_val,s['district'])
         dist=(s['district'] or '—').replace('"','')
         thana=(s.get('thana','') or '').replace('"','')
@@ -6517,7 +6575,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
         js.append("L.marker([{la},{lo}],{{icon:L.divIcon({{html:{ni},iconSize:[20,20],iconAnchor:[10,10],className:''}}),zIndexOffset:10}}).addTo(map);".format(la=la,lo=lo,ni=_json.dumps(ni)))
 
     for s in suspicious:
-        la=round(s['lat'],5); lo=round(s['lon'],5)
+        la=round(s['lat'],6); lo=round(s['lon'],6)
         dist=(s['district'] or '?').replace('"','')
         thana=(s.get('thana','') or '').replace('"','')
         loc_s=f"{thana}, {dist}" if thana and thana.lower()!=dist.lower() else dist
@@ -6528,8 +6586,8 @@ def build_movement_map(df, phone, operator, mv_data=None):
              "<b>Date:</b> {dt}</div>").format(loc=loc_s,la=la,lo=lo,km=round(s['km'],1),cnt=s['count'],dt=s['start'][:10])
         js.append("L.circleMarker([{la},{lo}],{{radius:7,fillColor:'#f59e0b',color:'white',weight:1.5,opacity:0.8,fillOpacity:0.35,dashArray:'5,4'}}).addTo(map).bindPopup({pop}).bindTooltip('&#9888; {loc} ({km}km) — {cnt}rec',{{sticky:true}});".format(la=la,lo=lo,pop=_json.dumps(pop),loc=loc_s,km=round(s['km'],1),cnt=s['count']))
 
-    home_pop="<div style='font-family:Arial;padding:10px'><b style='font-size:14px'>&#127968; Home Location</b><br><br><b>Area:</b> {hl}<br><b>District:</b> {hd}<br><b>GPS:</b> {la}, {lo}<br><b>Source:</b> Most frequent BTS location</div>".format(hl=home_label,hd=home_dist_val,la=round(home_lat,5),lo=round(home_lon,5))
-    js.append("L.marker([{la},{lo}],{{icon:L.divIcon({{html:\"<div style='font-size:30px;margin:-15px 0 0 -15px'>&#127968;</div>\",iconSize:[30,30],iconAnchor:[15,15],className:''}}),zIndexOffset:1000}}).addTo(map).bindPopup({pop}).bindTooltip('&#127968; Home: {hl}',{{sticky:true,permanent:true,direction:'right',offset:[15,0]}});".format(la=round(home_lat,5),lo=round(home_lon,5),pop=_json.dumps(home_pop),hl=home_label))
+    home_pop="<div style='font-family:Arial;padding:10px'><b style='font-size:14px'>&#127968; Home Location</b><br><br><b>Area:</b> {hl}<br><b>District:</b> {hd}<br><b>GPS:</b> {la}, {lo}<br><b>Source:</b> Most frequent BTS location</div>".format(hl=home_label,hd=home_dist_val,la=round(home_lat,6),lo=round(home_lon,6))
+    js.append("L.marker([{la},{lo}],{{icon:L.divIcon({{html:\"<div style='font-size:30px;margin:-15px 0 0 -15px'>&#127968;</div>\",iconSize:[30,30],iconAnchor:[15,15],className:''}}),zIndexOffset:1000}}).addTo(map).bindPopup({pop}).bindTooltip('&#127968; Home: {hl}',{{sticky:true,permanent:true,direction:'right',offset:[15,0]}});".format(la=round(home_lat,6),lo=round(home_lon,6),pop=_json.dumps(home_pop),hl=home_label))
 
     # ── Top 3 Frequent Locations — mv_data থেকে GPS নিয়ে map-এ দেখাও ──────
     if mv_data and mv_data.get('top_locations'):
@@ -6571,7 +6629,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
                 "<td style='padding:4px 8px;font-size:11px'>{addr}</td></tr>"
                 "</table></div>"
             ).format(col=_fcol,icon=_ficon,label=_flabel,name=_fname,
-                     dist=_fdist,la=round(_fla,5),lo=round(_flo,5),
+                     dist=_fdist,la=round(_fla,6),lo=round(_flo,6),
                      cnt=_fcount,addr=_faddr)
             # Star marker — numbered (1,2,3)
             _fnum = _fi + 1
@@ -6582,19 +6640,19 @@ def build_movement_map(df, phone, operator, mv_data=None):
                     "border:2px solid white'>F{n}</div>").format(col=_fcol, n=_fnum)
             _ftip = "{icon} {label}: {name} ({dist}) | {cnt} records | {la},{lo}".format(
                 icon=_ficon, label=_flabel, name=_fname, dist=_fdist,
-                cnt=_fcount, la=round(_fla,5), lo=round(_flo,5))
+                cnt=_fcount, la=round(_fla,6), lo=round(_flo,6))
             js.append(
                 "L.circleMarker([{la},{lo}],{{radius:14,fillColor:'{col}',color:'white',"
                 "weight:3,opacity:0.9,fillOpacity:0.25,dashArray:'6,3',zIndexOffset:800}})"
-                ".addTo(map);".format(la=round(_fla,5),lo=round(_flo,5),col=_fcol))
+                ".addTo(map);".format(la=round(_fla,6),lo=round(_flo,6),col=_fcol))
             js.append(
                 "L.marker([{la},{lo}],{{icon:L.divIcon({{html:{ni},iconSize:[24,24],"
                 "iconAnchor:[12,12],className:''}}),zIndexOffset:900}})"
                 ".addTo(map).bindPopup({pop}).bindTooltip({tip},{{sticky:true}});".format(
-                    la=round(_fla,5),lo=round(_flo,5),
+                    la=round(_fla,6),lo=round(_flo,6),
                     ni=_json.dumps(_fni),pop=_json.dumps(_fpop),tip=_json.dumps(_ftip)))
 
-    all_bounds=[[round(s['lat'],5),round(s['lon'],5)] for s in steps]+[[round(home_lat,5),round(home_lon,5)]]
+    all_bounds=[[round(s['lat'],6),round(s['lon'],6)] for s in steps]+[[round(home_lat,6),round(home_lon,6)]]
     js.append("map.fitBounds("+_json.dumps(all_bounds)+",{padding:[80,80]});")
     all_js='\n'.join(js)
 
@@ -6612,7 +6670,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
             " <span class='tl-km'>{km}km</span> <span title='source'>{mi}</span><br>"
             "<span class='tl-date'>{st} &rarr; {en}</span>"
             " &middot; <span class='tl-cnt'>{cnt}rec</span></div></div>\n"
-        ).format(la=round(s['lat'],5),lo=round(s['lon'],5),col=col,n=i+1,
+        ).format(la=round(s['lat'],6),lo=round(s['lon'],6),col=col,n=i+1,
                  icon=icon,loc=loc_lbl,km=s['km'],mi=mi,
                  st=s['start'][:10],en=s['end'][:10],cnt=s['count'])
 
@@ -8429,61 +8487,80 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
 
             ec_common = '#dc2626'
 
-            # ── Combined Call edge (MOC + MTC) ──
-            call_total = data['call_out'] + data['call_in']
-            if call_total > 0:
+            # ── Merged Call + SMS edge ──────────────────────────────────────
+            # SMS no longer drawn as a separate dotted edge.
+            # SMS counts are shown in the tooltip; total on the line = calls + sms.
+            call_total  = data['call_out'] + data['call_in']
+            sms_total   = data['sms_out']  + data['sms_in']
+            grand_total = call_total + sms_total
+            if grand_total > 0:
                 ec = ec_common if is_common else '#2563eb'
-                call_title = (
-                    f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
-                    f"padding:10px 14px;line-height:1.8'>"
-                    f"<b style='font-size:15px;color:{ec}'>\U0001f4de {sub} ↔ {pb}</b><br>"
+                sms_row = (
                     f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
-                    f"&nbsp;&nbsp;MOC (outgoing): <b>{data['call_out']}</b><br>"
-                    f"&nbsp;&nbsp;MTC (incoming): <b>{data['call_in']}</b><br>"
+                    f"&nbsp;&nbsp;💬 SMS sent: <b>{data['sms_out']}</b><br>"
+                    f"&nbsp;&nbsp;💬 SMS received: <b>{data['sms_in']}</b><br>"
+                    f"&nbsp;&nbsp;Total SMS: <b>{sms_total}</b>"
+                ) if sms_total > 0 else ""
+                # Duration badge — red if suspicious
+                _dur_badge_col = '#dc2626' if dur >= 30 else '#1e3a8a'
+                _dur_badge_txt = (
+                    f"<span style='background:#fee2e2;color:#991b1b;"
+                    f"border-radius:4px;padding:1px 6px;font-weight:700;font-size:12px'>"
+                    f"⚠️ Long call</span> " if dur >= 30 else ""
+                )
+                edge_title = (
+                    f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
+                    f"padding:10px 14px;line-height:1.9;min-width:240px'>"
+                    f"<b style='font-size:15px;color:{ec}'>📞 {sub} ↔ {pb}</b><br>"
+                    f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
+                    f"&nbsp;&nbsp;MOC (outgoing calls): <b>{data['call_out']}</b><br>"
+                    f"&nbsp;&nbsp;MTC (incoming calls): <b>{data['call_in']}</b><br>"
                     f"&nbsp;&nbsp;Total Calls: <b>{call_total}</b><br>"
-                    f"&nbsp;&nbsp;\u23f1 Duration: {dur} min</div>"
+                    f"&nbsp;&nbsp;⏱ Total Duration: <b style='color:{_dur_badge_col}'>"
+                    f"{dur} min</b> {_dur_badge_txt}<br>"
+                    f"&nbsp;&nbsp;📊 Avg per call: <b>"
+                    f"{round(dur/call_total,1) if call_total>0 else 0} min</b>"
+                    f"{sms_row}</div>"
                 )
-                edges.append({
-                    'id': eid, 'from': sub, 'to': pb,
-                    'label': str(call_total),
-                    'arrows': {'to': {'enabled': False}},
-                    'color': {'color': ec, 'opacity': 0.85},
-                    'width': max(1, min(6, call_total//5+1)) + (2 if is_common else 0),
-                    'font': {'size': 11, 'color': '#1e293b',
-                             'strokeWidth': 2, 'strokeColor': '#ffffff',
-                             'align': 'middle'},
-                    'smooth': {'type': 'dynamic'},
-                    'title': call_title,
-                    '_total': call_total, '_etype': 'call',
-                })
-                eid += 1
+                # Duration-aware edge styling
+                _dur_h = int(dur // 60)
+                _dur_m = int(dur % 60)
+                _dur_label = (f"{_dur_h}h{_dur_m:02d}m" if _dur_h > 0
+                              else f"{_dur_m}m" if _dur_m > 0 else "<1m")
 
-            # ── Combined SMS edge (sms_out + sms_in) ──
-            sms_total = data['sms_out'] + data['sms_in']
-            if sms_total > 0:
-                ec = ec_common if is_common else '#16a34a'
-                sms_title = (
-                    f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
-                    f"padding:10px 14px;line-height:1.8'>"
-                    f"<b style='font-size:15px;color:{ec}'>\U0001f4ac {sub} ↔ {pb}</b><br>"
-                    f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
-                    f"&nbsp;&nbsp;SMS sent: <b>{data['sms_out']}</b><br>"
-                    f"&nbsp;&nbsp;SMS received: <b>{data['sms_in']}</b><br>"
-                    f"&nbsp;&nbsp;Total SMS: <b>{sms_total}</b></div>"
-                )
+                # Width: count + duration both contribute
+                _base_w = max(1, min(5, grand_total // 5 + 1))
+                _dur_w  = max(0, min(2, int(dur) // 30))   # +1 per 30 min
+                _edge_w = _base_w + _dur_w + (2 if is_common else 0)
+
+                # Color: long calls get darker/redder tone
+                if dur >= 60:       # 1h+  → deep red (very suspicious)
+                    _ec_col = '#991b1b' if is_common else '#b91c1c'
+                elif dur >= 30:     # 30m+ → red-orange
+                    _ec_col = '#dc2626' if is_common else '#ea580c'
+                else:
+                    _ec_col = ec   # normal
+
+                # Label: "count\ndur" two-line
+                _edge_label = f"{grand_total}\n{_dur_label}"
+
+                # Font color: red for long calls
+                _font_color = '#991b1b' if dur >= 30 else '#1e293b'
+
                 edges.append({
                     'id': eid, 'from': sub, 'to': pb,
-                    'label': str(sms_total),
+                    'label': _edge_label,
                     'arrows': {'to': {'enabled': False}},
-                    'color': {'color': ec, 'opacity': 0.65},
-                    'width': max(1, min(4, sms_total//5+1)),
-                    'dashes': True,
-                    'font': {'size': 11, 'color': '#15803d',
+                    'color': {'color': _ec_col, 'opacity': 0.88},
+                    'width': _edge_w,
+                    'font': {'size': 10, 'color': _font_color,
                              'strokeWidth': 2, 'strokeColor': '#ffffff',
-                             'align': 'middle'},
+                             'align': 'middle', 'multi': 'html'},
                     'smooth': {'type': 'dynamic'},
-                    'title': sms_title,
-                    '_total': sms_total, '_etype': 'sms',
+                    'title': edge_title,
+                    '_total': grand_total, '_etype': 'call',
+                    '_dur': dur,
+                    '_origWidth': _edge_w,
                 })
                 eid += 1
 
@@ -8555,12 +8632,11 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <div class="li"><div class="dot" style="background:#dc2626"></div>Common Contact</div>
   <div class="li"><div class="dot" style="background:#64748b"></div>Single Contact</div>
   <div class="li"><div class="dot" style="background:#e2e8f0;border:3px solid #f59e0b;width:13px;height:13px;"></div>High-freq ⭐</div>
-  <div class="li"><div class="ln" style="background:#2563eb"></div>Call (total on line)</div>
-  <div class="li"><div class="ln" style="background:#16a34a;border-top:2px dashed #16a34a;height:0"></div>SMS (total on line)</div>
+  <div class="li"><div class="ln" style="background:#2563eb"></div>Connection (calls + SMS total on line)</div>
 </div>
 <div class="bar">
   <button class="btn" onclick="network.fit()">&#x229F; Fit</button>
-  <button class="btn" id="physBtn" onclick="togglePhysics()">&#x23F8; Stop</button>
+  <button class="btn" id="physBtn" onclick="togglePhysics()" title="Freeze: stops auto-layout so you can drag nodes freely. Unfreeze: resumes physics.">&#x23F8; Freeze</button>
   <button class="btn red" onclick="showOnlyCommon()">&#128308; Common</button>
   <button class="btn grn" onclick="showAll()">&#128065; All</button>
   <button class="btn del" id="delBtn" onclick="deleteSelected()">&#x1F5D1; Delete</button>
@@ -8572,18 +8648,19 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <!-- Search box -->
   <div class="sl" style="flex:1;min-width:180px;">
     <span style="font-weight:600;color:#1e3a8a;">&#x1F50D;</span>
-    <input type="text" id="searchBox" placeholder="নম্বর / নাম খুঁজুন…"
+    <input type="text" id="searchBox" placeholder="Search number / name…"
       oninput="searchNodes(this.value)"
+      onkeydown="handleSearchKey(event)"
       style="flex:1;font-size:11px;padding:3px 7px;border-radius:5px;
              border:1px solid #cbd5e1;background:#f8fafc;color:#0f172a;outline:none;">
+    <span id="searchCount" style="font-size:10px;color:#64748b;white-space:nowrap;padding:0 4px;"></span>
     <button class="btn" style="background:#475569;padding:3px 8px;"
-      onclick="document.getElementById('searchBox').value='';searchNodes('')">✕</button>
+      onclick="document.getElementById('searchBox').value='';searchNodes('');document.getElementById('searchCount').textContent='';">✕</button>
   </div>
   <!-- Edge type filter -->
   <span style="font-size:11px;font-weight:600;color:#1e3a8a;">Edge:</span>
   <button class="btn" id="fAll"  onclick="filterEdgeType('all')"  style="background:#0f172a;">All</button>
-  <button class="btn" id="fCall" onclick="filterEdgeType('call')" style="background:#1d4ed8;">Call</button>
-  <button class="btn" id="fSms"  onclick="filterEdgeType('sms')"  style="background:#16a34a;">SMS</button>
+  <button class="btn" id="fCall" onclick="filterEdgeType('call')" style="background:#1d4ed8;">Calls</button>
   <div class="sl">
     <span style="font-weight:600;color:#1e3a8a;">&#x25A6; Layout:</span>
     <select id="layoutSel" onchange="applyLayout(this.value)"
@@ -8698,11 +8775,34 @@ var network = new vis.Network(
 // Auto-fit after stabilization
 network.once('stabilizationIterationsDone', function(){{
   network.fit({{animation:{{duration:600,easingFunction:'easeInOutQuad'}}}});
-  document.getElementById('physBtn').textContent='\u23F8 Stop';
+  // Auto-freeze: nodes stay put, user can drag freely without physics fighting
+  network.setOptions({{physics:{{enabled:false}}}});
+  physicsOn = false;
+  document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
 }});
 setTimeout(function(){{if(network)network.fit();}}, 2500);
 
 var physicsOn = true;
+
+// Pin a node after dragging so it stays where the user placed it
+network.on('dragEnd', function(params){{
+  if(params.nodes.length > 0){{
+    params.nodes.forEach(function(nodeId){{
+      var pos = network.getPositions([nodeId])[nodeId];
+      allNodes.update({{id:nodeId, x:pos.x, y:pos.y, fixed:{{x:true,y:true}}}});
+    }});
+  }}
+}});
+
+// Unpin all on double-click (background) so physics can re-run
+network.on('doubleClick', function(params){{
+  if(params.nodes.length === 0 && params.edges.length === 0){{
+    var unpinned = allNodes.get().map(function(n){{
+      return {{id:n.id, fixed:{{x:false,y:false}}}};
+    }});
+    allNodes.update(unpinned);
+  }}
+}});
 
 // ── Shared: capture graph canvas to dataURL ──
 var _exportDataURL = null;
@@ -8836,8 +8936,15 @@ function closeExportModal(){{
 
 function togglePhysics(){{
   physicsOn=!physicsOn;
+  if(physicsOn){{
+    // Unpin all nodes so physics can move them again
+    var unpinned = allNodes.get().map(function(n){{
+      return {{id:n.id, fixed:{{x:false,y:false}}}};
+    }});
+    allNodes.update(unpinned);
+  }}
   network.setOptions({{physics:{{enabled:physicsOn}}}});
-  document.getElementById('physBtn').textContent=physicsOn?'\u23F8 Stop':'\u25B6 Start';
+  document.getElementById('physBtn').textContent=physicsOn?'\u23F8 Freeze':'\u25B6 Unfreeze';
 }}
 
 // ── Layout switcher (i2-style) ──
@@ -8853,7 +8960,7 @@ function applyLayout(mode){{
       }}
     }});
     physicsOn=true;
-    document.getElementById('physBtn').textContent='\u23F8 Stop';
+    document.getElementById('physBtn').textContent='\u23F8 Freeze';
     network.once('stabilizationIterationsDone',function(){{
       network.fit({{animation:{{duration:500,easingFunction:'easeInOutQuad'}}}});
     }});
@@ -8878,7 +8985,7 @@ function applyLayout(mode){{
       physics:{{enabled:false}}
     }});
     physicsOn=false;
-    document.getElementById('physBtn').textContent='\u25B6 Start';
+    document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
     setTimeout(function(){{network.fit({{animation:{{duration:500}}}});}},400);
     return;
   }}
@@ -8888,7 +8995,7 @@ function applyLayout(mode){{
       physics:{{enabled:false}}
     }});
     physicsOn=false;
-    document.getElementById('physBtn').textContent='\u25B6 Start';
+    document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
     var visibleNodes=allNodes.get().filter(function(n){{return !n.hidden;}});
     var n=visibleNodes.length;
     var cx=0,cy=0,r=Math.max(220,n*55);
@@ -8910,7 +9017,7 @@ function applyLayout(mode){{
       physics:{{enabled:false}}
     }});
     physicsOn=false;
-    document.getElementById('physBtn').textContent='\u25B6 Start';
+    document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
     var visibleNodes=allNodes.get().filter(function(n){{return !n.hidden;}});
     var cols=Math.ceil(Math.sqrt(visibleNodes.length));
     var spacing=220;
@@ -8932,7 +9039,7 @@ function applyLayout(mode){{
       physics:{{enabled:false}}
     }});
     physicsOn=false;
-    document.getElementById('physBtn').textContent='\\u25B6 Start';
+    document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
     var visibleNodes=allNodes.get().filter(function(n){{return !n.hidden;}});
     var subjNodes=visibleNodes.filter(function(n){{
       return n.group==='subject'||n.group==='isolated_subject';
@@ -9108,33 +9215,150 @@ function changeNodeSize(val){{
 }}
 
 // ── Search nodes by number or name ──
+// ── Search state ──────────────────────────────────────────────────────────
+var _searchMatches = [];   // ordered list of matched node IDs
+var _searchIdx     = -1;   // current focus index (for Enter cycling)
+
 function searchNodes(q){{
   q = q.trim().toLowerCase();
+  var countEl = document.getElementById('searchCount');
   if(!q){{
-    // restore all
-    allNodes.update(allNodes.get().map(n=>({{id:n.id,opacity:1.0}})));
-    allEdges.update(allEdges.get().map(e=>({{id:e.id,hidden:false}})));
+    _searchMatches = []; _searchIdx = -1;
+    // Restore — only if not in hover-dim mode
+    if(!_hoverActive){{
+      allNodes.update(allNodes.get().map(n=>({{id:n.id,opacity:1.0,
+        borderWidth:n._origBW||2,color:n._origColor||undefined}})));
+      allEdges.update(allEdges.get().map(e=>({{id:e.id,hidden:false,opacity:1.0}})));
+    }}
+    if(countEl) countEl.textContent='';
     return;
   }}
-  var matched=new Set();
+
+  var matched = new Set();
   allNodes.get().forEach(function(n){{
-    var lbl=(n.label||'').toLowerCase();
-    var cname=(n._cname||'').toLowerCase();
-    var id=(n.id||'').toLowerCase();
+    var lbl   = (n.label  ||'').toLowerCase();
+    var cname = (n._cname ||'').toLowerCase();
+    var id    = (String(n.id)||'').toLowerCase();
     if(lbl.includes(q)||cname.includes(q)||id.includes(q)) matched.add(n.id);
   }});
-  // highlight matched, dim others
-  allNodes.update(allNodes.get().map(n=>({{
-    id:n.id, opacity: matched.has(n.id)?1.0:0.10
-  }})));
-  // show only edges connected to matched
-  allEdges.update(allEdges.get().map(e=>({{
-    id:e.id, hidden:!(matched.has(e.from)||matched.has(e.to))
-  }})));
-  // zoom to first match
-  if(matched.size>0){{
-    network.focus([...matched][0],{{scale:1.4,animation:{{duration:500}}}});
+
+  _searchMatches = [...matched];
+  _searchIdx = _searchMatches.length > 0 ? 0 : -1;
+
+  // Highlight matched (gold ring + full opacity), dim others
+  allNodes.update(allNodes.get().map(function(n){{
+    if(matched.has(n.id)){{
+      return {{id:n.id, opacity:1.0,
+               borderWidth:4,
+               color:{{border:'#f59e0b',background:n._origBg||n.color&&n.color.background||'#fff'}}}};
+    }} else {{
+      return {{id:n.id, opacity:0.08,
+               borderWidth:n._origBW||2,
+               color:n._origColor||undefined}};
+    }}
+  }}));
+
+  // Show only edges between matched nodes
+  allEdges.update(allEdges.get().map(e=>
+    ({{id:e.id, hidden:!(matched.has(e.from)&&matched.has(e.to)),
+       opacity: matched.has(e.from)&&matched.has(e.to)?1.0:0.0}})));
+
+  // Count badge
+  if(countEl) countEl.textContent = matched.size > 0
+    ? matched.size+' found'
+    : 'No match';
+
+  // Zoom to first match
+  if(_searchMatches.length > 0){{
+    network.focus(_searchMatches[0],{{scale:1.6,animation:{{duration:400,easingFunction:'easeOutQuad'}}}});
+    network.selectNodes([_searchMatches[0]]);
   }}
+}}
+
+// Enter key cycles through matches
+function handleSearchKey(e){{
+  if(e.key !== 'Enter' || _searchMatches.length === 0) return;
+  _searchIdx = (_searchIdx + 1) % _searchMatches.length;
+  var nodeId = _searchMatches[_searchIdx];
+  network.focus(nodeId,{{scale:1.6,animation:{{duration:300,easingFunction:'easeOutQuad'}}}});
+  network.selectNodes([nodeId]);
+  // Show NODE INFO panel for focused node
+  var nodeObj = allNodes.get(nodeId);
+  if(nodeObj&&nodeObj.title) showPanel('NODE INFO',nodeObj.title);
+}}
+
+// ── Hover dim ─────────────────────────────────────────────────────────────
+// State: are we in hover-dim mode?
+var _hoverActive   = false;
+var _hoveredNodeId = null;
+
+// Store original colors on first hover (once)
+var _origColorsStored = false;
+function _storeOrigColors(){{
+  if(_origColorsStored) return;
+  allNodes.update(allNodes.get().map(function(n){{
+    return {{id:n.id,
+      _origColor: n.color   || null,
+      _origBg:    n.color && n.color.background ? n.color.background : null,
+      _origBorder:n.color && n.color.border     ? n.color.border     : null,
+      _origBW:    n.borderWidth || 2}};
+  }}));
+  _origColorsStored = true;
+}}
+
+network.on('hoverNode',function(params){{
+  // Skip if search is active or node is selected
+  var q = document.getElementById('searchBox').value.trim();
+  if(q) return;
+  _storeOrigColors();
+  _hoverActive   = true;
+  _hoveredNodeId = params.node;
+
+  var hovered   = new Set([params.node]);
+  var connected = new Set(network.getConnectedNodes(params.node));
+  connected.add(params.node);
+
+  // Hovered node: full + gold ring
+  // Connected nodes: full opacity, normal border
+  // Others: heavily dimmed
+  allNodes.update(allNodes.get().map(function(n){{
+    if(n.id === params.node){{
+      return {{id:n.id, opacity:1.0, borderWidth:4,
+               color:{{border:'#f59e0b',
+                       background:n._origBg||undefined}}}};
+    }} else if(connected.has(n.id)){{
+      return {{id:n.id, opacity:1.0, borderWidth:n._origBW||2,
+               color:n._origColor||undefined}};
+    }} else {{
+      return {{id:n.id, opacity:0.07, borderWidth:1,
+               color:n._origColor||undefined}};
+    }}
+  }}));
+
+  // Edges: bright if connected to hovered, very dim otherwise
+  allEdges.update(allEdges.get().map(function(e){{
+    var isConn = e.from===params.node||e.to===params.node;
+    return {{id:e.id, opacity:isConn?1.0:0.05,
+             width: isConn ? Math.max(e._origWidth||e.width||1, 2.5) : (e._origWidth||e.width||1)}};
+  }}));
+}}
+
+network.on('blurNode',function(params){{
+  var q = document.getElementById('searchBox').value.trim();
+  if(q) return;  // search is driving — don't reset
+  _hoverActive   = false;
+  _hoveredNodeId = null;
+
+  // Restore everything
+  allNodes.update(allNodes.get().map(function(n){{
+    return {{id:n.id, opacity:1.0,
+             borderWidth:n._origBW||2,
+             color:n._origColor||undefined}};
+  }}));
+  allEdges.update(allEdges.get().map(function(e){{
+    return {{id:e.id, opacity:1.0,
+             width:e._origWidth||e.width||1}};
+  }}));
 }}
 
 // ── Edge type filter ──
@@ -9184,22 +9408,177 @@ network.on('click',function(params){{
     if(edgeObj&&edgeObj.title)showPanel('LINK INFO',edgeObj.title);
   }} else{{
     selectedNodeId=null; selectedEdgeId=null;
-    allNodes.update(allNodes.get().map(n=>({{id:n.id,opacity:1.0}})));
+    _hoverActive=false; _hoveredNodeId=null;
+    var q=document.getElementById('searchBox').value.trim();
+    if(!q){{
+      allNodes.update(allNodes.get().map(n=>({{id:n.id,opacity:1.0,
+        borderWidth:n._origBW||2,color:n._origColor||undefined}})));
+      allEdges.update(allEdges.get().map(e=>({{id:e.id,opacity:1.0,
+        width:e._origWidth||e.width||1}})));
+    }}
     closePanel();
   }}
 }});
 
-// Right-click = delete
-network.on('oncontext',function(params){{
+// ── Context menu HTML ─────────────────────────────────────────────────────
+var _ctxMenu = (function(){{
+  var el = document.createElement('div');
+  el.id = 'ctxMenu';
+  el.style.cssText = [
+    'position:fixed;z-index:9999;background:#fff',
+    'border:1px solid #e2e8f0;border-radius:8px',
+    'box-shadow:0 8px 24px rgba(0,0,0,.18)',
+    'padding:4px 0;min-width:190px',
+    'font-family:Segoe UI,Arial,sans-serif;font-size:13px',
+    'display:none;user-select:none'
+  ].join(';');
+  document.body.appendChild(el);
+
+  function item(icon, label, action, danger){{
+    var d = document.createElement('div');
+    d.style.cssText = [
+      'padding:7px 14px;cursor:pointer;display:flex;gap:8px;align-items:center',
+      danger ? 'color:#dc2626' : 'color:#0f172a'
+    ].join(';');
+    d.innerHTML = '<span style="font-size:15px">'+icon+'</span><span>'+label+'</span>';
+    d.onmouseenter = function(){{ d.style.background='#f1f5f9'; }};
+    d.onmouseleave = function(){{ d.style.background=''; }};
+    d.onclick = function(){{ hide(); action(); }};
+    return d;
+  }}
+
+  function sep(){{
+    var hr = document.createElement('hr');
+    hr.style.cssText = 'margin:3px 0;border:none;border-top:1px solid #f1f5f9';
+    return hr;
+  }}
+
+  function show(x, y, items){{
+    el.innerHTML = '';
+    items.forEach(function(it){{
+      if(it === 'sep') el.appendChild(sep());
+      else el.appendChild(it);
+    }});
+    el.style.display = 'block';
+    // Prevent overflow off screen
+    var rect = el.getBoundingClientRect();
+    var vw = window.innerWidth; var vh = window.innerHeight;
+    el.style.left = (x + rect.width > vw ? vw - rect.width - 8 : x) + 'px';
+    el.style.top  = (y + rect.height > vh ? vh - rect.height - 8 : y) + 'px';
+  }}
+
+  function hide(){{ el.style.display='none'; }}
+  document.addEventListener('click', hide);
+  document.addEventListener('keydown', function(e){{ if(e.key==='Escape') hide(); }});
+
+  return {{ show:show, hide:hide, item:item }};
+}})();
+
+// ── Right-click handler ────────────────────────────────────────────────────
+network.on('oncontext', function(params){{
   params.event.preventDefault();
-  if(params.nodes.length>0){{
-    selectedNodeId=params.nodes[0];
-    deleteSelected();
-  }} else if(params.edges.length>0){{
-    selectedEdgeId=params.edges[0];
-    deleteSelected();
+  var x = params.event.clientX;
+  var y = params.event.clientY;
+
+  if(params.nodes.length > 0){{
+    var nid = params.nodes[0];
+    selectedNodeId = nid;
+    var nodeObj = allNodes.get(nid);
+    var label   = nodeObj ? (nodeObj.label||nid) : nid;
+    var numOnly = String(nid).replace(/[^0-9+]/g,'');
+
+    _ctxMenu.show(x, y, [
+      _ctxMenu.item('📋', 'Copy Number',       function(){{ _copyText(numOnly||String(nid)); }}),
+      _ctxMenu.item('📝', 'Copy Full Label',   function(){{ _copyText(label); }}),
+      'sep',
+      _ctxMenu.item('🔦', 'Highlight Network', function(){{
+        var conn = new Set(network.getConnectedNodes(nid)); conn.add(nid);
+        allNodes.update(allNodes.get().map(n=>({{id:n.id,opacity:conn.has(n.id)?1.0:0.08}})));
+      }}),
+      _ctxMenu.item('👁',  'Show Node Info',   function(){{
+        if(nodeObj&&nodeObj.title) showPanel('NODE INFO', nodeObj.title);
+      }}),
+      'sep',
+      _ctxMenu.item('🗑', 'Remove Node',       function(){{ deleteSelected(); }}, true),
+    ]);
+
+  }} else if(params.edges.length > 0){{
+    var eid2 = params.edges[0];
+    selectedEdgeId = eid2;
+    var edgeObj = allEdges.get(eid2);
+    var fromN   = edgeObj ? String(edgeObj.from) : '';
+    var toN     = edgeObj ? String(edgeObj.to)   : '';
+    var durVal  = edgeObj ? (edgeObj._dur || 0)  : 0;
+
+    _ctxMenu.show(x, y, [
+      _ctxMenu.item('📋', 'Copy: '+fromN.slice(-8),  function(){{ _copyText(fromN); }}),
+      _ctxMenu.item('📋', 'Copy: '+toN.slice(-8),    function(){{ _copyText(toN); }}),
+      'sep',
+      _ctxMenu.item('ℹ️',  'Show Edge Info',          function(){{
+        if(edgeObj&&edgeObj.title) showPanel('LINK INFO', edgeObj.title);
+      }}),
+      'sep',
+      _ctxMenu.item('🗑', 'Remove Edge',             function(){{ deleteSelected(); }}, true),
+    ]);
+
+  }} else {{
+    // Background right-click
+    _ctxMenu.show(x, y, [
+      _ctxMenu.item('🔲', 'Fit All Nodes',    function(){{ network.fit(); }}),
+      _ctxMenu.item('▶', 'Unfreeze Physics', function(){{
+        physicsOn = true;
+        network.setOptions({{physics:{{enabled:true}}}});
+        document.getElementById('physBtn').textContent='\u23F8 Freeze';
+      }}),
+      _ctxMenu.item('⏸', 'Freeze Layout',    function(){{
+        physicsOn = false;
+        network.setOptions({{physics:{{enabled:false}}}});
+        document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
+      }}),
+      'sep',
+      _ctxMenu.item('👁', 'Show All',         function(){{ showAll(); }}),
+      _ctxMenu.item('🔴', 'Common Only',       function(){{ showOnlyCommon(); }}),
+    ]);
   }}
 }});
+
+// ── Copy helper ────────────────────────────────────────────────────────────
+function _copyText(text){{
+  if(navigator.clipboard && navigator.clipboard.writeText){{
+    navigator.clipboard.writeText(text).then(function(){{
+      _showCopyToast(text);
+    }}).catch(function(){{ _fallbackCopy(text); }});
+  }} else {{
+    _fallbackCopy(text);
+  }}
+}}
+
+function _fallbackCopy(text){{
+  var ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try {{ document.execCommand('copy'); _showCopyToast(text); }} catch(e){{}}
+  document.body.removeChild(ta);
+}}
+
+function _showCopyToast(text){{
+  var toast = document.createElement('div');
+  toast.textContent = '✅ Copied: ' + text;
+  toast.style.cssText = [
+    'position:fixed;bottom:28px;left:50%;transform:translateX(-50%)',
+    'background:#0f172a;color:#fff;padding:8px 18px',
+    'border-radius:20px;font-size:13px;font-family:Segoe UI,Arial,sans-serif',
+    'z-index:99999;pointer-events:none',
+    'box-shadow:0 4px 16px rgba(0,0,0,.35)',
+    'opacity:0;transition:opacity .2s'
+  ].join(';');
+  document.body.appendChild(toast);
+  requestAnimationFrame(function(){{ toast.style.opacity='1'; }});
+  setTimeout(function(){{
+    toast.style.opacity='0';
+    setTimeout(function(){{ document.body.removeChild(toast); }}, 300);
+  }}, 2000);
+}}
 </script>
 </body>
 </html>"""
