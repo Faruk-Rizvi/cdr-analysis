@@ -8580,8 +8580,8 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
 <html>
 <head>
 <meta charset="UTF-8">
-<style>{{_VIS_CSS_INLINE}}</style>
-<script>{{_VIS_JS_INLINE}}</script>
+<style>{_VIS_CSS_INLINE}</style>
+<script>{_VIS_JS_INLINE}</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
