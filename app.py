@@ -8555,7 +8555,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
                     'width': _edge_w,
                     'font': {'size': 10, 'color': _font_color,
                              'strokeWidth': 2, 'strokeColor': '#ffffff',
-                             'align': 'middle', 'multi': 'html'},
+                             'align': 'middle', 'multi': False},
                     'smooth': {'type': 'dynamic'},
                     'title': edge_title,
                     '_total': grand_total, '_etype': 'call',
@@ -8757,7 +8757,7 @@ var network = new vis.Network(
   {{
     nodes:{{borderWidth:2,shadow:{{enabled:true,size:4}}}},
     edges:{{
-      smooth:{{type:'dynamic'}},shadow:false,font:{{size:11,strokeWidth:2,strokeColor:'#ffffff',align:'middle'}}
+      smooth:{{type:'dynamic'}},shadow:false,font:{{size:10,strokeWidth:2,strokeColor:'#ffffff',align:'middle',multi:false}}
     }},
     physics:{{
       enabled:true,solver:'repulsion',
@@ -8780,9 +8780,9 @@ network.once('stabilizationIterationsDone', function(){{
   physicsOn = false;
   document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
 }});
-setTimeout(function(){{if(network)network.fit();}}, 2500);
-
 var physicsOn = true;
+
+setTimeout(function(){{if(network)network.fit();}}, 2500);
 
 // Pin a node after dragging so it stays where the user placed it
 network.on('dragEnd', function(params){{
