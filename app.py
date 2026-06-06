@@ -8535,7 +8535,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
                 _dur_h = int(dur // 60)
                 _dur_m = int(dur % 60)
                 _dur_label = (f"{_dur_h}h{_dur_m:02d}m" if _dur_h > 0
-                              else f"{_dur_m}m" if _dur_m > 0 else "<1m")
+                              else f"{_dur_m}m" if _dur_m > 0 else "0m")
 
                 # Width: count + duration both contribute
                 _base_w = max(1, min(5, grand_total // 5 + 1))
@@ -8551,7 +8551,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
                     _ec_col = ec   # normal
 
                 # Label: "count\ndur" two-line
-                _edge_label = f"{grand_total}\n{_dur_label}"
+                _edge_label = f"{grand_total} | {_dur_label}"
 
                 # Font color: red for long calls
                 _font_color = '#991b1b' if dur >= 30 else '#1e293b'
@@ -8760,6 +8760,8 @@ var deletedEdges = [];
 var selectedNodeId = null;
 var selectedEdgeId = null;
 
+var physicsOn = true;
+
 var network = new vis.Network(
   document.getElementById('network'),
   {{nodes:allNodes, edges:allEdges}},
@@ -8789,8 +8791,6 @@ network.once('stabilizationIterationsDone', function(){{
   physicsOn = false;
   document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
 }});
-var physicsOn = true;
-
 setTimeout(function(){{if(network)network.fit();}}, 2500);
 
 // Pin a node after dragging so it stays where the user placed it
