@@ -12544,12 +12544,24 @@ def main():
                                 last_err = f"Direct: {e} | HF lib: {e2}"
 
                     if not downloaded:
-                        st.warning(f"⚠️ Could not download {cfg['hf']}: {last_err}")
-                        return {}, {}
+                        # Token missing হলে friendly info, অন্যথায় warning
+                        _no_token = ("401" in last_err or "Unauthorized" in last_err
+                                     or "Repository Not Found" in last_err
+                                     or "Invalid username" in last_err)
+                        if _no_token:
+                            st.info(
+                                f"ℹ️ Cell tower GPS CSV ({cfg['hf']}) লোড হয়নি — "
+                                f"HuggingFace token সেট করা নেই। "
+                                f"Streamlit Secrets-এ `HF_TOKEN` যোগ করুন। "
+                                f"GPS ছাড়া text-based location ব্যবহার হবে।"
+                            )
+                        else:
+                            st.warning(f"⚠️ Could not download {cfg['hf']}: {last_err}")
+                        return {}, {}, {}
 
                 if not (_os.path.isfile(local) and _os.path.getsize(local) > 5000):
                     st.warning(f"⚠️ Downloaded file too small or missing: {fname}")
-                    return {}, {}
+                    return {}, {}, {}
 
                 cell_exact = {}
                 cid_multi  = {}
@@ -12598,10 +12610,10 @@ def main():
 
                     if not all(c in cdf2.columns for c in [lc, la, lo]):
                         st.warning(f"⚠️ {fname}: Required columns not found. Available: {list(cdf2.columns[:10])}")
-                        return {}, {}
+                        return {}, {}, {}
                     if ci not in cdf2.columns:
                         st.warning(f"⚠️ {fname}: Cell ID column '{ci}' not found. Available: {list(cdf2.columns[:10])}")
-                        return {}, {}
+                        return {}, {}, {}
 
                     has_addr   = ac and ac in cdf2.columns
                     thana_col  = cfg.get("thana", "")
