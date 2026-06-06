@@ -7527,21 +7527,30 @@ def _build_suspicious_patterns(dfs, window_min=30):
                 # Find pairs within window
                 hits = []
                 bi = 0
-                for ta in times_a:
-                    while bi < len(times_b) and times_b[bi] < ta - window_td.value:
+                # Normalize to int64 nanoseconds safely (handles numpy.datetime64 & pandas.Timestamp)
+                def _to_ns(t):
+                    ts = pd.Timestamp(t)
+                    return ts.value  # always int64 nanoseconds
+
+                _window_ns = int(window_td.total_seconds() * 1e9)
+                times_a_ns = [_to_ns(t) for t in times_a]
+                times_b_ns = [_to_ns(t) for t in times_b]
+
+                for ta_ns in times_a_ns:
+                    while bi < len(times_b_ns) and times_b_ns[bi] < ta_ns - _window_ns:
                         bi += 1
-                    for k in range(bi, len(times_b)):
-                        tb = times_b[k]
-                        diff = abs(int(tb) - int(ta)) / 1e9  # nanoseconds → seconds
+                    for k in range(bi, len(times_b_ns)):
+                        tb_ns = times_b_ns[k]
+                        diff = abs(tb_ns - ta_ns) / 1e9  # nanoseconds → seconds
                         if diff <= window_min * 60:
                             hits.append({
                                 'Subject A': sa, 'Subject B': sb,
                                 'Common Number': num,
-                                'Time A': pd.Timestamp(ta).strftime('%Y-%m-%d %H:%M'),
-                                'Time B': pd.Timestamp(tb).strftime('%Y-%m-%d %H:%M'),
+                                'Time A': pd.Timestamp(ta_ns).strftime('%Y-%m-%d %H:%M'),
+                                'Time B': pd.Timestamp(tb_ns).strftime('%Y-%m-%d %H:%M'),
                                 'Gap (min)': round(diff / 60, 1),
                             })
-                        elif int(tb) > int(ta) + window_td.value:
+                        elif tb_ns > ta_ns + _window_ns:
                             break
 
                 if hits:
@@ -7573,23 +7582,28 @@ def _build_suspicious_patterns(dfs, window_min=30):
 
                 hits = []
                 bi = 0
-                for ta in times_ax:
-                    # Find X→B calls that happen AFTER A→X within window
-                    while bi < len(times_xb) and int(times_xb[bi]) < int(ta):
+                _to_ns2 = lambda t: pd.Timestamp(t).value
+                _window_ns2 = int(window_td.total_seconds() * 1e9)
+                times_ax_ns = [_to_ns2(t) for t in times_ax]
+                times_xb_ns = [_to_ns2(t) for t in times_xb]
+
+                for ta_ns in times_ax_ns:
+                    # Find X-B calls that happen AFTER A-X within window
+                    while bi < len(times_xb_ns) and times_xb_ns[bi] < ta_ns:
                         bi += 1
-                    for k in range(bi, len(times_xb)):
-                        tb = times_xb[k]
-                        diff = (int(tb) - int(ta)) / 1e9
+                    for k in range(bi, len(times_xb_ns)):
+                        tb_ns = times_xb_ns[k]
+                        diff = (tb_ns - ta_ns) / 1e9
                         if 0 <= diff <= window_min * 60:
                             hits.append({
                                 'Subject A': sa,
                                 'Relay Number (X)': x,
                                 'Subject B': sb,
-                                'A↔X Time': pd.Timestamp(ta).strftime('%Y-%m-%d %H:%M'),
-                                'X↔B Time': pd.Timestamp(tb).strftime('%Y-%m-%d %H:%M'),
+                                'A-X Time': pd.Timestamp(ta_ns).strftime('%Y-%m-%d %H:%M'),
+                                'X-B Time': pd.Timestamp(tb_ns).strftime('%Y-%m-%d %H:%M'),
                                 'Relay Gap (min)': round(diff / 60, 1),
                             })
-                        elif int(tb) > int(ta) + window_td.value:
+                        elif tb_ns > ta_ns + _window_ns2:
                             break
 
                 if hits:
@@ -8431,13 +8445,11 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
                 )
                 edges.append({
                     'id': eid, 'from': sub, 'to': pb,
-                    'label': str(call_total),
+                    'label': '',
                     'arrows': {'to': {'enabled': False}},
                     'color': {'color': ec, 'opacity': 0.85},
                     'width': max(1, min(6, call_total//5+1)) + (2 if is_common else 0),
-                    'font': {'size': 11, 'color': '#1e293b',
-                             'strokeWidth': 2, 'strokeColor': '#ffffff',
-                             'align': 'middle'},
+                    'font': {'size': 0},
                     'smooth': {'type': 'dynamic'},
                     'title': call_title,
                     '_total': call_total, '_etype': 'call',
@@ -8459,14 +8471,12 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
                 )
                 edges.append({
                     'id': eid, 'from': sub, 'to': pb,
-                    'label': str(sms_total),
+                    'label': '',
                     'arrows': {'to': {'enabled': False}},
                     'color': {'color': ec, 'opacity': 0.65},
                     'width': max(1, min(4, sms_total//5+1)),
                     'dashes': True,
-                    'font': {'size': 11, 'color': '#15803d',
-                             'strokeWidth': 2, 'strokeColor': '#ffffff',
-                             'align': 'middle'},
+                    'font': {'size': 0},
                     'smooth': {'type': 'dynamic'},
                     'title': sms_title,
                     '_total': sms_total, '_etype': 'sms',
@@ -8541,8 +8551,10 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <div class="li"><div class="dot" style="background:#dc2626"></div>Common Contact</div>
   <div class="li"><div class="dot" style="background:#64748b"></div>Single Contact</div>
   <div class="li"><div class="dot" style="background:#e2e8f0;border:3px solid #f59e0b;width:13px;height:13px;"></div>High-freq ⭐</div>
-  <div class="li"><div class="ln" style="background:#2563eb"></div>Call (লাইনে মোট সংখ্যা)</div>
-  <div class="li"><div class="ln" style="background:#16a34a;border-top:2px dashed #16a34a;height:0"></div>SMS (লাইনে মোট সংখ্যা)</div>
+  <div class="li"><div class="ln" style="background:#2563eb"></div>MOC→</div>
+  <div class="li"><div class="ln" style="background:#0891b2"></div>←MTC</div>
+  <div class="li"><div class="ln" style="background:#16a34a;border-top:2px dashed #16a34a;height:0"></div>SMS→</div>
+  <div class="li"><div class="ln" style="background:#7c3aed;border-top:2px dashed #7c3aed;height:0"></div>←SMS</div>
 </div>
 <div class="bar">
   <button class="btn" onclick="network.fit()">&#x229F; Fit</button>
@@ -8666,8 +8678,7 @@ var network = new vis.Network(
   {{
     nodes:{{borderWidth:2,shadow:{{enabled:true,size:4}}}},
     edges:{{
-      smooth:{{type:'dynamic'}},shadow:false,
-      font:{{size:11,strokeWidth:2,strokeColor:'#ffffff',align:'middle'}}
+      smooth:{{type:'dynamic'}},shadow:false
     }},
     physics:{{
       enabled:true,solver:'repulsion',
@@ -9230,17 +9241,17 @@ def link_analysis_page():
     with st.expander("⚙️ Settings", expanded=False):
         c1, c2, c3 = st.columns(3)
         with c1:
-            top_n = st.slider("Top N contacts per subject (table & graph)", 5, 50, 20)
+            top_n = st.slider("Top contacts per subject (excl. common contacts)", 5, 20, 5, help="Each subject shows up to this many unique contacts. Common contacts are always shown separately.")
         with c2:
             coloc_window = st.slider("Co-location time window (minutes)", 5, 120, 30)
         with c3:
             radius_km = st.slider("Co-location radius (km)", 1, 20, 5)
         exclude_noise = st.checkbox(
-            "🧹 Carrier/service numbers ফিল্টার করুন (IVR, promo, shortcode)",
+            "🧹 Filter carrier/service numbers (IVR, promo, shortcodes)",
             value=True,
-            help="ON থাকলে operator IVR, promotional ও shortcode numbers — connections, "
-                 "common contacts এবং network graph — সব জায়গা থেকে বাদ যাবে। "
-                 "কোনো specific service number investigate করতে চাইলে OFF করুন।"
+            help="When ON, operator IVR, promotional and shortcode numbers are removed from "
+                 "connections, common contacts, and the network graph. "
+                 "Turn OFF only if you need to investigate a specific service number."
         )
 
     # ── Subject Name & Photo ──
@@ -9285,7 +9296,7 @@ def link_analysis_page():
                 if _num and _nm:
                     _contact_names_dict[_num] = _nm
         if _contact_names_dict:
-            st.success(f"✅ {len(_contact_names_dict)}টি নাম লোড হয়েছে।")
+            st.success(f"✅ {len(_contact_names_dict)} contact name(s) loaded.")
 
     if st.button("🔗 Run Link Analysis", type="primary", use_container_width=False,
                  key="run_link_analysis"):
@@ -9410,11 +9421,17 @@ def link_analysis_page():
 
             top_connections = defaultdict(dict)
 
-            # Step 1 — প্রতি subject থেকে top_n contacts নাও (call+sms total দিয়ে sort)
+            # Pre-compute common numbers (appear in 2+ subjects)
+            _common_pbs = {pb for pb, sd in connections.items() if len(sd) >= 2}
+
+            # Step 1 — Per subject: top_n contacts EXCLUDING common contacts
+            # Common contacts are added separately (Step 2), so they never
+            # consume the per-subject quota.
             for df_s in dfs:
                 sub = df_s['_subject'].iloc[0]
                 sub_contacts = sorted(
-                    [(pb, sd[sub]) for pb, sd in connections.items() if sub in sd],
+                    [(pb, sd[sub]) for pb, sd in connections.items()
+                     if sub in sd and pb not in _common_pbs],   # exclude commons
                     key=lambda x: x[1]['total'], reverse=True
                 )
                 for pb, data in sub_contacts[:top_n]:
@@ -9422,11 +9439,9 @@ def link_analysis_page():
                         top_connections[pb] = {}
                     top_connections[pb][sub] = data
 
-            # Step 2 — Shared bonus: যেসব number ২+ subject-এর সাথে common
-            #           কিন্তু Step 1-এ top_n cut-off এর কারণে বাদ পড়েছে,
-            #           তাদের সব subject-এর entry সহ যোগ করো।
+            # Step 2 — Always include ALL common contacts (shared between 2+ subjects)
             for pb, subj_dict in connections.items():
-                if len(subj_dict) >= 2:          # common contact
+                if len(subj_dict) >= 2:
                     if pb not in top_connections:
                         top_connections[pb] = {}
                     for sub, data in subj_dict.items():
@@ -9541,38 +9556,33 @@ Cell Tower CSV আপলোড করলে accuracy উন্নত হবে�
 
         # ══════════════════════════════════════════════════════════════════
         # ── Section: Noise Filter Report ──
+        # Only shown when carrier/service numbers are actually found
         # ══════════════════════════════════════════════════════════════════
-        st.markdown("### 🧹 Noise Filter — Carrier & Service Numbers")
-
         with st.spinner("Running noise analysis..."):
-            # exclude_noise=False — raw connections থেকে কী filter হয়েছে সেটা দেখাতে
-            # raw_connections build করি (সব number সহ)
             raw_connections = _build_connections(dfs, exclude_noise=False)
             carrier_list, _ = _build_noise_analysis(dfs, raw_connections)
 
         if carrier_list:
+            st.markdown("### 🧹 Noise Filter — Carrier & Service Numbers")
             noise_df = pd.DataFrame(carrier_list)
             if exclude_noise:
                 st.success(
-                    f"✅ **{len(carrier_list)}টি** carrier/service number **সব জায়গা থেকে** "
-                    f"(connections, common contacts, network graph) automatically filter হয়েছে।"
+                    f"✅ {len(carrier_list)} carrier/service number(s) automatically filtered "
+                    f"from connections, common contacts, and network graph."
                 )
             else:
                 st.warning(
-                    f"⚠️ Filter OFF আছে — **{len(carrier_list)}টি** carrier/service number "
-                    f"এখনও সব জায়গায় দেখাচ্ছে। Settings-এ filter চালু করুন।"
+                    f"⚠️ Filter is OFF — {len(carrier_list)} carrier/service number(s) "
+                    f"are still visible. Enable filter in Settings."
                 )
             st.dataframe(noise_df, use_container_width=True, hide_index=True)
-        else:
-            st.success("✅ কোনো carrier/service number পাওয়া যায়নি।")
-
-        st.markdown("---")
+            st.markdown("---")
 
         # ══════════════════════════════════════════════════════════════════
         # ── Section: First / Last Contact Date ──
         # ══════════════════════════════════════════════════════════════════
         st.markdown("### 📅 First & Last Contact Date")
-        st.caption("প্রতিটি subject এবং common contact-এর মধ্যে কখন প্রথম ও শেষবার যোগাযোগ হয়েছে।")
+        st.caption("First and last contact date between each subject and their common contacts.")
 
         with st.spinner("Calculating contact dates..."):
             fl_dates = _build_first_last_dates(dfs)
@@ -9628,7 +9638,7 @@ Cell Tower CSV আপলোড করলে accuracy উন্নত হবে�
                 if align_rows:
                     align_df = pd.DataFrame(align_rows).sort_values('Date Gap (days)')
                     st.markdown("""<div style="font-weight:700;color:#1e3a8a;margin-top:1rem;margin-bottom:0.4rem;">
-                        📊 Contact Date Alignment — কোন common contact-এর সাথে subjects একই সময়ে যোগাযোগ শুরু করেছে?
+                        📊 Contact Date Alignment — When did each subject first contact the same number?
                     </div>""", unsafe_allow_html=True)
                     st.dataframe(align_df, use_container_width=True, hide_index=True)
                     st.caption("🔴 Same Week = highly suspicious alignment · 🟡 Same Month = moderate · 🟢 Different Period = likely coincidental")
@@ -9647,7 +9657,7 @@ Cell Tower CSV আপলোড করলে accuracy উন্নত হবে�
         _sp_window = st.slider(
             "Pattern detection window (minutes)", 5, 120, 30,
             key="sp_window",
-            help="এই সময়ের মধ্যে একই নম্বরে/থেকে call হলে suspicious pattern হিসেবে flag করা হবে।"
+            help="Calls to/from the same number within this time window will be flagged as a suspicious pattern."
         )
 
         with st.spinner("Detecting suspicious patterns..."):
@@ -9659,9 +9669,9 @@ Cell Tower CSV আপলোড করলে accuracy উন্নত হবে�
             st.markdown("""
             <div style="background:#fef2f2;border-left:4px solid #dc2626;border-radius:8px;
                         padding:0.75rem 1rem;font-size:0.83rem;color:#7f1d1d;margin-bottom:0.75rem">
-            <b>🪞 Mirror Call Pattern কী?</b><br>
-            Subject A এবং Subject B প্রায় একই সময়ে (<b>±window মিনিট</b>) একই নম্বরে call করেছে।
-            এটা indicate করে যে তারা হয় <b>coordinated</b> অথবা একই নির্দেশনা পাচ্ছে।
+            <b>🪞 What is a Mirror Call Pattern?</b><br>
+            Subject A and Subject B both call the same number within <b>±window minutes</b> of each other.
+            This indicates they may be <b>coordinated</b> or receiving instructions from the same source.
             </div>
             """, unsafe_allow_html=True)
 
@@ -9670,7 +9680,7 @@ Cell Tower CSV আপলোড করলে accuracy উন্নত হবে�
                 st.error(f"🚨 {len(mirror_rows)} mirror call instance(s) detected")
                 st.dataframe(m_df, use_container_width=True, hide_index=True)
 
-                # Summary: কোন numbers সবচেয়ে বেশি mirrored
+                # Summary: most frequently mirrored numbers
                 top_mirror = pd.DataFrame(mirror_rows)['Common Number'].value_counts().head(10)
                 if len(top_mirror) > 0:
                     st.markdown("**Top mirrored numbers:**")
@@ -9685,10 +9695,10 @@ Cell Tower CSV আপলোড করলে accuracy উন্নত হবে�
             st.markdown("""
             <div style="background:#fff7ed;border-left:4px solid #f59e0b;border-radius:8px;
                         padding:0.75rem 1rem;font-size:0.83rem;color:#78350f;margin-bottom:0.75rem">
-            <b>🔗 Relay Pattern কী?</b><br>
-            Subject A → X call করে, তারপর X → Subject B call করে (±window মিনিটের মধ্যে)।
-            X একটা <b>intermediary (মধ্যবর্তী)</b> হিসেবে message বা instruction relay করছে।
-            Direct communication এড়িয়ে indirect coordination-এর indicator।
+            <b>🔗 What is a Relay Pattern?</b><br>
+            Subject A calls X, then X calls Subject B within <b>±window minutes</b>.
+            X acts as an <b>intermediary</b>, relaying messages or instructions.
+            This is an indicator of indirect coordination to avoid direct communication.
             </div>
             """, unsafe_allow_html=True)
 
