@@ -1,0 +1,33 @@
+# CDR Analysis Platform — .gitignore
+# ─────────────────────────────────────────────────────────────────────────
+
+# CRITICAL: Never commit secrets
+.streamlit/secrets.toml
+secrets.toml
+*.env
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Data files (CDR data must never be committed)
+*.xlsx
+*.xls
+*.csv
+uploads/
+celltower_cache/
+
+# Streamlit
+.streamlit/
+!.streamlit/config.toml   # config.toml is safe to commit, secrets.toml is NOT
+
+# OS
+.DS_Store
+Thumbs.db
