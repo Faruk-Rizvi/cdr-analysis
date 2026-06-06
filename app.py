@@ -8445,11 +8445,13 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
                 )
                 edges.append({
                     'id': eid, 'from': sub, 'to': pb,
-                    'label': '',
+                    'label': str(call_total),
                     'arrows': {'to': {'enabled': False}},
                     'color': {'color': ec, 'opacity': 0.85},
                     'width': max(1, min(6, call_total//5+1)) + (2 if is_common else 0),
-                    'font': {'size': 0},
+                    'font': {'size': 11, 'color': '#1e293b',
+                             'strokeWidth': 2, 'strokeColor': '#ffffff',
+                             'align': 'middle'},
                     'smooth': {'type': 'dynamic'},
                     'title': call_title,
                     '_total': call_total, '_etype': 'call',
@@ -8471,12 +8473,14 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
                 )
                 edges.append({
                     'id': eid, 'from': sub, 'to': pb,
-                    'label': '',
+                    'label': str(sms_total),
                     'arrows': {'to': {'enabled': False}},
                     'color': {'color': ec, 'opacity': 0.65},
                     'width': max(1, min(4, sms_total//5+1)),
                     'dashes': True,
-                    'font': {'size': 0},
+                    'font': {'size': 11, 'color': '#15803d',
+                             'strokeWidth': 2, 'strokeColor': '#ffffff',
+                             'align': 'middle'},
                     'smooth': {'type': 'dynamic'},
                     'title': sms_title,
                     '_total': sms_total, '_etype': 'sms',
@@ -8551,10 +8555,8 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <div class="li"><div class="dot" style="background:#dc2626"></div>Common Contact</div>
   <div class="li"><div class="dot" style="background:#64748b"></div>Single Contact</div>
   <div class="li"><div class="dot" style="background:#e2e8f0;border:3px solid #f59e0b;width:13px;height:13px;"></div>High-freq ⭐</div>
-  <div class="li"><div class="ln" style="background:#2563eb"></div>MOC→</div>
-  <div class="li"><div class="ln" style="background:#0891b2"></div>←MTC</div>
-  <div class="li"><div class="ln" style="background:#16a34a;border-top:2px dashed #16a34a;height:0"></div>SMS→</div>
-  <div class="li"><div class="ln" style="background:#7c3aed;border-top:2px dashed #7c3aed;height:0"></div>←SMS</div>
+  <div class="li"><div class="ln" style="background:#2563eb"></div>Call (total on line)</div>
+  <div class="li"><div class="ln" style="background:#16a34a;border-top:2px dashed #16a34a;height:0"></div>SMS (total on line)</div>
 </div>
 <div class="bar">
   <button class="btn" onclick="network.fit()">&#x229F; Fit</button>
@@ -8678,7 +8680,7 @@ var network = new vis.Network(
   {{
     nodes:{{borderWidth:2,shadow:{{enabled:true,size:4}}}},
     edges:{{
-      smooth:{{type:'dynamic'}},shadow:false
+      smooth:{{type:'dynamic'}},shadow:false,font:{{size:11,strokeWidth:2,strokeColor:'#ffffff',align:'middle'}}
     }},
     physics:{{
       enabled:true,solver:'repulsion',
@@ -9379,13 +9381,16 @@ def link_analysis_page():
         st.markdown("---")
 
         # ── Full Connection Table ──
-        st.markdown(f"### 📋 All Connections (Top {top_n} per subject)")
+        # Common contacts shown in their own section above.
+        # Each subject tab shows top_n contacts EXCLUDING common contacts.
+        _common_pbs_table = {pb for pb, sd in connections.items() if len(sd) >= 2}
+        st.markdown(f"### 📋 All Connections (Top {top_n} per subject, excl. common contacts)")
         tabs = st.tabs([f"📞 {sub}" for sub in subjects])
 
         for tab, sub in zip(tabs, subjects):
             with tab:
                 sub_conns = [(pb, d[sub]) for pb, d in conn_sorted
-                             if sub in d][:top_n]
+                             if sub in d and pb not in _common_pbs_table][:top_n]
                 if not sub_conns:
                     st.info(f"No connections found for {sub}")
                     continue
