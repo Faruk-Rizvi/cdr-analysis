@@ -1,11 +1,46 @@
-streamlit>=1.32.0
-pandas>=2.0.0
-matplotlib>=3.7.0
-openpyxl>=3.1.0
-python-docx>=1.1.0
-pdfplumber>=0.10.0
-Pillow>=10.0.0
-pytesseract>=0.3.10
-requests>=2.31.0
+# CDR Intelligence Platform — Requirements
+# Python >= 3.11 required (tomllib stdlib, match statement)
+# Install: pip install -r requirements.txt
+# ─────────────────────────────────────────────────────────────────────────
+
+# ── Core Framework ────────────────────────────────────────────────────────
+streamlit>=1.35.0
+
+# ── Data Processing ───────────────────────────────────────────────────────
+pandas>=2.2.0
 numpy>=1.26.0
-huggingface-hub>=0.20.0
+openpyxl>=3.1.0          # pandas Excel (.xlsx) engine
+xlrd>=2.0.1               # pandas Excel (.xls) legacy engine
+
+# ── Visualization ─────────────────────────────────────────────────────────
+matplotlib>=3.8.0
+
+# ── Image Processing ──────────────────────────────────────────────────────
+Pillow>=10.3.0
+
+# ── Document Generation ───────────────────────────────────────────────────
+python-docx>=1.1.0        # DOCX report export
+
+# ── PDF Processing ────────────────────────────────────────────────────────
+PyMuPDF>=1.24.0           # fitz — PDF read/render
+pdfplumber>=0.11.0        # PDF text/table extraction
+
+# ── OCR ───────────────────────────────────────────────────────────────────
+pytesseract>=0.3.10       # OCR for scanned documents
+# Note: also requires system package: apt-get install tesseract-ocr tesseract-ocr-ben
+
+# ── HTTP / API ────────────────────────────────────────────────────────────
+requests>=2.31.0
+
+# ── Security / Auth ───────────────────────────────────────────────────────
+bcrypt>=4.1.0             # password hashing (replaces plaintext _USERS)
+
+# ── AI / ML (optional — for profile document parsing) ────────────────────
+huggingface_hub>=0.23.0   # model download for document analysis
+
+# ─────────────────────────────────────────────────────────────────────────
+# System dependencies (not pip — install via apt/yum):
+#   tesseract-ocr          → pytesseract OCR engine
+#   tesseract-ocr-ben      → Bengali language pack
+#   libgl1-mesa-glx        → PyMuPDF rendering
+# ─────────────────────────────────────────────────────────────────────────
