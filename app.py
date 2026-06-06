@@ -7272,8 +7272,39 @@ def _load_cdr_bytes(file_bytes, label):
         return None, None, 0
 
 
-def _build_connections(dfs):
-    """Build connection table from multiple CDRs."""
+# ── Known BD carrier / service number prefixes ──────────────────────────────
+_CARRIER_NUMBERS = {
+    # GP
+    '01700000000', '01711200200', '01800000000', '01711500500',
+    # Banglalink
+    '01911100100', '01900000000',
+    # Robi / Airtel
+    '01600000600', '01800000600',
+    # Teletalk
+    '01500000500',
+    # Common shortcodes (normalized to 11-digit)
+    '01600162471', '01600162476', '01600162477',
+}
+_CARRIER_PREFIXES_SHORT = [
+    '162', '163', '164', '165',   # 5-digit BD shortcodes
+    '1600', '1700', '1800', '1900',  # operator info lines
+]
+
+def _is_carrier_number(num: str) -> bool:
+    """True if num looks like a carrier/service/IVR number, not a real subscriber."""
+    d = re.sub(r'[^0-9]', '', str(num))
+    if d in _CARRIER_NUMBERS: return True
+    if len(d) < 8: return True
+    if len(set(d)) <= 2 and len(d) >= 8: return True
+    for pfx in _CARRIER_PREFIXES_SHORT:
+        if d.startswith(pfx) and len(d) < 11: return True
+    return False
+
+
+def _build_connections(dfs, exclude_noise=True):
+    """Build connection table from multiple CDRs.
+    exclude_noise=True → carrier/service/IVR numbers are dropped before building connections.
+    """
     # connections[phone_b] = {subject: {call_out, call_in, sms_out, sms_in}}
     connections = defaultdict(lambda: defaultdict(lambda: {
         'call_out': 0, 'call_in': 0, 'sms_out': 0, 'sms_in': 0,
@@ -7298,6 +7329,9 @@ def _build_connections(dfs):
                 lambda x: _clean_phone(str(x)))
         # Valid numbers only
         _tmp = _tmp[_tmp['_pb'].apply(_is_valid_number)]
+        if exclude_noise:
+            _tmp = _tmp[~_tmp['_pb'].apply(_is_carrier_number)]
+            _tmp = _tmp[~_tmp['_pb'].apply(_is_promotional)]
         if _tmp.empty: continue
 
         # Usage type flags
@@ -7359,6 +7393,212 @@ def _build_connections(dfs):
             # defaultdict-এ empty entry তৈরি হয়ে গেছে, মুছে দাও
             del sms_filtered[pb]
     return sms_filtered
+
+
+def _build_first_last_dates(dfs):
+    """
+    প্রতিটি (subject, contact) pair-এর first ও last contact date বের করে।
+    Returns: dict { (subject, phone_b): {'first': date, 'last': date} }
+    """
+    result = {}
+    for df in dfs:
+        if 'start' not in df.columns: continue
+        subject = df['_subject'].iloc[0]
+        pb_col = '_phone_b' if '_phone_b' in df.columns else None
+        if pb_col is None:
+            pb_col = next((c for c in df.columns if c.lower().replace(' ','_') == 'party_b'), None)
+        if pb_col is None: continue
+
+        ut_col = next((c for c in df.columns if c.lower().replace(' ','_') == 'usage_type'), None)
+        if ut_col is None: continue
+
+        _tmp = df[['start', pb_col, ut_col]].copy()
+        _tmp['_pb'] = _tmp[pb_col].fillna('').apply(lambda x: _clean_phone(str(x)))
+        _tmp = _tmp[_tmp['_pb'].apply(_is_valid_number)]
+        if _tmp.empty: continue
+
+        # Only call rows
+        _ut = _tmp[ut_col].fillna('').str.upper().str.strip()
+        _is_call = (
+            _ut.str.contains('MOC') | _ut.str.contains('MTC') |
+            _ut.str.contains('OUT') | _ut.str.contains(r'\bRCF\b', regex=True)
+        )
+        _tmp = _tmp[_is_call]
+        if _tmp.empty: continue
+
+        _grp = _tmp.groupby('_pb')['start'].agg(['min', 'max'])
+        for pb, row in _grp.iterrows():
+            key = (subject, pb)
+            result[key] = {
+                'first': row['min'].strftime('%Y-%m-%d') if pd.notna(row['min']) else '—',
+                'last':  row['max'].strftime('%Y-%m-%d') if pd.notna(row['max']) else '—',
+            }
+    return result
+
+
+def _build_noise_analysis(dfs, connections):
+    """
+    Carrier/service numbers যেগুলো common contact হিসেবে দেখাচ্ছে কিন্তু
+    আসলে operator IVR/promo — সেগুলো flag করে।
+    Returns:
+      carrier_list  — list of dicts (number, shared_by, total_calls, reason)
+      clean_common  — common contacts with carrier numbers removed
+    """
+    carrier_list = []
+    clean_common = {}
+
+    for pb, subj_dict in connections.items():
+        if len(subj_dict) < 2: continue  # শুধু common contacts check করব
+        is_carrier  = _is_carrier_number(pb)
+        is_promo    = _is_promotional(pb)
+        total_calls = sum(d.get('call_out', 0) + d.get('call_in', 0) for d in subj_dict.values())
+
+        if is_carrier or is_promo:
+            reason = 'Carrier/IVR' if is_carrier else 'Promotional/Service'
+            carrier_list.append({
+                'Number':      pb,
+                'Shared By':   len(subj_dict),
+                'Total Calls': total_calls,
+                'Reason':      reason,
+            })
+        else:
+            clean_common[pb] = subj_dict
+
+    return carrier_list, clean_common
+
+
+def _build_suspicious_patterns(dfs, window_min=30):
+    """
+    দুই ধরনের suspicious pattern detect করে:
+
+    1. Mirror Call — Subject A → X call করার ±window_min মিনিটের মধ্যে
+                     Subject B → same X-কে call করে (বা একই X → B-কে)।
+                     মানে: A ও B একই number-এর সাথে প্রায় একই সময়ে যোগাযোগ করেছে।
+
+    2. Relay Pattern — A → X call, তারপর X → B call (±window_min মিনিটের মধ্যে),
+                       যেখানে A ও B দুজনেই subject। X একটা intermediary হিসেবে কাজ করছে।
+
+    Returns: (mirror_rows, relay_rows) — দুটো list of dicts
+    """
+    # Subject phone → DataFrame mapping
+    subj_dfs = {}
+    for df in dfs:
+        if 'start' not in df.columns: continue
+        subj = df['_subject'].iloc[0]
+        ut_col = next((c for c in df.columns if c.lower().replace(' ','_') == 'usage_type'), None)
+        pb_col = '_phone_b' if '_phone_b' in df.columns else next(
+            (c for c in df.columns if c.lower().replace(' ','_') == 'party_b'), None)
+        if not ut_col or not pb_col: continue
+
+        _tmp = df[['start', pb_col, ut_col]].copy()
+        _tmp['_pb'] = _tmp[pb_col].fillna('').apply(lambda x: _clean_phone(str(x)))
+        _tmp = _tmp[_tmp['_pb'].apply(_is_valid_number)].copy()
+        _ut = _tmp[ut_col].fillna('').str.upper().str.strip()
+        _is_call = (
+            _ut.str.contains('MOC') | _ut.str.contains('MTC') |
+            _ut.str.contains('OUT') | _ut.str.contains(r'\bRCF\b', regex=True)
+        )
+        _tmp = _tmp[_is_call][['start', '_pb']].copy()
+        _tmp = _tmp.sort_values('start').reset_index(drop=True)
+        subj_dfs[subj] = _tmp
+
+    subjects = list(subj_dfs.keys())
+    window_td = pd.Timedelta(minutes=window_min)
+
+    mirror_rows = []
+    relay_rows  = []
+
+    # ── Mirror pattern: subject pairs ──────────────────────────────────────
+    for i in range(len(subjects)):
+        for j in range(i + 1, len(subjects)):
+            sa, sb = subjects[i], subjects[j]
+            dfa, dfb = subj_dfs[sa], subj_dfs[sb]
+
+            # Common numbers between A and B
+            nums_a = set(dfa['_pb'].unique())
+            nums_b = set(dfb['_pb'].unique())
+            common_nums = nums_a & nums_b
+
+            for num in common_nums:
+                if _is_carrier_number(num) or _is_promotional(num): continue
+                times_a = dfa[dfa['_pb'] == num]['start'].sort_values().values
+                times_b = dfb[dfb['_pb'] == num]['start'].sort_values().values
+
+                # Find pairs within window
+                hits = []
+                bi = 0
+                for ta in times_a:
+                    while bi < len(times_b) and times_b[bi] < ta - window_td.value:
+                        bi += 1
+                    for k in range(bi, len(times_b)):
+                        tb = times_b[k]
+                        diff = abs(int(tb) - int(ta)) / 1e9  # nanoseconds → seconds
+                        if diff <= window_min * 60:
+                            hits.append({
+                                'Subject A': sa, 'Subject B': sb,
+                                'Common Number': num,
+                                'Time A': pd.Timestamp(ta).strftime('%Y-%m-%d %H:%M'),
+                                'Time B': pd.Timestamp(tb).strftime('%Y-%m-%d %H:%M'),
+                                'Gap (min)': round(diff / 60, 1),
+                            })
+                        elif int(tb) > int(ta) + window_td.value:
+                            break
+
+                if hits:
+                    # Deduplicate: same number-এর অনেক instance থাকলে প্রথম ৩টা দেখাও
+                    mirror_rows.extend(hits[:3])
+
+    # ── Relay pattern: A → X → B ────────────────────────────────────────────
+    # প্রতিটি subject-এর CDR-এ যেসব number আছে, সেগুলো দিয়ে cross-check
+    for i in range(len(subjects)):
+        for j in range(len(subjects)):
+            if i == j: continue
+            sa, sb = subjects[i], subjects[j]
+            dfa, dfb = subj_dfs[sa], subj_dfs[sb]
+
+            # X = numbers that appear in A's CDR (A called X)
+            # AND in B's CDR (X called B, i.e. B received from X — but we only have B's
+            # outgoing/incoming perspective, so X appears as party_b in B's CDR too)
+            nums_a = set(dfa['_pb'].unique())
+            nums_b = set(dfb['_pb'].unique())
+            relay_candidates = nums_a & nums_b  # X appears in both
+
+            # X cannot be a subject itself
+            relay_candidates -= set(subjects)
+
+            for x in relay_candidates:
+                if _is_carrier_number(x) or _is_promotional(x): continue
+                times_ax = dfa[dfa['_pb'] == x]['start'].sort_values().values  # A↔X
+                times_xb = dfb[dfb['_pb'] == x]['start'].sort_values().values  # X↔B
+
+                hits = []
+                bi = 0
+                for ta in times_ax:
+                    # Find X→B calls that happen AFTER A→X within window
+                    while bi < len(times_xb) and int(times_xb[bi]) < int(ta):
+                        bi += 1
+                    for k in range(bi, len(times_xb)):
+                        tb = times_xb[k]
+                        diff = (int(tb) - int(ta)) / 1e9
+                        if 0 <= diff <= window_min * 60:
+                            hits.append({
+                                'Subject A': sa,
+                                'Relay Number (X)': x,
+                                'Subject B': sb,
+                                'A↔X Time': pd.Timestamp(ta).strftime('%Y-%m-%d %H:%M'),
+                                'X↔B Time': pd.Timestamp(tb).strftime('%Y-%m-%d %H:%M'),
+                                'Relay Gap (min)': round(diff / 60, 1),
+                            })
+                        elif int(tb) > int(ta) + window_td.value:
+                            break
+
+                if hits:
+                    relay_rows.extend(hits[:3])
+
+    # Sort by gap ascending (tighter = more suspicious)
+    mirror_rows.sort(key=lambda r: r['Gap (min)'])
+    relay_rows.sort(key=lambda r: r['Relay Gap (min)'])
+    return mirror_rows, relay_rows
 
 
 def _haversine_km(lat1, lon1, lat2, lon2):
@@ -7993,11 +8233,45 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
     return unique[:1000]
 
 
-def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_meta=None):
-    """Network graph — clean labels, delete nodes, filter by connection count."""
-    # math → _math_mod (module-level import)
+def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_meta=None, contact_names=None):
+    """Network graph — clean labels, delete nodes, filter by connection count.
 
-    colors_subject = ['#1d4ed8','#dc2626','#15803d','#7c3aed','#d97706']
+    contact_names : dict  {phone_str: name_str}  — optional display names for
+                    contact nodes (non-subject). When provided, node labels show
+                    "Name\nPhone" instead of phone only.
+    """
+    # math → _math_mod (module-level import)
+    if contact_names is None:
+        contact_names = {}
+
+    # Subject 0 = primary (magenta/pink like Image 2), rest = normal palette
+    colors_subject = ['#db2777','#1d4ed8','#15803d','#7c3aed','#d97706']
+
+    # SVG telephone icon as base64 data-URI for contact nodes
+    _PHONE_SVG = (
+        "data:image/svg+xml;base64,"
+        + __import__('base64').b64encode(
+            b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+            b'width="36" height="36">'
+            b'<rect width="24" height="24" rx="5" fill="#64748b"/>'
+            b'<path fill="#fff" d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2'
+            b' 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 '
+            b'1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/>'
+            b'</svg>'
+        ).decode()
+    )
+    _PHONE_SVG_COMMON = (
+        "data:image/svg+xml;base64,"
+        + __import__('base64').b64encode(
+            b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+            b'width="36" height="36">'
+            b'<rect width="24" height="24" rx="5" fill="#dc2626"/>'
+            b'<path fill="#fff" d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2'
+            b' 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 '
+            b'1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/>'
+            b'</svg>'
+        ).decode()
+    )
     subj_labels = {sub: f"S{i+1}" for i, sub in enumerate(subjects)}
 
     nodes = {}
@@ -8056,15 +8330,31 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
     common = {pb for pb, sd in connections.items() if len(sd) >= 2}
 
     # ── Contact nodes ──
+    # Pre-compute max total for importance-ring threshold (top 10%)
+    all_totals = [sum(d['total'] for d in sd.values()) for pb, sd in connections.items() if pb not in subjects]
+    _importance_thresh = sorted(all_totals, reverse=True)[max(0, len(all_totals)//10 - 1)] if all_totals else 9999
+
     for pb, subj_dict in connections.items():
         if pb in nodes: continue
         total = sum(d['total'] for d in subj_dict.values())
         is_common = pb in common
         only_sub  = list(subj_dict.keys())[0] if len(subj_dict)==1 else None
         is_iso_c  = (only_sub and subj_edge_count.get(only_sub,99) < 5)
+        # ── Importance ring: top-10% by total interaction count ──
+        is_important = (total >= _importance_thresh and total >= 10)
 
         bg     = '#fca5a5' if is_common else ('#fef3c7' if is_iso_c else '#e2e8f0')
         border = '#dc2626' if is_common else ('#d97706' if is_iso_c else '#94a3b8')
+        # Importance ring overrides border color (gold ring)
+        if is_important:
+            border = '#f59e0b'
+
+        # ── Contact name label ──
+        _cname = (contact_names or {}).get(pb, '').strip()
+        if _cname:
+            node_label = f"{_cname}\n{pb}"
+        else:
+            node_label = pb
 
         subj_lines = []
         for s, d in subj_dict.items():
@@ -8077,29 +8367,43 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
         tooltip = (
             f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
             f"padding:10px 14px;min-width:230px;line-height:1.8'>"
-            f"<b style='font-size:16px;color:#1e3a8a'>\U0001f4f1 {pb}</b><br>"
-            f"<span style='color:#64748b;font-size:12px'>"
-            f"Shared: {len(subj_dict)} | Total: {total}</span><br>"
+            f"<b style='font-size:16px;color:#1e3a8a'>\U0001f4f1 {pb}</b>"
+            + (f"<br><b style='color:#1e3a8a'>\U0001f464 {_cname}</b>" if _cname else "") +
+            f"<br><span style='color:#64748b;font-size:12px'>"
+            f"Shared: {len(subj_dict)} | Total: {total}"
+            + (" | <b style='color:#f59e0b'>⭐ High-frequency</b>" if is_important else "") +
+            f"</span><br>"
             f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
             + "<br>".join(subj_lines) +
             f"<br><span style='color:#94a3b8;font-size:11px'>"
             f"Click = highlight &nbsp;|&nbsp; Delete btn = remove</span></div>"
         )
+        # Importance ring → thicker border + slightly larger
+        _bw   = 5 if is_important else 1
+        _size = min(10+total, 30) + (5 if is_important else 0)
+        # Phone icon: common=red bg, normal=grey bg
+        _icon = _PHONE_SVG_COMMON if is_common else _PHONE_SVG
         nodes[pb] = {
-            'id': pb, 'label': pb,
-            'color': {'background':bg,'border':border,
-                      'highlight':{'background':bg,'border':'#2563eb'}},
-            'shape': 'ellipse',
-            'size': min(10+total, 30),
-            'font': {'size':13,'color':'#000000','bold':True,
-                     'strokeWidth':2,'strokeColor':'#ffffff'},
+            'id': pb, 'label': node_label,
+            'color': {'background': bg, 'border': border,
+                      'highlight': {'background': bg, 'border': '#2563eb'}},
+            'shape': 'circularImage',
+            'image': _icon,
+            'size': max(18, _size),
+            'borderWidth': _bw,
+            'borderWidthSelected': _bw + 2,
+            'font': {'size': 13, 'color': '#000000', 'bold': True,
+                     'strokeWidth': 2, 'strokeColor': '#ffffff'},
             'title': tooltip,
             'group': 'common' if is_common else ('iso_c' if is_iso_c else 'contact'),
             'mass': 1,
             '_total': total,
+            '_important': is_important,
+            '_cname': _cname,
         }
 
-    # ── Edges ──
+    # ── Edges — combined (undirected): one edge per pair per type ──
+    # Call edges: MOC+MTC combined; SMS edges: sms_out+sms_in combined
     edges = []
     eid = 0
     for pb, subj_dict in connections.items():
@@ -8107,32 +8411,63 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             total = data['total']
             if total == 0: continue
             is_common = pb in common
-            is_call   = data['call_out']+data['call_in'] > data['sms_out']+data['sms_in']
-            parts = []
-            if data['call_out']>0: parts.append(f"\u2191Call:{data['call_out']}")
-            if data['call_in'] >0: parts.append(f"\u2193Call:{data['call_in']}")
-            if data['sms_out'] >0: parts.append(f"\u2191SMS:{data['sms_out']}")
-            if data['sms_in']  >0: parts.append(f"\u2193SMS:{data['sms_in']}")
-            ec = '#dc2626' if is_common else ('#2563eb' if is_call else '#16a34a')
-            etitle = (
-                f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
-                f"padding:10px 14px;line-height:1.8'>"
-                f"<b style='font-size:15px;color:#1e3a8a'>{sub} \u2192 {pb}</b><br>"
-                f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
-                + "<br>".join([f"&nbsp;&nbsp;{p}" for p in parts]) +
-                f"<br>&nbsp;&nbsp;\u23f1 Dur: {round(data['duration'],1)} min</div>"
-            )
-            edges.append({
-                'id':eid,'from':sub,'to':pb,'label':str(total),
-                'arrows':{'to':{'enabled':True,'scaleFactor':0.6}},
-                'color':{'color':ec,'opacity':0.75},
-                'width': max(1,min(6,total//5+1))+(2 if is_common else 0),
-                'font':{'size':0,'color':'#1e293b','strokeWidth':3,
-                        'strokeColor':'#ffffff','align':'middle'},
-                'title':etitle,
-                '_total': total,
-            })
-            eid += 1
+            dur = round(data['duration'], 1)
+
+            ec_common = '#dc2626'
+
+            # ── Combined Call edge (MOC + MTC) ──
+            call_total = data['call_out'] + data['call_in']
+            if call_total > 0:
+                ec = ec_common if is_common else '#2563eb'
+                call_title = (
+                    f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
+                    f"padding:10px 14px;line-height:1.8'>"
+                    f"<b style='font-size:15px;color:{ec}'>\U0001f4de {sub} ↔ {pb}</b><br>"
+                    f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
+                    f"&nbsp;&nbsp;MOC (outgoing): <b>{data['call_out']}</b><br>"
+                    f"&nbsp;&nbsp;MTC (incoming): <b>{data['call_in']}</b><br>"
+                    f"&nbsp;&nbsp;Total Calls: <b>{call_total}</b><br>"
+                    f"&nbsp;&nbsp;\u23f1 Duration: {dur} min</div>"
+                )
+                edges.append({
+                    'id': eid, 'from': sub, 'to': pb,
+                    'label': '',
+                    'arrows': {'to': {'enabled': False}},
+                    'color': {'color': ec, 'opacity': 0.85},
+                    'width': max(1, min(6, call_total//5+1)) + (2 if is_common else 0),
+                    'font': {'size': 0},
+                    'smooth': {'type': 'dynamic'},
+                    'title': call_title,
+                    '_total': call_total, '_etype': 'call',
+                })
+                eid += 1
+
+            # ── Combined SMS edge (sms_out + sms_in) ──
+            sms_total = data['sms_out'] + data['sms_in']
+            if sms_total > 0:
+                ec = ec_common if is_common else '#16a34a'
+                sms_title = (
+                    f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
+                    f"padding:10px 14px;line-height:1.8'>"
+                    f"<b style='font-size:15px;color:{ec}'>\U0001f4ac {sub} ↔ {pb}</b><br>"
+                    f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
+                    f"&nbsp;&nbsp;SMS sent: <b>{data['sms_out']}</b><br>"
+                    f"&nbsp;&nbsp;SMS received: <b>{data['sms_in']}</b><br>"
+                    f"&nbsp;&nbsp;Total SMS: <b>{sms_total}</b></div>"
+                )
+                edges.append({
+                    'id': eid, 'from': sub, 'to': pb,
+                    'label': '',
+                    'arrows': {'to': {'enabled': False}},
+                    'color': {'color': ec, 'opacity': 0.65},
+                    'width': max(1, min(4, sms_total//5+1)),
+                    'dashes': True,
+                    'font': {'size': 0},
+                    'smooth': {'type': 'dynamic'},
+                    'title': sms_title,
+                    '_total': sms_total, '_etype': 'sms',
+                })
+                eid += 1
 
     nodes_json = json.dumps(list(nodes.values()), ensure_ascii=False)
     edges_json = json.dumps(edges, ensure_ascii=False)
@@ -8197,12 +8532,15 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
 </head>
 <body>
 <div class="lgd">
+  <div class="li"><div class="dot" style="background:#db2777"></div>Primary Subject</div>
   <div class="li"><div class="dot" style="background:#1d4ed8"></div>Subject</div>
-  <div class="li"><div class="dot" style="background:#ef4444"></div>Common Contact</div>
-  <div class="li"><div class="dot" style="background:#94a3b8"></div>Single Contact</div>
-  <div class="li"><div class="ln" style="background:#2563eb"></div>Call</div>
-  <div class="li"><div class="ln" style="background:#16a34a"></div>SMS</div>
-  <div class="li"><div class="ln" style="background:#dc2626"></div>Common</div>
+  <div class="li"><div class="dot" style="background:#dc2626"></div>Common Contact</div>
+  <div class="li"><div class="dot" style="background:#64748b"></div>Single Contact</div>
+  <div class="li"><div class="dot" style="background:#e2e8f0;border:3px solid #f59e0b;width:13px;height:13px;"></div>High-freq ⭐</div>
+  <div class="li"><div class="ln" style="background:#2563eb"></div>MOC→</div>
+  <div class="li"><div class="ln" style="background:#0891b2"></div>←MTC</div>
+  <div class="li"><div class="ln" style="background:#16a34a;border-top:2px dashed #16a34a;height:0"></div>SMS→</div>
+  <div class="li"><div class="ln" style="background:#7c3aed;border-top:2px dashed #7c3aed;height:0"></div>←SMS</div>
 </div>
 <div class="bar">
   <button class="btn" onclick="network.fit()">&#x229F; Fit</button>
@@ -8213,6 +8551,23 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <button class="btn orn" onclick="undoDelete()">&#x21BA; Undo</button>
   <button class="btn teal" onclick="exportGraphPNG()">&#x1F4F7; Export PNG</button>
   <button class="btn violet" onclick="copyGraphToClipboard()">&#x1F4CB; Copy Image</button>
+</div>
+<div class="bar">
+  <!-- Search box -->
+  <div class="sl" style="flex:1;min-width:180px;">
+    <span style="font-weight:600;color:#1e3a8a;">&#x1F50D;</span>
+    <input type="text" id="searchBox" placeholder="নম্বর / নাম খুঁজুন…"
+      oninput="searchNodes(this.value)"
+      style="flex:1;font-size:11px;padding:3px 7px;border-radius:5px;
+             border:1px solid #cbd5e1;background:#f8fafc;color:#0f172a;outline:none;">
+    <button class="btn" style="background:#475569;padding:3px 8px;"
+      onclick="document.getElementById('searchBox').value='';searchNodes('')">✕</button>
+  </div>
+  <!-- Edge type filter -->
+  <span style="font-size:11px;font-weight:600;color:#1e3a8a;">Edge:</span>
+  <button class="btn" id="fAll"  onclick="filterEdgeType('all')"  style="background:#0f172a;">All</button>
+  <button class="btn" id="fCall" onclick="filterEdgeType('call')" style="background:#1d4ed8;">Call</button>
+  <button class="btn" id="fSms"  onclick="filterEdgeType('sms')"  style="background:#16a34a;">SMS</button>
   <div class="sl">
     <span style="font-weight:600;color:#1e3a8a;">&#x25A6; Layout:</span>
     <select id="layoutSel" onchange="applyLayout(this.value)"
@@ -8221,27 +8576,29 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
       <option value="physics">&#x1F300; Physics (default)</option>
       <option value="hierarchyLR">&#x27A1; Hierarchy L→R</option>
       <option value="hierarchyUD">&#x2B07; Hierarchy U→D</option>
+      <option value="bipartite">&#x21C4; Bipartite (Subj left/right)</option>
       <option value="circle">&#x25EF; Circle</option>
       <option value="grid">&#x22EE; Grid</option>
     </select>
   </div>
+  <button class="btn" id="impRingBtn" onclick="toggleImportanceRing()" title="High-frequency gold ring">&#11088; Ring: ON</button>
   <div class="sl">
-    <span>Min connections:</span>
+    <span>Min conn:</span>
     <input type="range" id="minConn" min="1" max="20" value="1"
            oninput="filterByConnCount(this.value)">
     <span id="minConnVal">1</span>
   </div>
   <div class="sl">
-    <span>Node Label:</span>
+    <span>Node Lbl:</span>
     <input type="range" id="fontSz" min="0" max="22" value="13"
            oninput="changeFontSize(this.value)">
     <span id="fontVal">13</span>
   </div>
   <div class="sl">
-    <span>Edge Label:</span>
+    <span>Edge Lbl:</span>
     <input type="range" id="edgeFontSz" min="0" max="20" value="0"
            oninput="changeEdgeFontSize(this.value)">
-    <span id="edgeFontVal">off</span>
+    <span id="edgeFontVal">0</span>
   </div>
   <div class="sl">
     <span>Node Size:</span>
@@ -8306,7 +8663,9 @@ var network = new vis.Network(
   {{nodes:allNodes, edges:allEdges}},
   {{
     nodes:{{borderWidth:2,shadow:{{enabled:true,size:4}}}},
-    edges:{{smooth:{{type:'dynamic'}},shadow:false}},
+    edges:{{
+      smooth:{{type:'dynamic'}},shadow:false
+    }},
     physics:{{
       enabled:true,solver:'repulsion',
       stabilization:{{iterations:500,updateInterval:20}},
@@ -8550,6 +8909,75 @@ function applyLayout(mode){{
     setTimeout(function(){{network.fit({{animation:{{duration:500}}}});}},150);
     return;
   }}
+  if(mode==='bipartite'){{
+    // Subjects split left / right, contacts in the middle
+    network.setOptions({{
+      layout:{{improvedLayout:false,hierarchical:{{enabled:false}}}},
+      physics:{{enabled:false}}
+    }});
+    physicsOn=false;
+    document.getElementById('physBtn').textContent='\\u25B6 Start';
+    var visibleNodes=allNodes.get().filter(function(n){{return !n.hidden;}});
+    var subjNodes=visibleNodes.filter(function(n){{
+      return n.group==='subject'||n.group==='isolated_subject';
+    }});
+    var contactNodes=visibleNodes.filter(function(n){{
+      return n.group!=='subject'&&n.group!=='isolated_subject';
+    }});
+    // Left half subjects on X=-700, right half on X=+700
+    var leftSubj=subjNodes.slice(0,Math.ceil(subjNodes.length/2));
+    var rightSubj=subjNodes.slice(Math.ceil(subjNodes.length/2));
+    var yStep=180;
+    var posUpdates2=[];
+    leftSubj.forEach(function(n,i){{
+      posUpdates2.push({{id:n.id,
+        x:-700,
+        y:(i-(leftSubj.length-1)/2)*yStep,
+        fixed:{{x:true,y:false}}}});
+    }});
+    rightSubj.forEach(function(n,i){{
+      posUpdates2.push({{id:n.id,
+        x:700,
+        y:(i-(rightSubj.length-1)/2)*yStep,
+        fixed:{{x:true,y:false}}}});
+    }});
+    // Contacts in the middle in a grid
+    var cCols=Math.max(1,Math.ceil(Math.sqrt(contactNodes.length*0.6)));
+    var cSpacingX=200, cSpacingY=160;
+    var totalRows2=Math.ceil(contactNodes.length/cCols);
+    contactNodes.forEach(function(n,i){{
+      var col=i%cCols, row=Math.floor(i/cCols);
+      posUpdates2.push({{id:n.id,
+        x:(col-(cCols-1)/2)*cSpacingX,
+        y:(row-(totalRows2-1)/2)*cSpacingY,
+        fixed:false}});
+    }});
+    allNodes.update(posUpdates2);
+    setTimeout(function(){{network.fit({{animation:{{duration:600}}}});}},200);
+    return;
+  }}
+}}
+
+// ── Importance Ring toggle ──
+var _impRingOn = true;
+function toggleImportanceRing(){{
+  _impRingOn = !_impRingOn;
+  var btn = document.getElementById('impRingBtn');
+  btn.textContent = _impRingOn ? '\\u2B50 Ring: ON' : '\\u2B50 Ring: OFF';
+  btn.style.background = _impRingOn ? '#1e3a8a' : '#64748b';
+  // Update borderWidth & border color for important nodes
+  var updates = [];
+  allNodes.get().forEach(function(n){{
+    if(!n._important) return;
+    updates.push({{
+      id: n.id,
+      borderWidth: _impRingOn ? 5 : 1,
+      color: Object.assign({{}}, n.color, {{
+        border: _impRingOn ? '#f59e0b' : '#94a3b8'
+      }})
+    }});
+  }});
+  allNodes.update(updates);
 }}
 
 // ── Filter by min connection count ──
@@ -8558,7 +8986,6 @@ function filterByConnCount(val){{
   document.getElementById('minConnVal').textContent=val;
   var updates=[];
   nodesData.forEach(function(n){{
-    // Always show subject nodes
     if(n.group==='subject'||n.group==='isolated_subject'){{
       updates.push({{id:n.id,hidden:false}});return;
     }}
@@ -8566,12 +8993,19 @@ function filterByConnCount(val){{
     updates.push({{id:n.id,hidden:(tot<val)}});
   }});
   allNodes.update(updates);
-  // Also hide edges to hidden nodes
+  // Re-apply edge filter respecting both hidden nodes + active etype
   var hiddenNodes=new Set();
   allNodes.get().forEach(function(n){{if(n.hidden)hiddenNodes.add(n.id);}});
   var edgeUpdates=[];
   allEdges.get().forEach(function(e){{
-    edgeUpdates.push({{id:e.id,hidden:(hiddenNodes.has(e.to)||hiddenNodes.has(e.from))}});
+    var nodeHidden=hiddenNodes.has(e.to)||hiddenNodes.has(e.from);
+    var etypeHidden=false;
+    if(_activeEtype!=='all'){{
+      if(_activeEtype==='call') etypeHidden=e._etype!=='call';
+      else if(_activeEtype==='sms') etypeHidden=e._etype!=='sms';
+      else etypeHidden=e._etype!==_activeEtype;
+    }}
+    edgeUpdates.push({{id:e.id,hidden:nodeHidden||etypeHidden}});
   }});
   allEdges.update(edgeUpdates);
 }}
@@ -8654,6 +9088,57 @@ function changeNodeSize(val){{
   allNodes.update(allNodes.get().map(n=>{{
     if(n.group==='subject'||n.group==='isolated_subject')return{{id:n.id}};
     return{{id:n.id,size:val}};
+  }}));
+}}
+
+// ── Search nodes by number or name ──
+function searchNodes(q){{
+  q = q.trim().toLowerCase();
+  if(!q){{
+    // restore all
+    allNodes.update(allNodes.get().map(n=>({{id:n.id,opacity:1.0}})));
+    allEdges.update(allEdges.get().map(e=>({{id:e.id,hidden:false}})));
+    return;
+  }}
+  var matched=new Set();
+  allNodes.get().forEach(function(n){{
+    var lbl=(n.label||'').toLowerCase();
+    var cname=(n._cname||'').toLowerCase();
+    var id=(n.id||'').toLowerCase();
+    if(lbl.includes(q)||cname.includes(q)||id.includes(q)) matched.add(n.id);
+  }});
+  // highlight matched, dim others
+  allNodes.update(allNodes.get().map(n=>({{
+    id:n.id, opacity: matched.has(n.id)?1.0:0.10
+  }})));
+  // show only edges connected to matched
+  allEdges.update(allEdges.get().map(e=>({{
+    id:e.id, hidden:!(matched.has(e.from)||matched.has(e.to))
+  }})));
+  // zoom to first match
+  if(matched.size>0){{
+    network.focus([...matched][0],{{scale:1.4,animation:{{duration:500}}}});
+  }}
+}}
+
+// ── Edge type filter ──
+var _activeEtype = 'all';
+function filterEdgeType(etype){{
+  _activeEtype = etype;
+  // button highlight
+  ['fAll','fCall','fSms'].forEach(function(id){{
+    document.getElementById(id).style.opacity='0.5';
+  }});
+  var activeId = etype==='all'?'fAll':etype==='call'?'fCall':'fSms';
+  document.getElementById(activeId).style.opacity='1.0';
+
+  var hiddenNodes=new Set();
+  allNodes.get().forEach(function(n){{if(n.hidden)hiddenNodes.add(n.id);}});
+
+  allEdges.update(allEdges.get().map(function(e){{
+    if(hiddenNodes.has(e.from)||hiddenNodes.has(e.to)) return{{id:e.id,hidden:true}};
+    if(etype==='all') return{{id:e.id,hidden:false}};
+    return{{id:e.id,hidden:e._etype!==etype}};
   }}));
 }}
 
@@ -8742,11 +9227,18 @@ def link_analysis_page():
     with st.expander("⚙️ Settings", expanded=False):
         c1, c2, c3 = st.columns(3)
         with c1:
-            top_n = st.slider("Top N contacts per subject", 5, 50, 20)
+            top_n = st.slider("Top N contacts per subject (table & graph)", 5, 50, 20)
         with c2:
             coloc_window = st.slider("Co-location time window (minutes)", 5, 120, 30)
         with c3:
             radius_km = st.slider("Co-location radius (km)", 1, 20, 5)
+        exclude_noise = st.checkbox(
+            "🧹 Carrier/service numbers ফিল্টার করুন (IVR, promo, shortcode)",
+            value=True,
+            help="ON থাকলে operator IVR, promotional ও shortcode numbers — connections, "
+                 "common contacts এবং network graph — সব জায়গা থেকে বাদ যাবে। "
+                 "কোনো specific service number investigate করতে চাইলে OFF করুন।"
+        )
 
     # ── Subject Name & Photo ──
     with st.expander("👤 Subject Names & Photos (optional)", expanded=False):
@@ -8766,6 +9258,31 @@ def link_analysis_page():
                     import base64 as _b64
                     _photo_b64 = "data:" + _sphoto.type + ";base64," + _b64.b64encode(_sphoto.read()).decode()
                 _subj_meta[_lbl] = {"name": _sname.strip(), "photo": _photo_b64}
+
+    # ── Contact Names (optional) ──
+    with st.expander("📇 Contact Names (optional)", expanded=False):
+        st.caption(
+            "পরিচিত নম্বরের নাম দিন। Graph-এ নম্বরের পাশে নাম দেখাবে। "
+            "Format: একটি করে লাইনে `880XXXXXXXXXX = নাম`"
+        )
+        _contact_names_raw = st.text_area(
+            "Number = Name (একটি লাইনে একটি)",
+            placeholder="8801XXXXXXXXX = Rahim Uddin\n8801YYYYYYYYY = Karim Vai",
+            height=140,
+            key="contact_names_input"
+        )
+        # Parse contact names
+        _contact_names_dict = {}
+        for _line in _contact_names_raw.splitlines():
+            _line = _line.strip()
+            if '=' in _line:
+                _parts = _line.split('=', 1)
+                _num = _parts[0].strip()
+                _nm  = _parts[1].strip()
+                if _num and _nm:
+                    _contact_names_dict[_num] = _nm
+        if _contact_names_dict:
+            st.success(f"✅ {len(_contact_names_dict)}টি নাম লোড হয়েছে।")
 
     if st.button("🔗 Run Link Analysis", type="primary", use_container_width=False,
                  key="run_link_analysis"):
@@ -8806,7 +9323,7 @@ def link_analysis_page():
 
         # ── Build connections ──
         with st.spinner("Analyzing connections..."):
-            connections = _build_connections(dfs)
+            connections = _build_connections(dfs, exclude_noise=exclude_noise)
 
         # Filter top N per subject
         # Sort connections by total across subjects
@@ -8880,36 +9397,44 @@ def link_analysis_page():
         # ── Network Graph ──
         st.markdown("### 🕸️ Network Graph")
         with st.spinner("Building network graph..."):
-            # Use top connections for graph (limit nodes)
-            # ── Graph connections: top 80 shared + top 5 per subject ──
+            # ── Graph connections: Fair per-subject top_n + shared bonus ──
+            #
+            # Option A: প্রতি subject থেকে exactly top_n contacts নেওয়া হয়।
+            #           ফলে ৪টা subject থাকলে প্রত্যেকের top_n সমান।
+            # Option B: top_n slider এখন graph-এও apply হয়।
+            # Shared bonus: একাধিক subject-এর সাথে common হলে সে সবসময়
+            #               graph-এ থাকবে (top_n limit-এর বাইরেও)।
+
             top_connections = defaultdict(dict)
 
-            # Step 1: Add top 80 shared/common contacts
-            for pb, subj_dict in conn_sorted[:80]:
-                top_connections[pb] = subj_dict
-
-            # Step 2: Each subject MUST have at least 5 contacts in graph
+            # Step 1 — প্রতি subject থেকে top_n contacts নাও (call+sms total দিয়ে sort)
             for df_s in dfs:
                 sub = df_s['_subject'].iloc[0]
-                current_count = sum(1 for sd in top_connections.values() if sub in sd)
-                if current_count < 5:
-                    added = 0
-                    # Get top contacts for this subject by total (call+sms)
-                    sub_contacts = sorted(
-                        [(pb, sd[sub]) for pb, sd in connections.items() if sub in sd],
-                        key=lambda x: x[1]['total'], reverse=True
-                    )
-                    for pb, data in sub_contacts:
-                        if sum(1 for sd in top_connections.values() if sub in sd) >= 5:
-                            break
-                        if pb not in top_connections:
-                            top_connections[pb] = {}
-                        top_connections[pb][sub] = data
-                        added += 1
+                sub_contacts = sorted(
+                    [(pb, sd[sub]) for pb, sd in connections.items() if sub in sd],
+                    key=lambda x: x[1]['total'], reverse=True
+                )
+                for pb, data in sub_contacts[:top_n]:
+                    if pb not in top_connections:
+                        top_connections[pb] = {}
+                    top_connections[pb][sub] = data
 
-            # Step 3: edge count per subject
-            subj_edge_count = {sub: sum(1 for sd in top_connections.values() if sub in sd)
-                               for sub in subjects}
+            # Step 2 — Shared bonus: যেসব number ২+ subject-এর সাথে common
+            #           কিন্তু Step 1-এ top_n cut-off এর কারণে বাদ পড়েছে,
+            #           তাদের সব subject-এর entry সহ যোগ করো।
+            for pb, subj_dict in connections.items():
+                if len(subj_dict) >= 2:          # common contact
+                    if pb not in top_connections:
+                        top_connections[pb] = {}
+                    for sub, data in subj_dict.items():
+                        if sub not in top_connections[pb]:
+                            top_connections[pb][sub] = data
+
+            # Step 3 — edge count per subject (graph stats-এর জন্য)
+            subj_edge_count = {
+                sub: sum(1 for sd in top_connections.values() if sub in sd)
+                for sub in subjects
+            }
 
             # Build subject meta dict by phone
             _subj_meta_by_phone = {}
@@ -8918,7 +9443,7 @@ def link_analysis_page():
                 meta = _subj_meta.get(_lbl, {}) if "_subj_meta" in dir() else {}
                 _subj_meta_by_phone[sub] = meta
 
-            graph_html = _build_network_html(dfs, top_connections, subjects, subj_edge_count, _subj_meta_by_phone)
+            graph_html = _build_network_html(dfs, top_connections, subjects, subj_edge_count, _subj_meta_by_phone, _contact_names_dict)
 
         st.components.v1.html(graph_html, height=780, scrolling=False)
 
@@ -9008,6 +9533,177 @@ Cell Tower CSV আপলোড করলে accuracy উন্নত হবে�
         else:
             st.info("No co-location events found — subjects were not at the same location "
                     f"(within {coloc_window} min, {radius_km} km radius)")
+
+        st.markdown("---")
+
+        # ══════════════════════════════════════════════════════════════════
+        # ── Section: Noise Filter Report ──
+        # ══════════════════════════════════════════════════════════════════
+        st.markdown("### 🧹 Noise Filter — Carrier & Service Numbers")
+
+        with st.spinner("Running noise analysis..."):
+            # exclude_noise=False — raw connections থেকে কী filter হয়েছে সেটা দেখাতে
+            # raw_connections build করি (সব number সহ)
+            raw_connections = _build_connections(dfs, exclude_noise=False)
+            carrier_list, _ = _build_noise_analysis(dfs, raw_connections)
+
+        if carrier_list:
+            noise_df = pd.DataFrame(carrier_list)
+            if exclude_noise:
+                st.success(
+                    f"✅ **{len(carrier_list)}টি** carrier/service number **সব জায়গা থেকে** "
+                    f"(connections, common contacts, network graph) automatically filter হয়েছে।"
+                )
+            else:
+                st.warning(
+                    f"⚠️ Filter OFF আছে — **{len(carrier_list)}টি** carrier/service number "
+                    f"এখনও সব জায়গায় দেখাচ্ছে। Settings-এ filter চালু করুন।"
+                )
+            st.dataframe(noise_df, use_container_width=True, hide_index=True)
+        else:
+            st.success("✅ কোনো carrier/service number পাওয়া যায়নি।")
+
+        st.markdown("---")
+
+        # ══════════════════════════════════════════════════════════════════
+        # ── Section: First / Last Contact Date ──
+        # ══════════════════════════════════════════════════════════════════
+        st.markdown("### 📅 First & Last Contact Date")
+        st.caption("প্রতিটি subject এবং common contact-এর মধ্যে কখন প্রথম ও শেষবার যোগাযোগ হয়েছে।")
+
+        with st.spinner("Calculating contact dates..."):
+            fl_dates = _build_first_last_dates(dfs)
+
+        if fl_dates and common_contacts:
+            fl_rows = []
+            # শুধু common contacts-এর জন্য দেখাও (most investigative value)
+            for pb, subj_dict in common_contacts[:50]:
+                if _is_carrier_number(pb) or _is_promotional(pb): continue
+                for sub in subjects:
+                    if sub not in subj_dict: continue
+                    key = (sub, pb)
+                    dates = fl_dates.get(key, {})
+                    fl_rows.append({
+                        'Subject':       sub,
+                        'Contact':       pb,
+                        'First Contact': dates.get('first', '—'),
+                        'Last Contact':  dates.get('last',  '—'),
+                        'Total Calls':   subj_dict[sub].get('call_out', 0) + subj_dict[sub].get('call_in', 0),
+                        'Duration (min)': round(subj_dict[sub].get('duration', 0), 1),
+                    })
+
+            if fl_rows:
+                fl_df = pd.DataFrame(fl_rows).sort_values(['Contact', 'Subject'])
+
+                # Highlight: same contact-এর জন্য subjects-এর first contact date কতটা কাছাকাছি
+                st.dataframe(fl_df, use_container_width=True, hide_index=True, height=350)
+
+                # ── Date alignment insight ──
+                # একই contact-এ দুই subject-এর first contact date gap বের করো
+                align_rows = []
+                contact_groups = fl_df.groupby('Contact')
+                for contact, grp in contact_groups:
+                    if len(grp) < 2: continue
+                    dates_valid = grp[grp['First Contact'] != '—']['First Contact'].tolist()
+                    if len(dates_valid) < 2: continue
+                    try:
+                        parsed = sorted([pd.to_datetime(d) for d in dates_valid])
+                        gap_days = (parsed[-1] - parsed[0]).days
+                        align_rows.append({
+                            'Contact':          contact,
+                            'Subjects':         ' / '.join(grp['Subject'].tolist()),
+                            'Earliest Contact': parsed[0].strftime('%Y-%m-%d'),
+                            'Latest Contact':   parsed[-1].strftime('%Y-%m-%d'),
+                            'Date Gap (days)':  gap_days,
+                            'Alignment':        '🔴 Same Week' if gap_days <= 7
+                                                else ('🟡 Same Month' if gap_days <= 30
+                                                else '🟢 Different Period'),
+                        })
+                    except Exception:
+                        pass
+
+                if align_rows:
+                    align_df = pd.DataFrame(align_rows).sort_values('Date Gap (days)')
+                    st.markdown("""<div style="font-weight:700;color:#1e3a8a;margin-top:1rem;margin-bottom:0.4rem;">
+                        📊 Contact Date Alignment — কোন common contact-এর সাথে subjects একই সময়ে যোগাযোগ শুরু করেছে?
+                    </div>""", unsafe_allow_html=True)
+                    st.dataframe(align_df, use_container_width=True, hide_index=True)
+                    st.caption("🔴 Same Week = highly suspicious alignment · 🟡 Same Month = moderate · 🟢 Different Period = likely coincidental")
+            else:
+                st.info("Date information unavailable for common contacts.")
+        else:
+            st.info("Date analysis requires CDR files with a valid timestamp column.")
+
+        st.markdown("---")
+
+        # ══════════════════════════════════════════════════════════════════
+        # ── Section: Suspicious Patterns ──
+        # ══════════════════════════════════════════════════════════════════
+        st.markdown("### 🚨 Suspicious Communication Patterns")
+
+        _sp_window = st.slider(
+            "Pattern detection window (minutes)", 5, 120, 30,
+            key="sp_window",
+            help="এই সময়ের মধ্যে একই নম্বরে/থেকে call হলে suspicious pattern হিসেবে flag করা হবে।"
+        )
+
+        with st.spinner("Detecting suspicious patterns..."):
+            mirror_rows, relay_rows = _build_suspicious_patterns(dfs, _sp_window)
+
+        sp_tab1, sp_tab2 = st.tabs(["🪞 Mirror Call Pattern", "🔗 Relay Pattern"])
+
+        with sp_tab1:
+            st.markdown("""
+            <div style="background:#fef2f2;border-left:4px solid #dc2626;border-radius:8px;
+                        padding:0.75rem 1rem;font-size:0.83rem;color:#7f1d1d;margin-bottom:0.75rem">
+            <b>🪞 Mirror Call Pattern কী?</b><br>
+            Subject A এবং Subject B প্রায় একই সময়ে (<b>±window মিনিট</b>) একই নম্বরে call করেছে।
+            এটা indicate করে যে তারা হয় <b>coordinated</b> অথবা একই নির্দেশনা পাচ্ছে।
+            </div>
+            """, unsafe_allow_html=True)
+
+            if mirror_rows:
+                m_df = pd.DataFrame(mirror_rows)
+                st.error(f"🚨 {len(mirror_rows)} mirror call instance(s) detected")
+                st.dataframe(m_df, use_container_width=True, hide_index=True)
+
+                # Summary: কোন numbers সবচেয়ে বেশি mirrored
+                top_mirror = pd.DataFrame(mirror_rows)['Common Number'].value_counts().head(10)
+                if len(top_mirror) > 0:
+                    st.markdown("**Top mirrored numbers:**")
+                    st.dataframe(
+                        top_mirror.reset_index().rename(columns={'Common Number': 'Number', 'count': 'Mirror Instances'}),
+                        use_container_width=True, hide_index=True
+                    )
+            else:
+                st.success(f"✅ No mirror call patterns found within ±{_sp_window} min window.")
+
+        with sp_tab2:
+            st.markdown("""
+            <div style="background:#fff7ed;border-left:4px solid #f59e0b;border-radius:8px;
+                        padding:0.75rem 1rem;font-size:0.83rem;color:#78350f;margin-bottom:0.75rem">
+            <b>🔗 Relay Pattern কী?</b><br>
+            Subject A → X call করে, তারপর X → Subject B call করে (±window মিনিটের মধ্যে)।
+            X একটা <b>intermediary (মধ্যবর্তী)</b> হিসেবে message বা instruction relay করছে।
+            Direct communication এড়িয়ে indirect coordination-এর indicator।
+            </div>
+            """, unsafe_allow_html=True)
+
+            if relay_rows:
+                r_df = pd.DataFrame(relay_rows)
+                st.warning(f"⚠️ {len(relay_rows)} relay pattern instance(s) detected")
+                st.dataframe(r_df, use_container_width=True, hide_index=True)
+
+                # Top relay numbers
+                top_relay = pd.DataFrame(relay_rows)['Relay Number (X)'].value_counts().head(10)
+                if len(top_relay) > 0:
+                    st.markdown("**Top relay numbers (most active intermediaries):**")
+                    st.dataframe(
+                        top_relay.reset_index().rename(columns={'Relay Number (X)': 'Number', 'count': 'Relay Instances'}),
+                        use_container_width=True, hide_index=True
+                    )
+            else:
+                st.success(f"✅ No relay patterns found within {_sp_window} min window.")
 
 
 def _parse_profile_docs(doc_files):
