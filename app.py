@@ -287,20 +287,38 @@ st.set_page_config(
 # ─────────────────────────────────────────────
 # LOGIN SYSTEM
 # ─────────────────────────────────────────────
-# User credentials — username: password (plain text, local deployment only)
-# To add/remove users: edit this dict
-_USERS = {
-    "faruk13": "NSI&2026",
-    "nsi1":    "NSI&2026",
-    "nsi2":    "NSI&2026",
-    "nsi3":    "NSI&2026",
-}
+# Passwords stored as bcrypt hashes in .streamlit/secrets.toml [passwords]
+# Generate hash: python -c "import bcrypt; print(bcrypt.hashpw(b'PASS', bcrypt.gensalt(12)).decode())"
+import bcrypt as _bcrypt
+
+def _load_password_store():
+    store = {}
+    try:
+        for u, h in st.secrets.get("passwords", {}).items():
+            store[u.strip().lower()] = h.strip()
+        if store: return store
+    except Exception: pass
+    import os as _os
+    env = _os.environ.get("CDR_USERS", "")
+    if env:
+        for pair in env.split(","):
+            if ":" in pair:
+                u, h = pair.split(":", 1)
+                store[u.strip().lower()] = h.strip()
+        if store: return store
+    return store
+
+_PASSWORD_STORE = _load_password_store()
 
 def _check_login(username: str, password: str) -> bool:
-    user = _USERS.get(username.strip().lower())
-    if user is None:
+    hashed = _PASSWORD_STORE.get(username.strip().lower())
+    if not hashed:
+        _bcrypt.checkpw(b"dummy", b"$2b$12$" + b"x"*53)
         return False
-    return _hmac.compare_digest(user, password)
+    try:
+        return _bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
 
 import time as _time_mod   # session timeout-এর জন্য — login page-এর আগে দরকার
 
@@ -4329,7 +4347,7 @@ def movement_pattern_analysis(df):
             top_locations.append({
                 "name":     _lbl,
                 "district": _disp_dist,
-                "gps":      f"{round(_coord[0],5)}, {round(_coord[1],5)}" if _coord else "",
+                "gps":      f"{round(_coord[0],6)}, {round(_coord[1],6)}" if _coord else "",
                 "count":    int(_cnt),
                 "address":  str(_addr)[:70],
             })
@@ -4464,7 +4482,7 @@ def _movement_html(mv):
                 <td style="padding:0.7rem 1rem; font-weight:700;">
                     {t["district"] or t["upazila"]}</td>
                 <td style="padding:0.7rem 1rem; text-align:center; font-family:monospace; font-size:0.82rem; color:#1e3a8a;">
-                    {"✅ " + str(round(float(t["lat"]),5)) + "<br>" + str(round(float(t["lon"]),5)) if t.get("lat") else "—"}
+                    {"✅ " + str(round(float(t["lat"]),6)) + "<br>" + str(round(float(t["lon"]),6)) if t.get("lat") else "—"}
                 </td>
                 <td style="padding:0.7rem 1rem; text-align:center;">
                     <span style="background:#dbeafe;color:#1e40af;border-radius:12px;
@@ -6477,13 +6495,13 @@ def build_movement_map(df, phone, operator, mv_data=None):
 
     # ── Leaflet JS ──
     js=[]
-    coords=[[round(s['lat'],5),round(s['lon'],5)] for s in steps]
+    coords=[[round(s['lat'],6),round(s['lon'],6)] for s in steps]
     js.append("var coords="+_json.dumps(coords)+";")
     js.append("var route=L.polyline.antPath(coords,{color:'#1d4ed8',weight:3,opacity:0.75,delay:600,dashArray:[14,18],pulseColor:'#93c5fd',paused:false,reverse:false}).addTo(map);")
 
     for i in range(len(steps)-1):
         p1=steps[i]; p2=steps[i+1]
-        ml=round((p1['lat']+p2['lat'])/2,5); mlo=round((p1['lon']+p2['lon'])/2,5)
+        ml=round((p1['lat']+p2['lat'])/2,6); mlo=round((p1['lon']+p2['lon'])/2,6)
         b=bearing(p1['lat'],p1['lon'],p2['lat'],p2['lon'])
         dk=hav(p1['lat'],p1['lon'],p2['lat'],p2['lon'])
         col=get_color(p2['km'],home_dist_val,p2['district'])
@@ -6499,7 +6517,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
         js.append("L.marker([{ml},{mlo}],{{icon:L.divIcon({{html:{svg},iconSize:[26,26],iconAnchor:[13,13],className:''}}),zIndexOffset:-50}}).addTo(map).bindTooltip('{tip}',{{sticky:true}});".format(ml=ml,mlo=mlo,svg=_json.dumps(svg),tip=tip))
 
     for i,s in enumerate(steps):
-        num=i+1; la=round(s['lat'],5); lo=round(s['lon'],5)
+        num=i+1; la=round(s['lat'],6); lo=round(s['lon'],6)
         km=s['km']; col=get_color(km,home_dist_val,s['district'])
         dist=(s['district'] or '—').replace('"','')
         thana=(s.get('thana','') or '').replace('"','')
@@ -6525,7 +6543,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
         js.append("L.marker([{la},{lo}],{{icon:L.divIcon({{html:{ni},iconSize:[20,20],iconAnchor:[10,10],className:''}}),zIndexOffset:10}}).addTo(map);".format(la=la,lo=lo,ni=_json.dumps(ni)))
 
     for s in suspicious:
-        la=round(s['lat'],5); lo=round(s['lon'],5)
+        la=round(s['lat'],6); lo=round(s['lon'],6)
         dist=(s['district'] or '?').replace('"','')
         thana=(s.get('thana','') or '').replace('"','')
         loc_s=f"{thana}, {dist}" if thana and thana.lower()!=dist.lower() else dist
@@ -6536,8 +6554,8 @@ def build_movement_map(df, phone, operator, mv_data=None):
              "<b>Date:</b> {dt}</div>").format(loc=loc_s,la=la,lo=lo,km=round(s['km'],1),cnt=s['count'],dt=s['start'][:10])
         js.append("L.circleMarker([{la},{lo}],{{radius:7,fillColor:'#f59e0b',color:'white',weight:1.5,opacity:0.8,fillOpacity:0.35,dashArray:'5,4'}}).addTo(map).bindPopup({pop}).bindTooltip('&#9888; {loc} ({km}km) — {cnt}rec',{{sticky:true}});".format(la=la,lo=lo,pop=_json.dumps(pop),loc=loc_s,km=round(s['km'],1),cnt=s['count']))
 
-    home_pop="<div style='font-family:Arial;padding:10px'><b style='font-size:14px'>&#127968; Home Location</b><br><br><b>Area:</b> {hl}<br><b>District:</b> {hd}<br><b>GPS:</b> {la}, {lo}<br><b>Source:</b> Most frequent BTS location</div>".format(hl=home_label,hd=home_dist_val,la=round(home_lat,5),lo=round(home_lon,5))
-    js.append("L.marker([{la},{lo}],{{icon:L.divIcon({{html:\"<div style='font-size:30px;margin:-15px 0 0 -15px'>&#127968;</div>\",iconSize:[30,30],iconAnchor:[15,15],className:''}}),zIndexOffset:1000}}).addTo(map).bindPopup({pop}).bindTooltip('&#127968; Home: {hl}',{{sticky:true,permanent:true,direction:'right',offset:[15,0]}});".format(la=round(home_lat,5),lo=round(home_lon,5),pop=_json.dumps(home_pop),hl=home_label))
+    home_pop="<div style='font-family:Arial;padding:10px'><b style='font-size:14px'>&#127968; Home Location</b><br><br><b>Area:</b> {hl}<br><b>District:</b> {hd}<br><b>GPS:</b> {la}, {lo}<br><b>Source:</b> Most frequent BTS location</div>".format(hl=home_label,hd=home_dist_val,la=round(home_lat,6),lo=round(home_lon,6))
+    js.append("L.marker([{la},{lo}],{{icon:L.divIcon({{html:\"<div style='font-size:30px;margin:-15px 0 0 -15px'>&#127968;</div>\",iconSize:[30,30],iconAnchor:[15,15],className:''}}),zIndexOffset:1000}}).addTo(map).bindPopup({pop}).bindTooltip('&#127968; Home: {hl}',{{sticky:true,permanent:true,direction:'right',offset:[15,0]}});".format(la=round(home_lat,6),lo=round(home_lon,6),pop=_json.dumps(home_pop),hl=home_label))
 
     # ── Top 3 Frequent Locations — mv_data থেকে GPS নিয়ে map-এ দেখাও ──────
     if mv_data and mv_data.get('top_locations'):
@@ -6579,7 +6597,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
                 "<td style='padding:4px 8px;font-size:11px'>{addr}</td></tr>"
                 "</table></div>"
             ).format(col=_fcol,icon=_ficon,label=_flabel,name=_fname,
-                     dist=_fdist,la=round(_fla,5),lo=round(_flo,5),
+                     dist=_fdist,la=round(_fla,6),lo=round(_flo,6),
                      cnt=_fcount,addr=_faddr)
             # Star marker — numbered (1,2,3)
             _fnum = _fi + 1
@@ -6590,19 +6608,19 @@ def build_movement_map(df, phone, operator, mv_data=None):
                     "border:2px solid white'>F{n}</div>").format(col=_fcol, n=_fnum)
             _ftip = "{icon} {label}: {name} ({dist}) | {cnt} records | {la},{lo}".format(
                 icon=_ficon, label=_flabel, name=_fname, dist=_fdist,
-                cnt=_fcount, la=round(_fla,5), lo=round(_flo,5))
+                cnt=_fcount, la=round(_fla,6), lo=round(_flo,6))
             js.append(
                 "L.circleMarker([{la},{lo}],{{radius:14,fillColor:'{col}',color:'white',"
                 "weight:3,opacity:0.9,fillOpacity:0.25,dashArray:'6,3',zIndexOffset:800}})"
-                ".addTo(map);".format(la=round(_fla,5),lo=round(_flo,5),col=_fcol))
+                ".addTo(map);".format(la=round(_fla,6),lo=round(_flo,6),col=_fcol))
             js.append(
                 "L.marker([{la},{lo}],{{icon:L.divIcon({{html:{ni},iconSize:[24,24],"
                 "iconAnchor:[12,12],className:''}}),zIndexOffset:900}})"
                 ".addTo(map).bindPopup({pop}).bindTooltip({tip},{{sticky:true}});".format(
-                    la=round(_fla,5),lo=round(_flo,5),
+                    la=round(_fla,6),lo=round(_flo,6),
                     ni=_json.dumps(_fni),pop=_json.dumps(_fpop),tip=_json.dumps(_ftip)))
 
-    all_bounds=[[round(s['lat'],5),round(s['lon'],5)] for s in steps]+[[round(home_lat,5),round(home_lon,5)]]
+    all_bounds=[[round(s['lat'],6),round(s['lon'],6)] for s in steps]+[[round(home_lat,6),round(home_lon,6)]]
     js.append("map.fitBounds("+_json.dumps(all_bounds)+",{padding:[80,80]});")
     all_js='\n'.join(js)
 
@@ -6620,7 +6638,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
             " <span class='tl-km'>{km}km</span> <span title='source'>{mi}</span><br>"
             "<span class='tl-date'>{st} &rarr; {en}</span>"
             " &middot; <span class='tl-cnt'>{cnt}rec</span></div></div>\n"
-        ).format(la=round(s['lat'],5),lo=round(s['lon'],5),col=col,n=i+1,
+        ).format(la=round(s['lat'],6),lo=round(s['lon'],6),col=col,n=i+1,
                  icon=icon,loc=loc_lbl,km=s['km'],mi=mi,
                  st=s['start'][:10],en=s['end'][:10],cnt=s['count'])
 
@@ -7744,22 +7762,56 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             if data['sms_out'] >0: parts.append(f"\u2191SMS:{data['sms_out']}")
             if data['sms_in']  >0: parts.append(f"\u2193SMS:{data['sms_in']}")
             ec = '#dc2626' if is_common else ('#2563eb' if is_call else '#16a34a')
-            etitle = (
-                f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
-                f"padding:10px 14px;line-height:1.8'>"
-                f"<b style='font-size:15px;color:#1e3a8a'>{sub} \u2192 {pb}</b><br>"
-                f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
-                + "<br>".join([f"&nbsp;&nbsp;{p}" for p in parts]) +
-                f"<br>&nbsp;&nbsp;\u23f1 Dur: {round(data['duration'],1)} min</div>"
+            _co = data['call_out']; _ci = data['call_in']
+            _so = data['sms_out'];  _si = data['sms_in']
+            _ct = _co + _ci;        _st = _so + _si
+            _gt = _ct + _st
+            _dur = round(data['duration'], 1)
+            _avg = round(_dur/_ct, 1) if _ct > 0 else 0
+            _dur_badge = (
+                f"<span style='background:#fee2e2;color:#991b1b;font-size:10px;"
+                f"border-radius:4px;padding:1px 5px;margin-left:4px'>⚠️ Long</span>"
+                if _dur >= 30 else ""
             )
+            etitle = (
+                f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:13px;"
+                f"padding:10px 14px;min-width:250px;line-height:1.9'>"
+                f"<b style='font-size:15px;color:#1e3a8a'>📞 {sub} → {pb}</b><br>"
+                f"<hr style='margin:5px 0;border:none;border-top:1px solid #e2e8f0'>"
+                f"<table style='width:100%;border-collapse:collapse;font-size:13px'>"
+                f"<tr><td style='color:#64748b'>📤 MOC (Outgoing)</td>"
+                f"<td style='text-align:right'><b>{_co}</b></td></tr>"
+                f"<tr><td style='color:#64748b'>📥 MTC (Incoming)</td>"
+                f"<td style='text-align:right'><b>{_ci}</b></td></tr>"
+                f"<tr><td style='color:#64748b'>✉️ SMS Out</td>"
+                f"<td style='text-align:right'><b>{_so}</b></td></tr>"
+                f"<tr><td style='color:#64748b'>✉️ SMS In</td>"
+                f"<td style='text-align:right'><b>{_si}</b></td></tr>"
+                f"<tr style='border-top:1px solid #e2e8f0'>"
+                f"<td style='color:#1e3a8a;font-weight:700'>📊 Total Calls</td>"
+                f"<td style='text-align:right;font-weight:700'>{_ct}</td></tr>"
+                f"<tr><td style='color:#1e3a8a;font-weight:700'>💬 Total SMS</td>"
+                f"<td style='text-align:right;font-weight:700'>{_st}</td></tr>"
+                f"<tr style='border-top:2px solid #1e3a8a'>"
+                f"<td style='color:#0f172a;font-weight:800'>🔗 Grand Total</td>"
+                f"<td style='text-align:right;font-weight:800;font-size:15px'>{_gt}</td></tr>"
+                f"</table>"
+                f"<div style='margin-top:6px;font-size:12px;color:#475569'>"
+                f"⏱ Duration: <b>{_dur} min</b>{_dur_badge} &nbsp;|&nbsp; "
+                f"Avg/call: <b>{_avg} min</b></div></div>"
+            )
+            _gt2 = data['call_out']+data['call_in']+data['sms_out']+data['sms_in']
             edges.append({
-                'id':eid,'from':sub,'to':pb,'label':'',
+                'id':eid,'from':sub,'to':pb,
+                'label': str(_gt2),
                 'arrows':{'to':{'enabled':True,'scaleFactor':0.6}},
                 'color':{'color':ec,'opacity':0.75},
-                'width': max(1,min(6,total//5+1))+(2 if is_common else 0),
-                'font':{'size':0},
+                'width': max(1,min(6,_gt2//5+1))+(2 if is_common else 0),
+                'font':{'size':10,'color':'#1e293b',
+                        'strokeWidth':2,'strokeColor':'#ffffff','align':'middle'},
+                'smooth':{'type':'dynamic'},
                 'title':etitle,
-                '_total': total,
+                '_total': _gt2,
             })
             eid += 1
 
@@ -7814,7 +7866,7 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
 </div>
 <div class="bar">
   <button class="btn" onclick="network.fit()">&#x229F; Fit</button>
-  <button class="btn" id="physBtn" onclick="togglePhysics()">&#x23F8; Stop</button>
+  <button class="btn" id="physBtn" onclick="togglePhysics()" title="Freeze layout so nodes stay put">&#x23F8; Freeze</button>
   <button class="btn red" onclick="showOnlyCommon()">&#128308; Common</button>
   <button class="btn grn" onclick="showAll()">&#128065; All</button>
   <button class="btn del" id="delBtn" onclick="deleteSelected()">&#x1F5D1; Delete</button>
@@ -7893,18 +7945,37 @@ var network = new vis.Network(
   }}
 );
 
-// Auto-fit after stabilization
+// Auto-fit + auto-freeze after stabilization
 network.once('stabilizationIterationsDone', function(){{
   network.fit({{animation:{{duration:600,easingFunction:'easeInOutQuad'}}}});
-  document.getElementById('physBtn').textContent='\u23F8 Stop';
+  network.setOptions({{physics:{{enabled:false}}}});
+  physicsOn = false;
+  document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
 }});
 setTimeout(function(){{if(network)network.fit();}}, 2500);
 
 function togglePhysics(){{
   physicsOn=!physicsOn;
   network.setOptions({{physics:{{enabled:physicsOn}}}});
-  document.getElementById('physBtn').textContent=physicsOn?'\u23F8 Stop':'\u25B6 Start';
+  document.getElementById('physBtn').textContent=physicsOn?'\u23F8 Freeze':'\u25B6 Unfreeze';
 }}
+
+// dragEnd: pin node in place
+network.on('dragEnd',function(params){{
+  if(params.nodes.length>0){{
+    params.nodes.forEach(function(nid){{
+      var pos=network.getPositions([nid])[nid];
+      allNodes.update({{id:nid,x:pos.x,y:pos.y,fixed:{{x:true,y:true}}}});
+    }});
+  }}
+}});
+
+// doubleClick background: unpin all nodes
+network.on('doubleClick',function(params){{
+  if(params.nodes.length===0&&params.edges.length===0){{
+    allNodes.update(allNodes.get().map(n=>({{id:n.id,fixed:{{x:false,y:false}}}})));
+  }}
+}});
 
 // ── Filter by min connection count ──
 function filterByConnCount(val){{
