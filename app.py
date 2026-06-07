@@ -9094,6 +9094,14 @@ def link_analysis_page():
 
             top_connections = defaultdict(dict)
 
+            # Step 0 — Subject-to-subject connections সবসময় রাখা হবে (top_n limit নেই)
+            for pb in subjects:
+                if pb in connections:
+                    for sub, data in connections[pb].items():
+                        if pb not in top_connections:
+                            top_connections[pb] = {}
+                        top_connections[pb][sub] = data
+
             # Step 1 — প্রতি subject থেকে top_n contacts নাও (call+sms total দিয়ে sort)
             for df_s in dfs:
                 sub = df_s['_subject'].iloc[0]
