@@ -7245,24 +7245,25 @@ def _build_connections(dfs, exclude_noise=True):
 
     # Filter: remove SMS-only entries PER SUBJECT
     # ── Fix 1 (per-subject SMS filter) ───────────────────────────────────────
-    # আগের logic: যেকোনো একটি subject-এ call থাকলে সব subject-এর জন্য number রাখা হতো।
-    # ফলে Subject A শুধু SMS করলেও common contact হিসেবে দেখাতো, call count = 0 হওয়া সত্বেও।
-    # নতুন logic: প্রতিটি subject-এর জন্য আলাদাভাবে check — call নেই মানে সেই subject-এর
-    # entry বাদ। তারপর যদি কোনো subject-ই না থাকে, number টি সম্পূর্ণ বাদ।
+    # Subject-to-subject connection সবসময় রাখা হবে (call type detection ভিন্ন হতে পারে)
+    # অন্য numbers: প্রতিটি subject-এর জন্য অন্তত ১টি call থাকতে হবে
+    subject_set = set()
+    for df in dfs:
+        if '_subject' in df.columns and not df.empty:
+            subject_set.add(df['_subject'].iloc[0])
+
     sms_filtered = defaultdict(lambda: defaultdict(lambda: {
         'call_out': 0, 'call_in': 0, 'sms_out': 0, 'sms_in': 0,
         'total': 0, 'duration': 0.0
     }))
     for pb, subj_data in connections.items():
+        is_subject_pb = pb in subject_set  # subject-to-subject → always keep
         for sub, sd in subj_data.items():
-            # এই subject-এর জন্য অন্তত ১টি call (MOC বা MTC) থাকতে হবে
-            if sd['call_out'] + sd['call_in'] > 0:
+            if is_subject_pb or sd['call_out'] + sd['call_in'] > 0:
                 sms_filtered[pb][sub] = sd
-        # কোনো subject-ই call করেনি → number টি drop
         if sms_filtered[pb]:
             pass  # keep
         else:
-            # defaultdict-এ empty entry তৈরি হয়ে গেছে, মুছে দাও
             del sms_filtered[pb]
     return sms_filtered
 
@@ -8074,19 +8075,26 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
     # Call + SMS একসাথে একটি edge-এ দেখানো হবে, label-এ মোট সংখ্যা
     edges = []
     eid = 0
+    subject_set = set(subjects)
     for pb, subj_dict in connections.items():
         for sub, data in subj_dict.items():
             total = data['total']
             if total == 0: continue
             is_common = pb in common
+            is_subj_to_subj = pb in subject_set  # subject-to-subject connection
             dur = round(data['duration'], 1)
 
             call_total = data['call_out'] + data['call_in']
             sms_total  = data['sms_out'] + data['sms_in']
-            grand_total = call_total + sms_total   # label-এ এই সংখ্যা দেখাবে
+            grand_total = call_total + sms_total
 
-            ec_common = '#dc2626'
-            ec = ec_common if is_common else '#2563eb'
+            # রং নির্ধারণ
+            if is_subj_to_subj:
+                ec = '#7c3aed'  # purple — subject-to-subject
+            elif is_common:
+                ec = '#dc2626'  # red — common contact
+            else:
+                ec = '#2563eb'  # blue — regular contact
 
             # ── Tooltip: call + sms breakdown ──
             edge_title = (
@@ -8105,8 +8113,8 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
                 f"&nbsp;&nbsp;\u23f1 Duration: {dur} min</div>"
             )
 
-            # Width: call-এর ভিত্তিতে, common হলে একটু মোটা
-            width = max(1, min(7, call_total // 5 + 1)) + (2 if is_common else 0)
+            # Width: subject-to-subject মোটা, common হলেও মোটা
+            width = max(1, min(7, call_total // 5 + 1)) + (3 if is_subj_to_subj else (2 if is_common else 0))
 
             edges.append({
                 'id': eid, 'from': sub, 'to': pb,
@@ -8202,6 +8210,7 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <div class="li"><div class="dot" style="background:#e2e8f0;border:3px solid #f59e0b;width:13px;height:13px;"></div>High-freq ⭐</div>
   <div class="li"><div class="ln" style="background:#2563eb"></div>Connection (সংখ্যা = Call+SMS)</div>
   <div class="li"><div class="ln" style="background:#dc2626"></div>Common Contact Edge</div>
+  <div class="li"><div class="ln" style="background:#7c3aed"></div>Subject ↔ Subject</div>
 </div>
 <div class="bar">
   <button class="btn" onclick="network.fit()">&#x229F; Fit</button>
