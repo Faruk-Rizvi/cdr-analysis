@@ -6920,13 +6920,38 @@ def _load_cdr_bytes(file_bytes, label):
         return None, None, 0
 
 
+_CARRIER_NUMBERS = {
+    # GP
+    '01700000000', '01711200200', '01800000000', '01711500500',
+    # Banglalink
+    '01911100100', '01900000000',
+    # Robi / Airtel
+    '01600000600', '01800000600',
+    # Teletalk
+    '01500000500',
+    # Common shortcodes (normalized to 11-digit)
+    '01600162471', '01600162476', '01600162477',
+}
+_CARRIER_PREFIXES_SHORT = [
+    '162', '163', '164', '165',   # 5-digit BD shortcodes
+    '1600', '1700', '1800', '1900',  # operator info lines
+]
+
 def _is_carrier_number(num: str) -> bool:
     """True if num looks like a carrier/service/IVR number, not a real subscriber."""
+    _CARR = {
+        '01700000000', '01711200200', '01800000000', '01711500500',
+        '01911100100', '01900000000',
+        '01600000600', '01800000600',
+        '01500000500',
+        '01600162471', '01600162476', '01600162477',
+    }
+    _PFXS = ['162', '163', '164', '165', '1600', '1700', '1800', '1900']
     d = re.sub(r'[^0-9]', '', str(num))
-    if d in _CARRIER_NUMBERS: return True
+    if d in _CARR: return True
     if len(d) < 8: return True
     if len(set(d)) <= 2 and len(d) >= 8: return True
-    for pfx in _CARRIER_PREFIXES_SHORT:
+    for pfx in _PFXS:
         if d.startswith(pfx) and len(d) < 11: return True
     return False
 
