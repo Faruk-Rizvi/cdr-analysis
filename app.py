@@ -8116,7 +8116,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
                 'width': width,
                 'font': {
                     'size': 14,
-                    'color': '#1e3a8a',
+                    'color': '#000000',
                     'bold': True,
                     'strokeWidth': 3,
                     'strokeColor': '#ffffff',
@@ -8241,7 +8241,7 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <button class="btn" id="impRingBtn" onclick="toggleImportanceRing()" title="High-frequency gold ring">&#11088; Ring: ON</button>
   <div class="sl">
     <span>Top contacts (common বাদে):</span>
-    <input type="range" id="minConn" min="0" max="20" value="20"
+    <input type="range" id="minConn" min="1" max="20" value="20"
            oninput="filterByConnCount(this.value)">
     <span id="minConnVal">20</span>
   </div>
