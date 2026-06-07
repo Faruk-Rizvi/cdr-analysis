@@ -7140,8 +7140,10 @@ def _build_suspicious_patterns(dfs, window_min=30):
     return mirror_rows, relay_rows
 
 
-def _build_connections(dfs):
-    """Build connection table from multiple CDRs."""
+def _build_connections(dfs, exclude_noise=True):
+    """Build connection table from multiple CDRs.
+    exclude_noise=True → carrier/service/IVR numbers are dropped before building connections.
+    """
     # connections[phone_b] = {subject: {call_out, call_in, sms_out, sms_in}}
     connections = defaultdict(lambda: defaultdict(lambda: {
         'call_out': 0, 'call_in': 0, 'sms_out': 0, 'sms_in': 0,
@@ -7166,6 +7168,9 @@ def _build_connections(dfs):
                 lambda x: _clean_phone(str(x)))
         # Valid numbers only
         _tmp = _tmp[_tmp['_pb'].apply(_is_valid_number)]
+        if exclude_noise:
+            _tmp = _tmp[~_tmp['_pb'].apply(_is_carrier_number)]
+            _tmp = _tmp[~_tmp['_pb'].apply(_is_promotional)]
         if _tmp.empty: continue
 
         # Usage type flags
@@ -7861,11 +7866,45 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
     return unique[:1000]
 
 
-def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_meta=None):
-    """Network graph — clean labels, delete nodes, filter by connection count."""
-    # math → _math_mod (module-level import)
+def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_meta=None, contact_names=None):
+    """Network graph — clean labels, delete nodes, filter by connection count.
 
-    colors_subject = ['#1d4ed8','#dc2626','#15803d','#7c3aed','#d97706']
+    contact_names : dict  {phone_str: name_str}  — optional display names for
+                    contact nodes (non-subject). When provided, node labels show
+                    "Name\nPhone" instead of phone only.
+    """
+    # math → _math_mod (module-level import)
+    if contact_names is None:
+        contact_names = {}
+
+    # Subject 0 = primary (magenta/pink like Image 2), rest = normal palette
+    colors_subject = ['#db2777','#1d4ed8','#15803d','#7c3aed','#d97706']
+
+    # SVG telephone icon as base64 data-URI for contact nodes
+    _PHONE_SVG = (
+        "data:image/svg+xml;base64,"
+        + __import__('base64').b64encode(
+            b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+            b'width="36" height="36">'
+            b'<rect width="24" height="24" rx="5" fill="#64748b"/>'
+            b'<path fill="#fff" d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2'
+            b' 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 '
+            b'1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/>'
+            b'</svg>'
+        ).decode()
+    )
+    _PHONE_SVG_COMMON = (
+        "data:image/svg+xml;base64,"
+        + __import__('base64').b64encode(
+            b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+            b'width="36" height="36">'
+            b'<rect width="24" height="24" rx="5" fill="#dc2626"/>'
+            b'<path fill="#fff" d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2'
+            b' 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 '
+            b'1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/>'
+            b'</svg>'
+        ).decode()
+    )
     subj_labels = {sub: f"S{i+1}" for i, sub in enumerate(subjects)}
 
     nodes = {}
@@ -7924,15 +7963,31 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
     common = {pb for pb, sd in connections.items() if len(sd) >= 2}
 
     # ── Contact nodes ──
+    # Pre-compute max total for importance-ring threshold (top 10%)
+    all_totals = [sum(d['total'] for d in sd.values()) for pb, sd in connections.items() if pb not in subjects]
+    _importance_thresh = sorted(all_totals, reverse=True)[max(0, len(all_totals)//10 - 1)] if all_totals else 9999
+
     for pb, subj_dict in connections.items():
         if pb in nodes: continue
         total = sum(d['total'] for d in subj_dict.values())
         is_common = pb in common
         only_sub  = list(subj_dict.keys())[0] if len(subj_dict)==1 else None
         is_iso_c  = (only_sub and subj_edge_count.get(only_sub,99) < 5)
+        # ── Importance ring: top-10% by total interaction count ──
+        is_important = (total >= _importance_thresh and total >= 10)
 
         bg     = '#fca5a5' if is_common else ('#fef3c7' if is_iso_c else '#e2e8f0')
         border = '#dc2626' if is_common else ('#d97706' if is_iso_c else '#94a3b8')
+        # Importance ring overrides border color (gold ring)
+        if is_important:
+            border = '#f59e0b'
+
+        # ── Contact name label ──
+        _cname = (contact_names or {}).get(pb, '').strip()
+        if _cname:
+            node_label = f"{_cname}\n{pb}"
+        else:
+            node_label = pb
 
         subj_lines = []
         for s, d in subj_dict.items():
@@ -7945,29 +8000,43 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
         tooltip = (
             f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
             f"padding:10px 14px;min-width:230px;line-height:1.8'>"
-            f"<b style='font-size:16px;color:#1e3a8a'>\U0001f4f1 {pb}</b><br>"
-            f"<span style='color:#64748b;font-size:12px'>"
-            f"Shared: {len(subj_dict)} | Total: {total}</span><br>"
+            f"<b style='font-size:16px;color:#1e3a8a'>\U0001f4f1 {pb}</b>"
+            + (f"<br><b style='color:#1e3a8a'>\U0001f464 {_cname}</b>" if _cname else "") +
+            f"<br><span style='color:#64748b;font-size:12px'>"
+            f"Shared: {len(subj_dict)} | Total: {total}"
+            + (" | <b style='color:#f59e0b'>⭐ High-frequency</b>" if is_important else "") +
+            f"</span><br>"
             f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
             + "<br>".join(subj_lines) +
             f"<br><span style='color:#94a3b8;font-size:11px'>"
             f"Click = highlight &nbsp;|&nbsp; Delete btn = remove</span></div>"
         )
+        # Importance ring → thicker border + slightly larger
+        _bw   = 5 if is_important else 1
+        _size = min(10+total, 30) + (5 if is_important else 0)
+        # Phone icon: common=red bg, normal=grey bg
+        _icon = _PHONE_SVG_COMMON if is_common else _PHONE_SVG
         nodes[pb] = {
-            'id': pb, 'label': pb,
-            'color': {'background':bg,'border':border,
-                      'highlight':{'background':bg,'border':'#2563eb'}},
-            'shape': 'ellipse',
-            'size': min(10+total, 30),
-            'font': {'size':13,'color':'#000000','bold':True,
-                     'strokeWidth':2,'strokeColor':'#ffffff'},
+            'id': pb, 'label': node_label,
+            'color': {'background': bg, 'border': border,
+                      'highlight': {'background': bg, 'border': '#2563eb'}},
+            'shape': 'circularImage',
+            'image': _icon,
+            'size': max(18, _size),
+            'borderWidth': _bw,
+            'borderWidthSelected': _bw + 2,
+            'font': {'size': 13, 'color': '#000000', 'bold': True,
+                     'strokeWidth': 2, 'strokeColor': '#ffffff'},
             'title': tooltip,
             'group': 'common' if is_common else ('iso_c' if is_iso_c else 'contact'),
             'mass': 1,
             '_total': total,
+            '_important': is_important,
+            '_cname': _cname,
         }
 
-    # ── Edges ──
+    # ── Edges — combined (undirected): one edge per pair per type ──
+    # Call edges: MOC+MTC combined; SMS edges: sms_out+sms_in combined
     edges = []
     eid = 0
     for pb, subj_dict in connections.items():
@@ -7975,31 +8044,63 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             total = data['total']
             if total == 0: continue
             is_common = pb in common
-            is_call   = data['call_out']+data['call_in'] > data['sms_out']+data['sms_in']
-            parts = []
-            if data['call_out']>0: parts.append(f"\u2191Call:{data['call_out']}")
-            if data['call_in'] >0: parts.append(f"\u2193Call:{data['call_in']}")
-            if data['sms_out'] >0: parts.append(f"\u2191SMS:{data['sms_out']}")
-            if data['sms_in']  >0: parts.append(f"\u2193SMS:{data['sms_in']}")
-            ec = '#dc2626' if is_common else ('#2563eb' if is_call else '#16a34a')
-            etitle = (
-                f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
-                f"padding:10px 14px;line-height:1.8'>"
-                f"<b style='font-size:15px;color:#1e3a8a'>{sub} \u2192 {pb}</b><br>"
-                f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
-                + "<br>".join([f"&nbsp;&nbsp;{p}" for p in parts]) +
-                f"<br>&nbsp;&nbsp;\u23f1 Dur: {round(data['duration'],1)} min</div>"
-            )
-            edges.append({
-                'id':eid,'from':sub,'to':pb,'label':'',
-                'arrows':{'to':{'enabled':True,'scaleFactor':0.6}},
-                'color':{'color':ec,'opacity':0.75},
-                'width': max(1,min(6,total//5+1))+(2 if is_common else 0),
-                'font':{'size':0},
-                'title':etitle,
-                '_total': total,
-            })
-            eid += 1
+            dur = round(data['duration'], 1)
+
+            ec_common = '#dc2626'
+
+            # ── Combined Call edge (MOC + MTC) ──
+            call_total = data['call_out'] + data['call_in']
+            if call_total > 0:
+                ec = ec_common if is_common else '#2563eb'
+                call_title = (
+                    f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
+                    f"padding:10px 14px;line-height:1.8'>"
+                    f"<b style='font-size:15px;color:{ec}'>\U0001f4de {sub} ↔ {pb}</b><br>"
+                    f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
+                    f"&nbsp;&nbsp;MOC (outgoing): <b>{data['call_out']}</b><br>"
+                    f"&nbsp;&nbsp;MTC (incoming): <b>{data['call_in']}</b><br>"
+                    f"&nbsp;&nbsp;Total Calls: <b>{call_total}</b><br>"
+                    f"&nbsp;&nbsp;\u23f1 Duration: {dur} min</div>"
+                )
+                edges.append({
+                    'id': eid, 'from': sub, 'to': pb,
+                    'label': '',
+                    'arrows': {'to': {'enabled': False}},
+                    'color': {'color': ec, 'opacity': 0.85},
+                    'width': max(1, min(6, call_total//5+1)) + (2 if is_common else 0),
+                    'font': {'size': 0},
+                    'smooth': {'type': 'dynamic'},
+                    'title': call_title,
+                    '_total': call_total, '_etype': 'call',
+                })
+                eid += 1
+
+            # ── Combined SMS edge (sms_out + sms_in) ──
+            sms_total = data['sms_out'] + data['sms_in']
+            if sms_total > 0:
+                ec = ec_common if is_common else '#16a34a'
+                sms_title = (
+                    f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
+                    f"padding:10px 14px;line-height:1.8'>"
+                    f"<b style='font-size:15px;color:{ec}'>\U0001f4ac {sub} ↔ {pb}</b><br>"
+                    f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
+                    f"&nbsp;&nbsp;SMS sent: <b>{data['sms_out']}</b><br>"
+                    f"&nbsp;&nbsp;SMS received: <b>{data['sms_in']}</b><br>"
+                    f"&nbsp;&nbsp;Total SMS: <b>{sms_total}</b></div>"
+                )
+                edges.append({
+                    'id': eid, 'from': sub, 'to': pb,
+                    'label': '',
+                    'arrows': {'to': {'enabled': False}},
+                    'color': {'color': ec, 'opacity': 0.65},
+                    'width': max(1, min(4, sms_total//5+1)),
+                    'dashes': True,
+                    'font': {'size': 0},
+                    'smooth': {'type': 'dynamic'},
+                    'title': sms_title,
+                    '_total': sms_total, '_etype': 'sms',
+                })
+                eid += 1
 
     nodes_json = json.dumps(list(nodes.values()), ensure_ascii=False)
     edges_json = json.dumps(edges, ensure_ascii=False)
@@ -8010,6 +8111,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
 <meta charset="UTF-8">
 <style>{_VIS_CSS_INLINE}</style>
 <script>{_VIS_JS_INLINE}</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{font-family:"Segoe UI",Arial,sans-serif;background:#f8fafc;padding:6px;overflow-x:hidden}}
@@ -8023,6 +8125,8 @@ body{{font-family:"Segoe UI",Arial,sans-serif;background:#f8fafc;padding:6px;ove
 .btn.grn{{background:#16a34a}}.btn.grn:hover{{background:#15803d}}
 .btn.orn{{background:#d97706}}.btn.orn:hover{{background:#b45309}}
 .btn.del{{background:#7f1d1d}}.btn.del:hover{{background:#991b1b}}
+.btn.teal{{background:#0d9488}}.btn.teal:hover{{background:#0f766e}}
+.btn.violet{{background:#7c3aed}}.btn.violet:hover{{background:#6d28d9}}
 .sl{{display:flex;align-items:center;gap:5px;font-size:11px;color:#475569}}
 input[type=range]{{width:80px;accent-color:#2563eb}}
 .lgd{{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:5px 10px;
@@ -8039,16 +8143,37 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
 #panelX{{cursor:pointer;color:#94a3b8;font-size:20px;line-height:1}}
 #panelX:hover{{color:#dc2626}}
 #wrap{{position:relative}}
+/* ── Export modal ── */
+#exportModal{{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);
+  z-index:9999;align-items:center;justify-content:center}}
+#exportModal.show{{display:flex}}
+#exportBox{{background:#fff;border-radius:14px;padding:20px 24px;max-width:92vw;
+  width:740px;box-shadow:0 12px 40px rgba(0,0,0,.35);position:relative}}
+#exportBox h3{{font-size:15px;color:#1e3a8a;margin-bottom:12px;font-weight:700}}
+#exportPreview{{width:100%;border:1px solid #e2e8f0;border-radius:8px;
+  display:block;margin-bottom:12px;background:#f1f5f9}}
+#exportActions{{display:flex;gap:10px;flex-wrap:wrap;align-items:center}}
+#exportClose{{position:absolute;top:12px;right:16px;font-size:22px;cursor:pointer;
+  color:#94a3b8;line-height:1;background:none;border:none}}
+#exportClose:hover{{color:#dc2626}}
+#exportStatus{{font-size:12px;color:#16a34a;font-weight:600;margin-left:auto}}
+#captureOverlay{{display:none;position:fixed;inset:0;background:rgba(255,255,255,.7);
+  z-index:8888;align-items:center;justify-content:center;font-size:15px;
+  color:#1e3a8a;font-weight:600;gap:10px}}
+#captureOverlay.show{{display:flex}}
 </style>
 </head>
 <body>
 <div class="lgd">
+  <div class="li"><div class="dot" style="background:#db2777"></div>Primary Subject</div>
   <div class="li"><div class="dot" style="background:#1d4ed8"></div>Subject</div>
-  <div class="li"><div class="dot" style="background:#ef4444"></div>Common Contact</div>
-  <div class="li"><div class="dot" style="background:#94a3b8"></div>Single Contact</div>
-  <div class="li"><div class="ln" style="background:#2563eb"></div>Call</div>
-  <div class="li"><div class="ln" style="background:#16a34a"></div>SMS</div>
-  <div class="li"><div class="ln" style="background:#dc2626"></div>Common</div>
+  <div class="li"><div class="dot" style="background:#dc2626"></div>Common Contact</div>
+  <div class="li"><div class="dot" style="background:#64748b"></div>Single Contact</div>
+  <div class="li"><div class="dot" style="background:#e2e8f0;border:3px solid #f59e0b;width:13px;height:13px;"></div>High-freq ⭐</div>
+  <div class="li"><div class="ln" style="background:#2563eb"></div>MOC→</div>
+  <div class="li"><div class="ln" style="background:#0891b2"></div>←MTC</div>
+  <div class="li"><div class="ln" style="background:#16a34a;border-top:2px dashed #16a34a;height:0"></div>SMS→</div>
+  <div class="li"><div class="ln" style="background:#7c3aed;border-top:2px dashed #7c3aed;height:0"></div>←SMS</div>
 </div>
 <div class="bar">
   <button class="btn" onclick="network.fit()">&#x229F; Fit</button>
@@ -8057,35 +8182,65 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <button class="btn grn" onclick="showAll()">&#128065; All</button>
   <button class="btn del" id="delBtn" onclick="deleteSelected()">&#x1F5D1; Delete</button>
   <button class="btn orn" onclick="undoDelete()">&#x21BA; Undo</button>
+  <button class="btn teal" onclick="exportGraphPNG()">&#x1F4F7; Export PNG</button>
+  <button class="btn violet" onclick="copyGraphToClipboard()">&#x1F4CB; Copy Image</button>
+</div>
+<div class="bar">
+  <!-- Search box -->
+  <div class="sl" style="flex:1;min-width:180px;">
+    <span style="font-weight:600;color:#1e3a8a;">&#x1F50D;</span>
+    <input type="text" id="searchBox" placeholder="নম্বর / নাম খুঁজুন…"
+      oninput="searchNodes(this.value)"
+      style="flex:1;font-size:11px;padding:3px 7px;border-radius:5px;
+             border:1px solid #cbd5e1;background:#f8fafc;color:#0f172a;outline:none;">
+    <button class="btn" style="background:#475569;padding:3px 8px;"
+      onclick="document.getElementById('searchBox').value='';searchNodes('')">✕</button>
+  </div>
+  <!-- Edge type filter -->
+  <span style="font-size:11px;font-weight:600;color:#1e3a8a;">Edge:</span>
+  <button class="btn" id="fAll"  onclick="filterEdgeType('all')"  style="background:#0f172a;">All</button>
+  <button class="btn" id="fCall" onclick="filterEdgeType('call')" style="background:#1d4ed8;">Call</button>
+  <button class="btn" id="fSms"  onclick="filterEdgeType('sms')"  style="background:#16a34a;">SMS</button>
   <div class="sl">
-    <span>Min connections:</span>
+    <span style="font-weight:600;color:#1e3a8a;">&#x25A6; Layout:</span>
+    <select id="layoutSel" onchange="applyLayout(this.value)"
+      style="font-size:11px;padding:2px 6px;border-radius:5px;border:1px solid #cbd5e1;
+             background:#f8fafc;color:#1e3a8a;cursor:pointer;">
+      <option value="physics">&#x1F300; Physics (default)</option>
+      <option value="hierarchyLR">&#x27A1; Hierarchy L→R</option>
+      <option value="hierarchyUD">&#x2B07; Hierarchy U→D</option>
+      <option value="bipartite">&#x21C4; Bipartite (Subj left/right)</option>
+      <option value="circle">&#x25EF; Circle</option>
+      <option value="grid">&#x22EE; Grid</option>
+    </select>
+  </div>
+  <button class="btn" id="impRingBtn" onclick="toggleImportanceRing()" title="High-frequency gold ring">&#11088; Ring: ON</button>
+  <div class="sl">
+    <span>Min conn:</span>
     <input type="range" id="minConn" min="1" max="20" value="1"
            oninput="filterByConnCount(this.value)">
     <span id="minConnVal">1</span>
   </div>
   <div class="sl">
-    <span>Label:</span>
-    <input type="range" id="fontSz" min="8" max="22" value="13"
+    <span>Node Lbl:</span>
+    <input type="range" id="fontSz" min="0" max="22" value="13"
            oninput="changeFontSize(this.value)">
     <span id="fontVal">13</span>
   </div>
   <div class="sl">
-    <span>Node:</span>
+    <span>Edge Lbl:</span>
+    <input type="range" id="edgeFontSz" min="0" max="20" value="0"
+           oninput="changeEdgeFontSize(this.value)">
+    <span id="edgeFontVal">0</span>
+  </div>
+  <div class="sl">
+    <span>Node Size:</span>
     <input type="range" id="nodeSz" min="6" max="40" value="14"
            oninput="changeNodeSize(this.value)">
     <span id="nodeVal">14</span>
   </div>
-  <div class="sl" style="flex:1;min-width:160px;">
-    <span>&#x1F50D;</span>
-    <input type="text" id="searchBox" placeholder="Search number / name..."
-      oninput="searchNodes(this.value)" onkeydown="handleSearchKey(event)"
-      style="flex:1;font-size:11px;padding:3px 7px;border-radius:5px;border:1px solid #cbd5e1;background:#f8fafc;color:#0f172a;outline:none;">
-    <span id="searchCount" style="font-size:10px;color:#64748b;white-space:nowrap;"></span>
-    <button class="btn" style="background:#475569;padding:3px 8px;"
-      onclick="document.getElementById('searchBox').value='';searchNodes('');document.getElementById('searchCount').textContent='';">&#x2715;</button>
-  </div>
   <span style="font-size:10px;color:#94a3b8;margin-left:auto">
-    Scroll=zoom | Drag=move | Click=info | Right-click=menu
+    Scroll=zoom | Drag=move | Click=info | Del=remove
   </span>
 </div>
 <div id="wrap">
@@ -8096,6 +8251,33 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
       <span id="panelX" onclick="closePanel()">&#xd7;</span>
     </div>
     <div id="panelBody"></div>
+  </div>
+</div>
+
+<!-- ── Capture overlay ── -->
+<div id="captureOverlay">
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1e3a8a" stroke-width="2.5">
+    <circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/>
+  </svg>
+  Capturing graph…
+</div>
+
+<!-- ── Export modal ── -->
+<div id="exportModal">
+  <div id="exportBox">
+    <button id="exportClose" onclick="closeExportModal()">&#xd7;</button>
+    <h3>&#x1F4F7; Network Graph Export</h3>
+    <img id="exportPreview" src="" alt="preview"/>
+    <div id="exportActions">
+      <button class="btn teal" onclick="downloadExportedPNG()">&#x2B07; Download PNG</button>
+      <button class="btn violet" onclick="copyExportedToClipboard()">&#x1F4CB; Copy to Clipboard</button>
+      <button class="btn" style="background:#475569" onclick="closeExportModal()">Close</button>
+      <span id="exportStatus"></span>
+    </div>
+    <div style="font-size:11px;color:#94a3b8;margin-top:10px;">
+      &#x2139;&#xFE0F; PNG download করুন → Word/PowerPoint-এ Insert → Pictures দিয়ে যোগ করুন।
+      অথবা Copy করে সরাসরি Ctrl+V দিয়ে paste করুন।
+    </div>
   </div>
 </div>
 <script>
@@ -8110,12 +8292,15 @@ var selectedNodeId = null;
 var selectedEdgeId = null;
 
 var physicsOn = true;
+
 var network = new vis.Network(
   document.getElementById('network'),
   {{nodes:allNodes, edges:allEdges}},
   {{
     nodes:{{borderWidth:2,shadow:{{enabled:true,size:4}}}},
-    edges:{{smooth:{{type:'dynamic'}},shadow:false}},
+    edges:{{
+      smooth:{{type:'dynamic'}},shadow:false
+    }},
     physics:{{
       enabled:true,solver:'repulsion',
       stabilization:{{iterations:500,updateInterval:20}},
@@ -8136,7 +8321,138 @@ network.once('stabilizationIterationsDone', function(){{
   physicsOn=false;
   document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
 }});
+
 setTimeout(function(){{if(network)network.fit();}}, 2500);
+
+// ── Shared: capture graph canvas to dataURL ──
+var _exportDataURL = null;
+
+function _captureGraph(callback){{
+  // 1. Temporarily hide the info panel and physics UI clutter
+  var panel = document.getElementById('panel');
+  var prevPanel = panel.style.display;
+  panel.style.display = 'none';
+
+  // 2. Show overlay
+  var ov = document.getElementById('captureOverlay');
+  ov.classList.add('show');
+
+  // 3. Fit graph to canvas with no animation
+  network.fit({{animation:false}});
+
+  // 4. Wait one frame then capture
+  setTimeout(function(){{
+    var netDiv = document.getElementById('network');
+    var canvas = netDiv.querySelector('canvas');
+    if(!canvas){{
+      ov.classList.remove('show');
+      panel.style.display = prevPanel;
+      alert('Canvas not found — try again after graph settles.');
+      return;
+    }}
+
+    // 5. Compose: white background + vis canvas
+    var w = canvas.width, h = canvas.height;
+    var composed = document.createElement('canvas');
+    composed.width  = w;
+    composed.height = h;
+    var ctx = composed.getContext('2d');
+
+    // white bg
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0,0,w,h);
+
+    // draw vis canvas
+    ctx.drawImage(canvas,0,0);
+
+    // optional: add subtle border + timestamp watermark
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth   = 2;
+    ctx.strokeRect(1,1,w-2,h-2);
+
+    var ts = new Date().toLocaleString('bn-BD',{{
+      year:'numeric',month:'short',day:'numeric',
+      hour:'2-digit',minute:'2-digit'}});
+    ctx.font = 'bold 13px Segoe UI, Arial, sans-serif';
+    ctx.fillStyle = 'rgba(30,58,138,0.55)';
+    ctx.textAlign = 'right';
+    ctx.fillText('CDR Network Graph  |  ' + ts, w-12, h-10);
+
+    _exportDataURL = composed.toDataURL('image/png',1.0);
+
+    ov.classList.remove('show');
+    panel.style.display = prevPanel;
+    callback(_exportDataURL);
+  }}, 350);
+}}
+
+// ── Export PNG → opens preview modal ──
+function exportGraphPNG(){{
+  _captureGraph(function(dataURL){{
+    document.getElementById('exportPreview').src = dataURL;
+    document.getElementById('exportStatus').textContent = '';
+    document.getElementById('exportModal').classList.add('show');
+  }});
+}}
+
+// ── Quick copy (no modal) ──
+function copyGraphToClipboard(){{
+  _captureGraph(function(dataURL){{
+    document.getElementById('exportPreview').src = dataURL;
+    _doCopy(dataURL, true);
+  }});
+}}
+
+// ── Download from modal ──
+function downloadExportedPNG(){{
+  if(!_exportDataURL)return;
+  var a = document.createElement('a');
+  a.href = _exportDataURL;
+  a.download = 'CDR_Network_Graph_' + Date.now() + '.png';
+  a.click();
+  document.getElementById('exportStatus').textContent = '✅ Downloaded!';
+  setTimeout(function(){{document.getElementById('exportStatus').textContent='';}},2500);
+}}
+
+// ── Copy from modal ──
+function copyExportedToClipboard(){{
+  if(!_exportDataURL)return;
+  _doCopy(_exportDataURL, false);
+}}
+
+function _doCopy(dataURL, quick){{
+  // Convert dataURL → Blob → ClipboardItem
+  var b64 = dataURL.split(',')[1];
+  var byteChars = atob(b64);
+  var byteArr = new Uint8Array(byteChars.length);
+  for(var i=0;i<byteChars.length;i++) byteArr[i]=byteChars.charCodeAt(i);
+  var blob = new Blob([byteArr],{{type:'image/png'}});
+
+  if(navigator.clipboard && window.ClipboardItem){{
+    navigator.clipboard.write([new ClipboardItem({{'image/png':blob}})])
+      .then(function(){{
+        var msg = '✅ Clipboard-এ copy হয়েছে! Ctrl+V দিয়ে Word/PowerPoint-এ paste করুন।';
+        if(quick){{ alert(msg); }}
+        else{{ document.getElementById('exportStatus').textContent='✅ Copied!';
+               setTimeout(function(){{document.getElementById('exportStatus').textContent='';}},2500); }}
+      }})
+      .catch(function(){{
+        // Fallback: open in new tab
+        var w=window.open();
+        w.document.write('<img src="'+dataURL+'" style="max-width:100%"><br>'
+          +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click → Copy Image অথবা Save Image As করুন।</p>');
+      }});
+  }} else {{
+    // Old browser fallback
+    var w=window.open();
+    w.document.write('<img src="'+dataURL+'" style="max-width:100%"><br>'
+      +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click → Copy Image অথবা Save Image As করুন।</p>');
+  }}
+}}
+
+function closeExportModal(){{
+  document.getElementById('exportModal').classList.remove('show');
+}}
 
 function togglePhysics(){{
   physicsOn=!physicsOn;
@@ -8153,12 +8469,168 @@ network.on('dragEnd',function(params){{
     }});
   }}
 }});
-// doubleClick background: unpin all
+// doubleClick: unpin all
 network.on('doubleClick',function(params){{
   if(params.nodes.length===0&&params.edges.length===0){{
     allNodes.update(allNodes.get().map(n=>({{id:n.id,fixed:{{x:false,y:false}}}})));
   }}
 }});
+
+// ── Layout switcher (i2-style) ──
+function applyLayout(mode){{
+  if(mode==='physics'){{
+    network.setOptions({{
+      layout:{{improvedLayout:false,hierarchical:{{enabled:false}}}},
+      physics:{{
+        enabled:true,solver:'repulsion',
+        stabilization:{{iterations:500,updateInterval:20}},
+        repulsion:{{centralGravity:.1,springLength:220,springConstant:.04,
+                    nodeDistance:200,damping:.10}}
+      }}
+    }});
+    physicsOn=true;
+    document.getElementById('physBtn').textContent='\u23F8 Stop';
+    network.once('stabilizationIterationsDone',function(){{
+      network.fit({{animation:{{duration:500,easingFunction:'easeInOutQuad'}}}});
+    }});
+    return;
+  }}
+  if(mode==='hierarchyLR'||mode==='hierarchyUD'){{
+    var dir=mode==='hierarchyLR'?'LR':'UD';
+    network.setOptions({{
+      layout:{{
+        improvedLayout:true,
+        hierarchical:{{
+          enabled:true,direction:dir,
+          sortMethod:'hubsize',
+          nodeSpacing:200,
+          levelSeparation:250,
+          treeSpacing:250,
+          blockShifting:true,
+          edgeMinimization:true,
+          parentCentralization:true
+        }}
+      }},
+      physics:{{enabled:false}}
+    }});
+    physicsOn=false;
+    document.getElementById('physBtn').textContent='\u25B6 Start';
+    setTimeout(function(){{network.fit({{animation:{{duration:500}}}});}},400);
+    return;
+  }}
+  if(mode==='circle'){{
+    network.setOptions({{
+      layout:{{improvedLayout:false,hierarchical:{{enabled:false}}}},
+      physics:{{enabled:false}}
+    }});
+    physicsOn=false;
+    document.getElementById('physBtn').textContent='\u25B6 Start';
+    var visibleNodes=allNodes.get().filter(function(n){{return !n.hidden;}});
+    var n=visibleNodes.length;
+    var cx=0,cy=0,r=Math.max(220,n*55);
+    var posUpdates=[];
+    visibleNodes.forEach(function(nd,i){{
+      var angle=(2*Math.PI*i/n)-Math.PI/2;
+      posUpdates.push({{id:nd.id,
+        x:Math.round(cx+r*Math.cos(angle)),
+        y:Math.round(cy+r*Math.sin(angle)),
+        fixed:false}});
+    }});
+    allNodes.update(posUpdates);
+    setTimeout(function(){{network.fit({{animation:{{duration:500}}}});}},150);
+    return;
+  }}
+  if(mode==='grid'){{
+    network.setOptions({{
+      layout:{{improvedLayout:false,hierarchical:{{enabled:false}}}},
+      physics:{{enabled:false}}
+    }});
+    physicsOn=false;
+    document.getElementById('physBtn').textContent='\u25B6 Start';
+    var visibleNodes=allNodes.get().filter(function(n){{return !n.hidden;}});
+    var cols=Math.ceil(Math.sqrt(visibleNodes.length));
+    var spacing=220;
+    var posUpdates=[];
+    visibleNodes.forEach(function(nd,i){{
+      posUpdates.push({{id:nd.id,
+        x:(i%cols)*spacing - (cols/2*spacing),
+        y:Math.floor(i/cols)*spacing - (Math.ceil(visibleNodes.length/cols)/2*spacing),
+        fixed:false}});
+    }});
+    allNodes.update(posUpdates);
+    setTimeout(function(){{network.fit({{animation:{{duration:500}}}});}},150);
+    return;
+  }}
+  if(mode==='bipartite'){{
+    // Subjects split left / right, contacts in the middle
+    network.setOptions({{
+      layout:{{improvedLayout:false,hierarchical:{{enabled:false}}}},
+      physics:{{enabled:false}}
+    }});
+    physicsOn=false;
+    document.getElementById('physBtn').textContent='\\u25B6 Start';
+    var visibleNodes=allNodes.get().filter(function(n){{return !n.hidden;}});
+    var subjNodes=visibleNodes.filter(function(n){{
+      return n.group==='subject'||n.group==='isolated_subject';
+    }});
+    var contactNodes=visibleNodes.filter(function(n){{
+      return n.group!=='subject'&&n.group!=='isolated_subject';
+    }});
+    // Left half subjects on X=-700, right half on X=+700
+    var leftSubj=subjNodes.slice(0,Math.ceil(subjNodes.length/2));
+    var rightSubj=subjNodes.slice(Math.ceil(subjNodes.length/2));
+    var yStep=180;
+    var posUpdates2=[];
+    leftSubj.forEach(function(n,i){{
+      posUpdates2.push({{id:n.id,
+        x:-700,
+        y:(i-(leftSubj.length-1)/2)*yStep,
+        fixed:{{x:true,y:false}}}});
+    }});
+    rightSubj.forEach(function(n,i){{
+      posUpdates2.push({{id:n.id,
+        x:700,
+        y:(i-(rightSubj.length-1)/2)*yStep,
+        fixed:{{x:true,y:false}}}});
+    }});
+    // Contacts in the middle in a grid
+    var cCols=Math.max(1,Math.ceil(Math.sqrt(contactNodes.length*0.6)));
+    var cSpacingX=200, cSpacingY=160;
+    var totalRows2=Math.ceil(contactNodes.length/cCols);
+    contactNodes.forEach(function(n,i){{
+      var col=i%cCols, row=Math.floor(i/cCols);
+      posUpdates2.push({{id:n.id,
+        x:(col-(cCols-1)/2)*cSpacingX,
+        y:(row-(totalRows2-1)/2)*cSpacingY,
+        fixed:false}});
+    }});
+    allNodes.update(posUpdates2);
+    setTimeout(function(){{network.fit({{animation:{{duration:600}}}});}},200);
+    return;
+  }}
+}}
+
+// ── Importance Ring toggle ──
+var _impRingOn = true;
+function toggleImportanceRing(){{
+  _impRingOn = !_impRingOn;
+  var btn = document.getElementById('impRingBtn');
+  btn.textContent = _impRingOn ? '\\u2B50 Ring: ON' : '\\u2B50 Ring: OFF';
+  btn.style.background = _impRingOn ? '#1e3a8a' : '#64748b';
+  // Update borderWidth & border color for important nodes
+  var updates = [];
+  allNodes.get().forEach(function(n){{
+    if(!n._important) return;
+    updates.push({{
+      id: n.id,
+      borderWidth: _impRingOn ? 5 : 1,
+      color: Object.assign({{}}, n.color, {{
+        border: _impRingOn ? '#f59e0b' : '#94a3b8'
+      }})
+    }});
+  }});
+  allNodes.update(updates);
+}}
 
 // ── Filter by min connection count ──
 function filterByConnCount(val){{
@@ -8166,7 +8638,6 @@ function filterByConnCount(val){{
   document.getElementById('minConnVal').textContent=val;
   var updates=[];
   nodesData.forEach(function(n){{
-    // Always show subject nodes
     if(n.group==='subject'||n.group==='isolated_subject'){{
       updates.push({{id:n.id,hidden:false}});return;
     }}
@@ -8174,12 +8645,19 @@ function filterByConnCount(val){{
     updates.push({{id:n.id,hidden:(tot<val)}});
   }});
   allNodes.update(updates);
-  // Also hide edges to hidden nodes
+  // Re-apply edge filter respecting both hidden nodes + active etype
   var hiddenNodes=new Set();
   allNodes.get().forEach(function(n){{if(n.hidden)hiddenNodes.add(n.id);}});
   var edgeUpdates=[];
   allEdges.get().forEach(function(e){{
-    edgeUpdates.push({{id:e.id,hidden:(hiddenNodes.has(e.to)||hiddenNodes.has(e.from))}});
+    var nodeHidden=hiddenNodes.has(e.to)||hiddenNodes.has(e.from);
+    var etypeHidden=false;
+    if(_activeEtype!=='all'){{
+      if(_activeEtype==='call') etypeHidden=e._etype!=='call';
+      else if(_activeEtype==='sms') etypeHidden=e._etype!=='sms';
+      else etypeHidden=e._etype!==_activeEtype;
+    }}
+    edgeUpdates.push({{id:e.id,hidden:nodeHidden||etypeHidden}});
   }});
   allEdges.update(edgeUpdates);
 }}
@@ -8246,9 +8724,15 @@ function showAll(){{
 // ── Label / node size sliders ──
 function changeFontSize(val){{
   val=parseInt(val);
-  document.getElementById('fontVal').textContent=val;
+  document.getElementById('fontVal').textContent=val===0?'off':val;
   allNodes.update(allNodes.get().map(n=>({{id:n.id,
     font:Object.assign({{}},n.font,{{size:val}})}})));
+}}
+function changeEdgeFontSize(val){{
+  val=parseInt(val);
+  document.getElementById('edgeFontVal').textContent=val===0?'off':val;
+  allEdges.update(allEdges.get().map(e=>({{id:e.id,
+    font:Object.assign({{}},e.font,{{size:val}})}})));
 }}
 function changeNodeSize(val){{
   val=parseInt(val);
@@ -8256,6 +8740,57 @@ function changeNodeSize(val){{
   allNodes.update(allNodes.get().map(n=>{{
     if(n.group==='subject'||n.group==='isolated_subject')return{{id:n.id}};
     return{{id:n.id,size:val}};
+  }}));
+}}
+
+// ── Search nodes by number or name ──
+function searchNodes(q){{
+  q = q.trim().toLowerCase();
+  if(!q){{
+    // restore all
+    allNodes.update(allNodes.get().map(n=>({{id:n.id,opacity:1.0}})));
+    allEdges.update(allEdges.get().map(e=>({{id:e.id,hidden:false}})));
+    return;
+  }}
+  var matched=new Set();
+  allNodes.get().forEach(function(n){{
+    var lbl=(n.label||'').toLowerCase();
+    var cname=(n._cname||'').toLowerCase();
+    var id=(n.id||'').toLowerCase();
+    if(lbl.includes(q)||cname.includes(q)||id.includes(q)) matched.add(n.id);
+  }});
+  // highlight matched, dim others
+  allNodes.update(allNodes.get().map(n=>({{
+    id:n.id, opacity: matched.has(n.id)?1.0:0.10
+  }})));
+  // show only edges connected to matched
+  allEdges.update(allEdges.get().map(e=>({{
+    id:e.id, hidden:!(matched.has(e.from)||matched.has(e.to))
+  }})));
+  // zoom to first match
+  if(matched.size>0){{
+    network.focus([...matched][0],{{scale:1.4,animation:{{duration:500}}}});
+  }}
+}}
+
+// ── Edge type filter ──
+var _activeEtype = 'all';
+function filterEdgeType(etype){{
+  _activeEtype = etype;
+  // button highlight
+  ['fAll','fCall','fSms'].forEach(function(id){{
+    document.getElementById(id).style.opacity='0.5';
+  }});
+  var activeId = etype==='all'?'fAll':etype==='call'?'fCall':'fSms';
+  document.getElementById(activeId).style.opacity='1.0';
+
+  var hiddenNodes=new Set();
+  allNodes.get().forEach(function(n){{if(n.hidden)hiddenNodes.add(n.id);}});
+
+  allEdges.update(allEdges.get().map(function(e){{
+    if(hiddenNodes.has(e.from)||hiddenNodes.has(e.to)) return{{id:e.id,hidden:true}};
+    if(etype==='all') return{{id:e.id,hidden:false}};
+    return{{id:e.id,hidden:e._etype!==etype}};
   }}));
 }}
 
@@ -8334,11 +8869,18 @@ def link_analysis_page():
     with st.expander("⚙️ Settings", expanded=False):
         c1, c2, c3 = st.columns(3)
         with c1:
-            top_n = st.slider("Top N contacts per subject", 5, 50, 20)
+            top_n = st.slider("Top N contacts per subject (table & graph)", 5, 50, 20)
         with c2:
             coloc_window = st.slider("Co-location time window (minutes)", 5, 120, 30)
         with c3:
             radius_km = st.slider("Co-location radius (km)", 1, 20, 5)
+        exclude_noise = st.checkbox(
+            "🧹 Carrier/service numbers ফিল্টার করুন (IVR, promo, shortcode)",
+            value=True,
+            help="ON থাকলে operator IVR, promotional ও shortcode numbers — connections, "
+                 "common contacts এবং network graph — সব জায়গা থেকে বাদ যাবে। "
+                 "কোনো specific service number investigate করতে চাইলে OFF করুন।"
+        )
 
     # ── Subject Name & Photo ──
     with st.expander("👤 Subject Names & Photos (optional)", expanded=False):
@@ -8358,6 +8900,31 @@ def link_analysis_page():
                     import base64 as _b64
                     _photo_b64 = "data:" + _sphoto.type + ";base64," + _b64.b64encode(_sphoto.read()).decode()
                 _subj_meta[_lbl] = {"name": _sname.strip(), "photo": _photo_b64}
+
+    # ── Contact Names (optional) ──
+    with st.expander("📇 Contact Names (optional)", expanded=False):
+        st.caption(
+            "পরিচিত নম্বরের নাম দিন। Graph-এ নম্বরের পাশে নাম দেখাবে। "
+            "Format: একটি করে লাইনে `880XXXXXXXXXX = নাম`"
+        )
+        _contact_names_raw = st.text_area(
+            "Number = Name (একটি লাইনে একটি)",
+            placeholder="8801XXXXXXXXX = Rahim Uddin\n8801YYYYYYYYY = Karim Vai",
+            height=140,
+            key="contact_names_input"
+        )
+        # Parse contact names
+        _contact_names_dict = {}
+        for _line in _contact_names_raw.splitlines():
+            _line = _line.strip()
+            if '=' in _line:
+                _parts = _line.split('=', 1)
+                _num = _parts[0].strip()
+                _nm  = _parts[1].strip()
+                if _num and _nm:
+                    _contact_names_dict[_num] = _nm
+        if _contact_names_dict:
+            st.success(f"✅ {len(_contact_names_dict)}টি নাম লোড হয়েছে।")
 
     if st.button("🔗 Run Link Analysis", type="primary", use_container_width=False,
                  key="run_link_analysis"):
@@ -8398,7 +8965,7 @@ def link_analysis_page():
 
         # ── Build connections ──
         with st.spinner("Analyzing connections..."):
-            connections = _build_connections(dfs)
+            connections = _build_connections(dfs, exclude_noise=exclude_noise)
 
         # Filter top N per subject
         # Sort connections by total across subjects
@@ -8472,36 +9039,44 @@ def link_analysis_page():
         # ── Network Graph ──
         st.markdown("### 🕸️ Network Graph")
         with st.spinner("Building network graph..."):
-            # Use top connections for graph (limit nodes)
-            # ── Graph connections: top 80 shared + top 5 per subject ──
+            # ── Graph connections: Fair per-subject top_n + shared bonus ──
+            #
+            # Option A: প্রতি subject থেকে exactly top_n contacts নেওয়া হয়।
+            #           ফলে ৪টা subject থাকলে প্রত্যেকের top_n সমান।
+            # Option B: top_n slider এখন graph-এও apply হয়।
+            # Shared bonus: একাধিক subject-এর সাথে common হলে সে সবসময়
+            #               graph-এ থাকবে (top_n limit-এর বাইরেও)।
+
             top_connections = defaultdict(dict)
 
-            # Step 1: Add top 80 shared/common contacts
-            for pb, subj_dict in conn_sorted[:80]:
-                top_connections[pb] = subj_dict
-
-            # Step 2: Each subject MUST have at least 5 contacts in graph
+            # Step 1 — প্রতি subject থেকে top_n contacts নাও (call+sms total দিয়ে sort)
             for df_s in dfs:
                 sub = df_s['_subject'].iloc[0]
-                current_count = sum(1 for sd in top_connections.values() if sub in sd)
-                if current_count < 5:
-                    added = 0
-                    # Get top contacts for this subject by total (call+sms)
-                    sub_contacts = sorted(
-                        [(pb, sd[sub]) for pb, sd in connections.items() if sub in sd],
-                        key=lambda x: x[1]['total'], reverse=True
-                    )
-                    for pb, data in sub_contacts:
-                        if sum(1 for sd in top_connections.values() if sub in sd) >= 5:
-                            break
-                        if pb not in top_connections:
-                            top_connections[pb] = {}
-                        top_connections[pb][sub] = data
-                        added += 1
+                sub_contacts = sorted(
+                    [(pb, sd[sub]) for pb, sd in connections.items() if sub in sd],
+                    key=lambda x: x[1]['total'], reverse=True
+                )
+                for pb, data in sub_contacts[:top_n]:
+                    if pb not in top_connections:
+                        top_connections[pb] = {}
+                    top_connections[pb][sub] = data
 
-            # Step 3: edge count per subject
-            subj_edge_count = {sub: sum(1 for sd in top_connections.values() if sub in sd)
-                               for sub in subjects}
+            # Step 2 — Shared bonus: যেসব number ২+ subject-এর সাথে common
+            #           কিন্তু Step 1-এ top_n cut-off এর কারণে বাদ পড়েছে,
+            #           তাদের সব subject-এর entry সহ যোগ করো।
+            for pb, subj_dict in connections.items():
+                if len(subj_dict) >= 2:          # common contact
+                    if pb not in top_connections:
+                        top_connections[pb] = {}
+                    for sub, data in subj_dict.items():
+                        if sub not in top_connections[pb]:
+                            top_connections[pb][sub] = data
+
+            # Step 3 — edge count per subject (graph stats-এর জন্য)
+            subj_edge_count = {
+                sub: sum(1 for sd in top_connections.values() if sub in sd)
+                for sub in subjects
+            }
 
             # Build subject meta dict by phone
             _subj_meta_by_phone = {}
@@ -8510,7 +9085,7 @@ def link_analysis_page():
                 meta = _subj_meta.get(_lbl, {}) if "_subj_meta" in dir() else {}
                 _subj_meta_by_phone[sub] = meta
 
-            graph_html = _build_network_html(dfs, top_connections, subjects, subj_edge_count, _subj_meta_by_phone)
+            graph_html = _build_network_html(dfs, top_connections, subjects, subj_edge_count, _subj_meta_by_phone, _contact_names_dict)
 
         st.components.v1.html(graph_html, height=780, scrolling=False)
 
@@ -8771,8 +9346,6 @@ Cell Tower CSV আপলোড করলে accuracy উন্নত হবে�
                     )
             else:
                 st.success(f"✅ No relay patterns found within {_sp_window} min window.")
-
-
 
 
 def _parse_profile_docs(doc_files):
