@@ -287,20 +287,38 @@ st.set_page_config(
 # ─────────────────────────────────────────────
 # LOGIN SYSTEM
 # ─────────────────────────────────────────────
-# User credentials — username: password (plain text, local deployment only)
-# To add/remove users: edit this dict
-_USERS = {
-    "faruk13": "NSI&2026",
-    "nsi1":    "NSI&2026",
-    "nsi2":    "NSI&2026",
-    "nsi3":    "NSI&2026",
-}
+# Passwords stored as bcrypt hashes in .streamlit/secrets.toml [passwords]
+# Generate: python -c "import bcrypt; print(bcrypt.hashpw(b'PASS', bcrypt.gensalt(12)).decode())"
+import bcrypt as _bcrypt
+
+def _load_password_store():
+    store = {}
+    try:
+        for u, h in st.secrets.get("passwords", {}).items():
+            store[u.strip().lower()] = h.strip()
+        if store: return store
+    except Exception: pass
+    import os as _os
+    env = _os.environ.get("CDR_USERS", "")
+    if env:
+        for pair in env.split(","):
+            if ":" in pair:
+                u, h = pair.split(":", 1)
+                store[u.strip().lower()] = h.strip()
+        if store: return store
+    return store
+
+_PASSWORD_STORE = _load_password_store()
 
 def _check_login(username: str, password: str) -> bool:
-    user = _USERS.get(username.strip().lower())
-    if user is None:
+    hashed = _PASSWORD_STORE.get(username.strip().lower())
+    if not hashed:
+        _bcrypt.checkpw(b"dummy", b"$2b$12$" + b"x"*53)
         return False
-    return _hmac.compare_digest(user, password)
+    try:
+        return _bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
 
 import time as _time_mod   # session timeout-এর জন্য — login page-এর আগে দরকার
 
@@ -4329,7 +4347,7 @@ def movement_pattern_analysis(df):
             top_locations.append({
                 "name":     _lbl,
                 "district": _disp_dist,
-                "gps":      f"{round(_coord[0],5)}, {round(_coord[1],5)}" if _coord else "",
+                "gps":      f"{round(_coord[0],6)}, {round(_coord[1],6)}" if _coord else "",
                 "count":    int(_cnt),
                 "address":  str(_addr)[:70],
             })
@@ -4464,7 +4482,7 @@ def _movement_html(mv):
                 <td style="padding:0.7rem 1rem; font-weight:700;">
                     {t["district"] or t["upazila"]}</td>
                 <td style="padding:0.7rem 1rem; text-align:center; font-family:monospace; font-size:0.82rem; color:#1e3a8a;">
-                    {"✅ " + str(round(float(t["lat"]),5)) + "<br>" + str(round(float(t["lon"]),5)) if t.get("lat") else "—"}
+                    {"✅ " + str(round(float(t["lat"]),6)) + "<br>" + str(round(float(t["lon"]),6)) if t.get("lat") else "—"}
                 </td>
                 <td style="padding:0.7rem 1rem; text-align:center;">
                     <span style="background:#dbeafe;color:#1e40af;border-radius:12px;
@@ -6477,13 +6495,13 @@ def build_movement_map(df, phone, operator, mv_data=None):
 
     # ── Leaflet JS ──
     js=[]
-    coords=[[round(s['lat'],5),round(s['lon'],5)] for s in steps]
+    coords=[[round(s['lat'],6),round(s['lon'],6)] for s in steps]
     js.append("var coords="+_json.dumps(coords)+";")
     js.append("var route=L.polyline.antPath(coords,{color:'#1d4ed8',weight:3,opacity:0.75,delay:600,dashArray:[14,18],pulseColor:'#93c5fd',paused:false,reverse:false}).addTo(map);")
 
     for i in range(len(steps)-1):
         p1=steps[i]; p2=steps[i+1]
-        ml=round((p1['lat']+p2['lat'])/2,5); mlo=round((p1['lon']+p2['lon'])/2,5)
+        ml=round((p1['lat']+p2['lat'])/2,6); mlo=round((p1['lon']+p2['lon'])/2,6)
         b=bearing(p1['lat'],p1['lon'],p2['lat'],p2['lon'])
         dk=hav(p1['lat'],p1['lon'],p2['lat'],p2['lon'])
         col=get_color(p2['km'],home_dist_val,p2['district'])
@@ -6499,7 +6517,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
         js.append("L.marker([{ml},{mlo}],{{icon:L.divIcon({{html:{svg},iconSize:[26,26],iconAnchor:[13,13],className:''}}),zIndexOffset:-50}}).addTo(map).bindTooltip('{tip}',{{sticky:true}});".format(ml=ml,mlo=mlo,svg=_json.dumps(svg),tip=tip))
 
     for i,s in enumerate(steps):
-        num=i+1; la=round(s['lat'],5); lo=round(s['lon'],5)
+        num=i+1; la=round(s['lat'],6); lo=round(s['lon'],6)
         km=s['km']; col=get_color(km,home_dist_val,s['district'])
         dist=(s['district'] or '—').replace('"','')
         thana=(s.get('thana','') or '').replace('"','')
@@ -6525,7 +6543,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
         js.append("L.marker([{la},{lo}],{{icon:L.divIcon({{html:{ni},iconSize:[20,20],iconAnchor:[10,10],className:''}}),zIndexOffset:10}}).addTo(map);".format(la=la,lo=lo,ni=_json.dumps(ni)))
 
     for s in suspicious:
-        la=round(s['lat'],5); lo=round(s['lon'],5)
+        la=round(s['lat'],6); lo=round(s['lon'],6)
         dist=(s['district'] or '?').replace('"','')
         thana=(s.get('thana','') or '').replace('"','')
         loc_s=f"{thana}, {dist}" if thana and thana.lower()!=dist.lower() else dist
@@ -6536,8 +6554,8 @@ def build_movement_map(df, phone, operator, mv_data=None):
              "<b>Date:</b> {dt}</div>").format(loc=loc_s,la=la,lo=lo,km=round(s['km'],1),cnt=s['count'],dt=s['start'][:10])
         js.append("L.circleMarker([{la},{lo}],{{radius:7,fillColor:'#f59e0b',color:'white',weight:1.5,opacity:0.8,fillOpacity:0.35,dashArray:'5,4'}}).addTo(map).bindPopup({pop}).bindTooltip('&#9888; {loc} ({km}km) — {cnt}rec',{{sticky:true}});".format(la=la,lo=lo,pop=_json.dumps(pop),loc=loc_s,km=round(s['km'],1),cnt=s['count']))
 
-    home_pop="<div style='font-family:Arial;padding:10px'><b style='font-size:14px'>&#127968; Home Location</b><br><br><b>Area:</b> {hl}<br><b>District:</b> {hd}<br><b>GPS:</b> {la}, {lo}<br><b>Source:</b> Most frequent BTS location</div>".format(hl=home_label,hd=home_dist_val,la=round(home_lat,5),lo=round(home_lon,5))
-    js.append("L.marker([{la},{lo}],{{icon:L.divIcon({{html:\"<div style='font-size:30px;margin:-15px 0 0 -15px'>&#127968;</div>\",iconSize:[30,30],iconAnchor:[15,15],className:''}}),zIndexOffset:1000}}).addTo(map).bindPopup({pop}).bindTooltip('&#127968; Home: {hl}',{{sticky:true,permanent:true,direction:'right',offset:[15,0]}});".format(la=round(home_lat,5),lo=round(home_lon,5),pop=_json.dumps(home_pop),hl=home_label))
+    home_pop="<div style='font-family:Arial;padding:10px'><b style='font-size:14px'>&#127968; Home Location</b><br><br><b>Area:</b> {hl}<br><b>District:</b> {hd}<br><b>GPS:</b> {la}, {lo}<br><b>Source:</b> Most frequent BTS location</div>".format(hl=home_label,hd=home_dist_val,la=round(home_lat,6),lo=round(home_lon,6))
+    js.append("L.marker([{la},{lo}],{{icon:L.divIcon({{html:\"<div style='font-size:30px;margin:-15px 0 0 -15px'>&#127968;</div>\",iconSize:[30,30],iconAnchor:[15,15],className:''}}),zIndexOffset:1000}}).addTo(map).bindPopup({pop}).bindTooltip('&#127968; Home: {hl}',{{sticky:true,permanent:true,direction:'right',offset:[15,0]}});".format(la=round(home_lat,6),lo=round(home_lon,6),pop=_json.dumps(home_pop),hl=home_label))
 
     # ── Top 3 Frequent Locations — mv_data থেকে GPS নিয়ে map-এ দেখাও ──────
     if mv_data and mv_data.get('top_locations'):
@@ -6579,7 +6597,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
                 "<td style='padding:4px 8px;font-size:11px'>{addr}</td></tr>"
                 "</table></div>"
             ).format(col=_fcol,icon=_ficon,label=_flabel,name=_fname,
-                     dist=_fdist,la=round(_fla,5),lo=round(_flo,5),
+                     dist=_fdist,la=round(_fla,6),lo=round(_flo,6),
                      cnt=_fcount,addr=_faddr)
             # Star marker — numbered (1,2,3)
             _fnum = _fi + 1
@@ -6590,19 +6608,19 @@ def build_movement_map(df, phone, operator, mv_data=None):
                     "border:2px solid white'>F{n}</div>").format(col=_fcol, n=_fnum)
             _ftip = "{icon} {label}: {name} ({dist}) | {cnt} records | {la},{lo}".format(
                 icon=_ficon, label=_flabel, name=_fname, dist=_fdist,
-                cnt=_fcount, la=round(_fla,5), lo=round(_flo,5))
+                cnt=_fcount, la=round(_fla,6), lo=round(_flo,6))
             js.append(
                 "L.circleMarker([{la},{lo}],{{radius:14,fillColor:'{col}',color:'white',"
                 "weight:3,opacity:0.9,fillOpacity:0.25,dashArray:'6,3',zIndexOffset:800}})"
-                ".addTo(map);".format(la=round(_fla,5),lo=round(_flo,5),col=_fcol))
+                ".addTo(map);".format(la=round(_fla,6),lo=round(_flo,6),col=_fcol))
             js.append(
                 "L.marker([{la},{lo}],{{icon:L.divIcon({{html:{ni},iconSize:[24,24],"
                 "iconAnchor:[12,12],className:''}}),zIndexOffset:900}})"
                 ".addTo(map).bindPopup({pop}).bindTooltip({tip},{{sticky:true}});".format(
-                    la=round(_fla,5),lo=round(_flo,5),
+                    la=round(_fla,6),lo=round(_flo,6),
                     ni=_json.dumps(_fni),pop=_json.dumps(_fpop),tip=_json.dumps(_ftip)))
 
-    all_bounds=[[round(s['lat'],5),round(s['lon'],5)] for s in steps]+[[round(home_lat,5),round(home_lon,5)]]
+    all_bounds=[[round(s['lat'],6),round(s['lon'],6)] for s in steps]+[[round(home_lat,6),round(home_lon,6)]]
     js.append("map.fitBounds("+_json.dumps(all_bounds)+",{padding:[80,80]});")
     all_js='\n'.join(js)
 
@@ -6620,7 +6638,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
             " <span class='tl-km'>{km}km</span> <span title='source'>{mi}</span><br>"
             "<span class='tl-date'>{st} &rarr; {en}</span>"
             " &middot; <span class='tl-cnt'>{cnt}rec</span></div></div>\n"
-        ).format(la=round(s['lat'],5),lo=round(s['lon'],5),col=col,n=i+1,
+        ).format(la=round(s['lat'],6),lo=round(s['lon'],6),col=col,n=i+1,
                  icon=icon,loc=loc_lbl,km=s['km'],mi=mi,
                  st=s['start'][:10],en=s['end'][:10],cnt=s['count'])
 
@@ -6900,6 +6918,226 @@ def _load_cdr_bytes(file_bytes, label):
     except Exception as e:
         st.error(f"Error loading {label}: {e}")
         return None, None, 0
+
+
+def _is_carrier_number(num: str) -> bool:
+    """True if num looks like a carrier/service/IVR number, not a real subscriber."""
+    d = re.sub(r'[^0-9]', '', str(num))
+    if d in _CARRIER_NUMBERS: return True
+    if len(d) < 8: return True
+    if len(set(d)) <= 2 and len(d) >= 8: return True
+    for pfx in _CARRIER_PREFIXES_SHORT:
+        if d.startswith(pfx) and len(d) < 11: return True
+    return False
+
+
+
+def _build_first_last_dates(dfs):
+    """
+    প্রতিটি (subject, contact) pair-এর first ও last contact date বের করে।
+    Returns: dict { (subject, phone_b): {'first': date, 'last': date} }
+    """
+    result = {}
+    for df in dfs:
+        if 'start' not in df.columns: continue
+        subject = df['_subject'].iloc[0]
+        pb_col = '_phone_b' if '_phone_b' in df.columns else None
+        if pb_col is None:
+            pb_col = next((c for c in df.columns if c.lower().replace(' ','_') == 'party_b'), None)
+        if pb_col is None: continue
+
+        ut_col = next((c for c in df.columns if c.lower().replace(' ','_') == 'usage_type'), None)
+        if ut_col is None: continue
+
+        _tmp = df[['start', pb_col, ut_col]].copy()
+        _tmp['_pb'] = _tmp[pb_col].fillna('').apply(lambda x: _clean_phone(str(x)))
+        _tmp = _tmp[_tmp['_pb'].apply(_is_valid_number)]
+        if _tmp.empty: continue
+
+        # Only call rows
+        _ut = _tmp[ut_col].fillna('').str.upper().str.strip()
+        _is_call = (
+            _ut.str.contains('MOC') | _ut.str.contains('MTC') |
+            _ut.str.contains('OUT') | _ut.str.contains(r'\bRCF\b', regex=True)
+        )
+        _tmp = _tmp[_is_call]
+        if _tmp.empty: continue
+
+        _grp = _tmp.groupby('_pb')['start'].agg(['min', 'max'])
+        for pb, row in _grp.iterrows():
+            key = (subject, pb)
+            result[key] = {
+                'first': row['min'].strftime('%Y-%m-%d') if pd.notna(row['min']) else '—',
+                'last':  row['max'].strftime('%Y-%m-%d') if pd.notna(row['max']) else '—',
+            }
+    return result
+
+
+
+def _build_noise_analysis(dfs, connections):
+    """
+    Carrier/service numbers যেগুলো common contact হিসেবে দেখাচ্ছে কিন্তু
+    আসলে operator IVR/promo — সেগুলো flag করে।
+    Returns:
+      carrier_list  — list of dicts (number, shared_by, total_calls, reason)
+      clean_common  — common contacts with carrier numbers removed
+    """
+    carrier_list = []
+    clean_common = {}
+
+    for pb, subj_dict in connections.items():
+        if len(subj_dict) < 2: continue  # শুধু common contacts check করব
+        is_carrier  = _is_carrier_number(pb)
+        is_promo    = _is_promotional(pb)
+        total_calls = sum(d.get('call_out', 0) + d.get('call_in', 0) for d in subj_dict.values())
+
+        if is_carrier or is_promo:
+            reason = 'Carrier/IVR' if is_carrier else 'Promotional/Service'
+            carrier_list.append({
+                'Number':      pb,
+                'Shared By':   len(subj_dict),
+                'Total Calls': total_calls,
+                'Reason':      reason,
+            })
+        else:
+            clean_common[pb] = subj_dict
+
+    return carrier_list, clean_common
+
+
+
+def _build_suspicious_patterns(dfs, window_min=30):
+    """
+    দুই ধরনের suspicious pattern detect করে:
+
+    1. Mirror Call — Subject A → X call করার ±window_min মিনিটের মধ্যে
+                     Subject B → same X-কে call করে (বা একই X → B-কে)।
+                     মানে: A ও B একই number-এর সাথে প্রায় একই সময়ে যোগাযোগ করেছে।
+
+    2. Relay Pattern — A → X call, তারপর X → B call (±window_min মিনিটের মধ্যে),
+                       যেখানে A ও B দুজনেই subject। X একটা intermediary হিসেবে কাজ করছে।
+
+    Returns: (mirror_rows, relay_rows) — দুটো list of dicts
+    """
+    # Subject phone → DataFrame mapping
+    subj_dfs = {}
+    for df in dfs:
+        if 'start' not in df.columns: continue
+        subj = df['_subject'].iloc[0]
+        ut_col = next((c for c in df.columns if c.lower().replace(' ','_') == 'usage_type'), None)
+        pb_col = '_phone_b' if '_phone_b' in df.columns else next(
+            (c for c in df.columns if c.lower().replace(' ','_') == 'party_b'), None)
+        if not ut_col or not pb_col: continue
+
+        _tmp = df[['start', pb_col, ut_col]].copy()
+        _tmp['_pb'] = _tmp[pb_col].fillna('').apply(lambda x: _clean_phone(str(x)))
+        _tmp = _tmp[_tmp['_pb'].apply(_is_valid_number)].copy()
+        _ut = _tmp[ut_col].fillna('').str.upper().str.strip()
+        _is_call = (
+            _ut.str.contains('MOC') | _ut.str.contains('MTC') |
+            _ut.str.contains('OUT') | _ut.str.contains(r'\bRCF\b', regex=True)
+        )
+        _tmp = _tmp[_is_call][['start', '_pb']].copy()
+        _tmp = _tmp.sort_values('start').reset_index(drop=True)
+        subj_dfs[subj] = _tmp
+
+    subjects = list(subj_dfs.keys())
+    window_td = pd.Timedelta(minutes=window_min)
+
+    mirror_rows = []
+    relay_rows  = []
+
+    # ── Mirror pattern: subject pairs ──────────────────────────────────────
+    for i in range(len(subjects)):
+        for j in range(i + 1, len(subjects)):
+            sa, sb = subjects[i], subjects[j]
+            dfa, dfb = subj_dfs[sa], subj_dfs[sb]
+
+            # Common numbers between A and B
+            nums_a = set(dfa['_pb'].unique())
+            nums_b = set(dfb['_pb'].unique())
+            common_nums = nums_a & nums_b
+
+            for num in common_nums:
+                if _is_carrier_number(num) or _is_promotional(num): continue
+                times_a = dfa[dfa['_pb'] == num]['start'].sort_values().values
+                times_b = dfb[dfb['_pb'] == num]['start'].sort_values().values
+
+                # Find pairs within window
+                hits = []
+                bi = 0
+                for ta in times_a:
+                    while bi < len(times_b) and times_b[bi] < ta - window_td.value:
+                        bi += 1
+                    for k in range(bi, len(times_b)):
+                        tb = times_b[k]
+                        diff = abs(int(tb) - int(ta)) / 1e9  # nanoseconds → seconds
+                        if diff <= window_min * 60:
+                            hits.append({
+                                'Subject A': sa, 'Subject B': sb,
+                                'Common Number': num,
+                                'Time A': pd.Timestamp(ta).strftime('%Y-%m-%d %H:%M'),
+                                'Time B': pd.Timestamp(tb).strftime('%Y-%m-%d %H:%M'),
+                                'Gap (min)': round(diff / 60, 1),
+                            })
+                        elif int(tb) > int(ta) + window_td.value:
+                            break
+
+                if hits:
+                    # Deduplicate: same number-এর অনেক instance থাকলে প্রথম ৩টা দেখাও
+                    mirror_rows.extend(hits[:3])
+
+    # ── Relay pattern: A → X → B ────────────────────────────────────────────
+    # প্রতিটি subject-এর CDR-এ যেসব number আছে, সেগুলো দিয়ে cross-check
+    for i in range(len(subjects)):
+        for j in range(len(subjects)):
+            if i == j: continue
+            sa, sb = subjects[i], subjects[j]
+            dfa, dfb = subj_dfs[sa], subj_dfs[sb]
+
+            # X = numbers that appear in A's CDR (A called X)
+            # AND in B's CDR (X called B, i.e. B received from X — but we only have B's
+            # outgoing/incoming perspective, so X appears as party_b in B's CDR too)
+            nums_a = set(dfa['_pb'].unique())
+            nums_b = set(dfb['_pb'].unique())
+            relay_candidates = nums_a & nums_b  # X appears in both
+
+            # X cannot be a subject itself
+            relay_candidates -= set(subjects)
+
+            for x in relay_candidates:
+                if _is_carrier_number(x) or _is_promotional(x): continue
+                times_ax = dfa[dfa['_pb'] == x]['start'].sort_values().values  # A↔X
+                times_xb = dfb[dfb['_pb'] == x]['start'].sort_values().values  # X↔B
+
+                hits = []
+                bi = 0
+                for ta in times_ax:
+                    # Find X→B calls that happen AFTER A→X within window
+                    while bi < len(times_xb) and int(times_xb[bi]) < int(ta):
+                        bi += 1
+                    for k in range(bi, len(times_xb)):
+                        tb = times_xb[k]
+                        diff = (int(tb) - int(ta)) / 1e9
+                        if 0 <= diff <= window_min * 60:
+                            hits.append({
+                                'Subject A': sa,
+                                'Relay Number (X)': x,
+                                'Subject B': sb,
+                                'A↔X Time': pd.Timestamp(ta).strftime('%Y-%m-%d %H:%M'),
+                                'X↔B Time': pd.Timestamp(tb).strftime('%Y-%m-%d %H:%M'),
+                                'Relay Gap (min)': round(diff / 60, 1),
+                            })
+                        elif int(tb) > int(ta) + window_td.value:
+                            break
+
+                if hits:
+                    relay_rows.extend(hits[:3])
+
+    # Sort by gap ascending (tighter = more suspicious)
+    mirror_rows.sort(key=lambda r: r['Gap (min)'])
+    relay_rows.sort(key=lambda r: r['Relay Gap (min)'])
+    return mirror_rows, relay_rows
 
 
 def _build_connections(dfs):
@@ -7814,7 +8052,7 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
 </div>
 <div class="bar">
   <button class="btn" onclick="network.fit()">&#x229F; Fit</button>
-  <button class="btn" id="physBtn" onclick="togglePhysics()">&#x23F8; Stop</button>
+  <button class="btn" id="physBtn" onclick="togglePhysics()">&#x23F8; Freeze</button>
   <button class="btn red" onclick="showOnlyCommon()">&#128308; Common</button>
   <button class="btn grn" onclick="showAll()">&#128065; All</button>
   <button class="btn del" id="delBtn" onclick="deleteSelected()">&#x1F5D1; Delete</button>
@@ -7837,8 +8075,17 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
            oninput="changeNodeSize(this.value)">
     <span id="nodeVal">14</span>
   </div>
+  <div class="sl" style="flex:1;min-width:160px;">
+    <span>&#x1F50D;</span>
+    <input type="text" id="searchBox" placeholder="Search number / name..."
+      oninput="searchNodes(this.value)" onkeydown="handleSearchKey(event)"
+      style="flex:1;font-size:11px;padding:3px 7px;border-radius:5px;border:1px solid #cbd5e1;background:#f8fafc;color:#0f172a;outline:none;">
+    <span id="searchCount" style="font-size:10px;color:#64748b;white-space:nowrap;"></span>
+    <button class="btn" style="background:#475569;padding:3px 8px;"
+      onclick="document.getElementById('searchBox').value='';searchNodes('');document.getElementById('searchCount').textContent='';">&#x2715;</button>
+  </div>
   <span style="font-size:10px;color:#94a3b8;margin-left:auto">
-    Scroll=zoom | Drag=move | Click=info | Del=remove
+    Scroll=zoom | Drag=move | Click=info | Right-click=menu
   </span>
 </div>
 <div id="wrap">
@@ -7885,15 +8132,33 @@ var network = new vis.Network(
 // Auto-fit after stabilization
 network.once('stabilizationIterationsDone', function(){{
   network.fit({{animation:{{duration:600,easingFunction:'easeInOutQuad'}}}});
-  document.getElementById('physBtn').textContent='\u23F8 Stop';
+  network.setOptions({{physics:{{enabled:false}}}});
+  physicsOn=false;
+  document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
 }});
 setTimeout(function(){{if(network)network.fit();}}, 2500);
 
 function togglePhysics(){{
   physicsOn=!physicsOn;
   network.setOptions({{physics:{{enabled:physicsOn}}}});
-  document.getElementById('physBtn').textContent=physicsOn?'\u23F8 Stop':'\u25B6 Start';
+  document.getElementById('physBtn').textContent=physicsOn?'\u23F8 Freeze':'\u25B6 Unfreeze';
 }}
+
+// dragEnd: pin node
+network.on('dragEnd',function(params){{
+  if(params.nodes.length>0){{
+    params.nodes.forEach(function(nid){{
+      var pos=network.getPositions([nid])[nid];
+      allNodes.update({{id:nid,x:pos.x,y:pos.y,fixed:{{x:true,y:true}}}});
+    }});
+  }}
+}});
+// doubleClick background: unpin all
+network.on('doubleClick',function(params){{
+  if(params.nodes.length===0&&params.edges.length===0){{
+    allNodes.update(allNodes.get().map(n=>({{id:n.id,fixed:{{x:false,y:false}}}})));
+  }}
+}});
 
 // ── Filter by min connection count ──
 function filterByConnCount(val){{
@@ -8025,20 +8290,10 @@ network.on('click',function(params){{
   }}
 }});
 
-// Right-click = delete
-network.on('oncontext',function(params){{
-  params.event.preventDefault();
-  if(params.nodes.length>0){{
-    selectedNodeId=params.nodes[0];
-    deleteSelected();
-  }} else if(params.edges.length>0){{
-    selectedEdgeId=params.edges[0];
-    deleteSelected();
-  }}
-}});
+__EXTRA_JS__
 </script>
 </body>
-</html>"""
+</html>""".replace("__EXTRA_JS__", "\n// ── Search ───────────────────────────────────────────────────────────────\nvar _sm=[],_si=-1,_ha=false,_ocs=false;\nfunction searchNodes(q){\n  q=q.trim().toLowerCase();\n  var ce=document.getElementById('searchCount');\n  if(!q){\n    _sm=[];_si=-1;\n    if(!_ha){\n      allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined})));\n      allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:false,opacity:1.0})));\n    }\n    if(ce)ce.textContent='';return;\n  }\n  var mt=new Set();\n  allNodes.get().forEach(function(n){\n    if((n.label||'').toLowerCase().includes(q)||String(n.id||'').toLowerCase().includes(q))mt.add(n.id);\n  });\n  _sm=[...mt];_si=_sm.length>0?0:-1;\n  allNodes.update(allNodes.get().map(function(n){\n    if(mt.has(n.id))return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    return{id:n.id,opacity:0.08,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:!(mt.has(e.from)&&mt.has(e.to))})));\n  if(ce)ce.textContent=mt.size>0?mt.size+' found':'No match';\n  if(_sm.length>0){network.focus(_sm[0],{scale:1.6,animation:{duration:400}});network.selectNodes([_sm[0]]);}\n}\nfunction handleSearchKey(e){\n  if(e.key!=='Enter'||_sm.length===0)return;\n  _si=(_si+1)%_sm.length;\n  network.focus(_sm[_si],{scale:1.6,animation:{duration:300}});\n  network.selectNodes([_sm[_si]]);\n}\n// ── Hover dim ────────────────────────────────────────────────────────────\nfunction _soc(){\n  if(_ocs)return;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,_oc:n.color||null,_bg:n.color&&n.color.background?n.color.background:null,_bw:n.borderWidth||2};\n  }));\n  _ocs=true;\n}\nnetwork.on('hoverNode',function(p){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _soc();_ha=true;\n  var h=p.node,cn=new Set(network.getConnectedNodes(h));cn.add(h);\n  allNodes.update(allNodes.get().map(function(n){\n    if(n.id===h)return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    if(cn.has(n.id))return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n    return{id:n.id,opacity:0.07,borderWidth:1,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:e.from===h||e.to===h?1.0:0.05};\n  }));\n});\nnetwork.on('blurNode',function(){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _ha=false;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:1.0};\n  }));\n});\n// ── Context menu ─────────────────────────────────────────────────────────\nvar _cm=(function(){\n  var el=document.createElement('div');\n  el.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px 0;min-width:185px;font-family:Segoe UI,Arial,sans-serif;font-size:13px;display:none';\n  document.body.appendChild(el);\n  function it(ic,lb,fn,dg){\n    var d=document.createElement('div');\n    d.style.cssText='padding:7px 14px;cursor:pointer;display:flex;gap:8px;align-items:center;'+(dg?'color:#dc2626':'color:#0f172a');\n    d.innerHTML='<span>'+ic+'</span><span>'+lb+'</span>';\n    d.onmouseenter=function(){d.style.background='#f1f5f9';};d.onmouseleave=function(){d.style.background='';};\n    d.onclick=function(){hide();fn();};return d;\n  }\n  function sp(){var h=document.createElement('hr');h.style.cssText='margin:3px 0;border:none;border-top:1px solid #f1f5f9';return h;}\n  function show(x,y,items){\n    el.innerHTML='';\n    items.forEach(function(i){if(i==='sep')el.appendChild(sp());else el.appendChild(i);});\n    el.style.display='block';\n    var vw=window.innerWidth,vh=window.innerHeight,r=el.getBoundingClientRect();\n    el.style.left=(x+r.width>vw?vw-r.width-8:x)+'px';el.style.top=(y+r.height>vh?vh-r.height-8:y)+'px';\n  }\n  function hide(){el.style.display='none';}\n  document.addEventListener('click',hide);\n  document.addEventListener('keydown',function(e){if(e.key==='Escape')hide();});\n  return{show:show,hide:hide,it:it};\n})();\nfunction _cp(t){\n  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(function(){_tk('Copied: '+t);}).catch(function(){_cf(t);});\n  else _cf(t);\n}\nfunction _cf(t){var a=document.createElement('textarea');a.value=t;a.style.cssText='position:fixed;opacity:0';document.body.appendChild(a);a.select();try{document.execCommand('copy');_tk('Copied: '+t);}catch(e){}document.body.removeChild(a);}\nfunction _tk(m){var t=document.createElement('div');t.textContent=m;t.style.cssText='position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:8px 18px;border-radius:20px;font-size:13px;z-index:99999;pointer-events:none;opacity:0;transition:opacity .2s';document.body.appendChild(t);requestAnimationFrame(function(){t.style.opacity='1';});setTimeout(function(){t.style.opacity='0';setTimeout(function(){document.body.removeChild(t);},300);},2000);}\nnetwork.on('oncontext',function(params){\n  params.event.preventDefault();\n  var x=params.event.clientX,y=params.event.clientY;\n  if(params.nodes.length>0){\n    var nid=params.nodes[0];selectedNodeId=nid;\n    var obj=allNodes.get(nid);var lbl=obj?(obj.label||nid):nid;\n    var num=String(nid).replace(/[^0-9+]/g,'');\n    _cm.show(x,y,[\n      _cm.it('📋','Copy Number',function(){_cp(num||String(nid));}),\n      _cm.it('📝','Copy Full Label',function(){_cp(lbl);}),\n      'sep',\n      _cm.it('🔦','Highlight',function(){var cn=new Set(network.getConnectedNodes(nid));cn.add(nid);allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:cn.has(n.id)?1.0:0.08})));},false),\n      _cm.it('👁','Show Info',function(){if(obj&&obj.title)showPanel('NODE INFO',obj.title);}),\n      'sep',\n      _cm.it('🗑','Remove',function(){deleteSelected();},true),\n    ]);\n  }else if(params.edges.length>0){\n    var eid=params.edges[0];selectedEdgeId=eid;var eo=allEdges.get(eid);\n    _cm.show(x,y,[\n      _cm.it('📋','Copy: '+(eo?String(eo.from).slice(-8):''),function(){_cp(eo?String(eo.from):'');}),\n      _cm.it('📋','Copy: '+(eo?String(eo.to).slice(-8):''),function(){_cp(eo?String(eo.to):'');}),\n      'sep',\n      _cm.it('ℹ️','Edge Info',function(){if(eo&&eo.title)showPanel('LINK INFO',eo.title);}),\n      'sep',\n      _cm.it('🗑','Remove',function(){deleteSelected();},true),\n    ]);\n  }else{\n    _cm.show(x,y,[\n      _cm.it('🔲','Fit All',function(){network.fit();}),\n      _cm.it('👁','Show All',function(){showAll();}),\n      _cm.it('🔴','Common Only',function(){showOnlyCommon();}),\n    ]);\n  }\n});\n")
     return html
 
 
@@ -8345,6 +8600,179 @@ Cell Tower CSV আপলোড করলে accuracy উন্নত হবে�
         else:
             st.info("No co-location events found — subjects were not at the same location "
                     f"(within {coloc_window} min, {radius_km} km radius)")
+
+        st.markdown("---")
+
+        # ══════════════════════════════════════════════════════════════════
+        # ── Section: Noise Filter Report ──
+        # ══════════════════════════════════════════════════════════════════
+        st.markdown("### 🧹 Noise Filter — Carrier & Service Numbers")
+
+        with st.spinner("Running noise analysis..."):
+            # exclude_noise=False — raw connections থেকে কী filter হয়েছে সেটা দেখাতে
+            # raw_connections build করি (সব number সহ)
+            raw_connections = _build_connections(dfs, exclude_noise=False)
+            carrier_list, _ = _build_noise_analysis(dfs, raw_connections)
+
+        if carrier_list:
+            noise_df = pd.DataFrame(carrier_list)
+            if exclude_noise:
+                st.success(
+                    f"✅ **{len(carrier_list)}টি** carrier/service number **সব জায়গা থেকে** "
+                    f"(connections, common contacts, network graph) automatically filter হয়েছে।"
+                )
+            else:
+                st.warning(
+                    f"⚠️ Filter OFF আছে — **{len(carrier_list)}টি** carrier/service number "
+                    f"এখনও সব জায়গায় দেখাচ্ছে। Settings-এ filter চালু করুন।"
+                )
+            st.dataframe(noise_df, use_container_width=True, hide_index=True)
+        else:
+            st.success("✅ কোনো carrier/service number পাওয়া যায়নি।")
+
+        st.markdown("---")
+
+        # ══════════════════════════════════════════════════════════════════
+        # ── Section: First / Last Contact Date ──
+        # ══════════════════════════════════════════════════════════════════
+        st.markdown("### 📅 First & Last Contact Date")
+        st.caption("প্রতিটি subject এবং common contact-এর মধ্যে কখন প্রথম ও শেষবার যোগাযোগ হয়েছে।")
+
+        with st.spinner("Calculating contact dates..."):
+            fl_dates = _build_first_last_dates(dfs)
+
+        if fl_dates and common_contacts:
+            fl_rows = []
+            # শুধু common contacts-এর জন্য দেখাও (most investigative value)
+            for pb, subj_dict in common_contacts[:50]:
+                if _is_carrier_number(pb) or _is_promotional(pb): continue
+                for sub in subjects:
+                    if sub not in subj_dict: continue
+                    key = (sub, pb)
+                    dates = fl_dates.get(key, {})
+                    fl_rows.append({
+                        'Subject':       sub,
+                        'Contact':       pb,
+                        'First Contact': dates.get('first', '—'),
+                        'Last Contact':  dates.get('last',  '—'),
+                        'Total Calls':   subj_dict[sub].get('call_out', 0) + subj_dict[sub].get('call_in', 0),
+                        'Duration (min)': round(subj_dict[sub].get('duration', 0), 1),
+                    })
+
+            if fl_rows:
+                fl_df = pd.DataFrame(fl_rows).sort_values(['Contact', 'Subject'])
+
+                # Highlight: same contact-এর জন্য subjects-এর first contact date কতটা কাছাকাছি
+                st.dataframe(fl_df, use_container_width=True, hide_index=True, height=350)
+
+                # ── Date alignment insight ──
+                # একই contact-এ দুই subject-এর first contact date gap বের করো
+                align_rows = []
+                contact_groups = fl_df.groupby('Contact')
+                for contact, grp in contact_groups:
+                    if len(grp) < 2: continue
+                    dates_valid = grp[grp['First Contact'] != '—']['First Contact'].tolist()
+                    if len(dates_valid) < 2: continue
+                    try:
+                        parsed = sorted([pd.to_datetime(d) for d in dates_valid])
+                        gap_days = (parsed[-1] - parsed[0]).days
+                        align_rows.append({
+                            'Contact':          contact,
+                            'Subjects':         ' / '.join(grp['Subject'].tolist()),
+                            'Earliest Contact': parsed[0].strftime('%Y-%m-%d'),
+                            'Latest Contact':   parsed[-1].strftime('%Y-%m-%d'),
+                            'Date Gap (days)':  gap_days,
+                            'Alignment':        '🔴 Same Week' if gap_days <= 7
+                                                else ('🟡 Same Month' if gap_days <= 30
+                                                else '🟢 Different Period'),
+                        })
+                    except Exception:
+                        pass
+
+                if align_rows:
+                    align_df = pd.DataFrame(align_rows).sort_values('Date Gap (days)')
+                    st.markdown("""<div style="font-weight:700;color:#1e3a8a;margin-top:1rem;margin-bottom:0.4rem;">
+                        📊 Contact Date Alignment — কোন common contact-এর সাথে subjects একই সময়ে যোগাযোগ শুরু করেছে?
+                    </div>""", unsafe_allow_html=True)
+                    st.dataframe(align_df, use_container_width=True, hide_index=True)
+                    st.caption("🔴 Same Week = highly suspicious alignment · 🟡 Same Month = moderate · 🟢 Different Period = likely coincidental")
+            else:
+                st.info("Date information unavailable for common contacts.")
+        else:
+            st.info("Date analysis requires CDR files with a valid timestamp column.")
+
+        st.markdown("---")
+
+        # ══════════════════════════════════════════════════════════════════
+        # ── Section: Suspicious Patterns ──
+        # ══════════════════════════════════════════════════════════════════
+        st.markdown("### 🚨 Suspicious Communication Patterns")
+
+        _sp_window = st.slider(
+            "Pattern detection window (minutes)", 5, 120, 30,
+            key="sp_window",
+            help="এই সময়ের মধ্যে একই নম্বরে/থেকে call হলে suspicious pattern হিসেবে flag করা হবে।"
+        )
+
+        with st.spinner("Detecting suspicious patterns..."):
+            mirror_rows, relay_rows = _build_suspicious_patterns(dfs, _sp_window)
+
+        sp_tab1, sp_tab2 = st.tabs(["🪞 Mirror Call Pattern", "🔗 Relay Pattern"])
+
+        with sp_tab1:
+            st.markdown("""
+            <div style="background:#fef2f2;border-left:4px solid #dc2626;border-radius:8px;
+                        padding:0.75rem 1rem;font-size:0.83rem;color:#7f1d1d;margin-bottom:0.75rem">
+            <b>🪞 Mirror Call Pattern কী?</b><br>
+            Subject A এবং Subject B প্রায় একই সময়ে (<b>±window মিনিট</b>) একই নম্বরে call করেছে।
+            এটা indicate করে যে তারা হয় <b>coordinated</b> অথবা একই নির্দেশনা পাচ্ছে।
+            </div>
+            """, unsafe_allow_html=True)
+
+            if mirror_rows:
+                m_df = pd.DataFrame(mirror_rows)
+                st.error(f"🚨 {len(mirror_rows)} mirror call instance(s) detected")
+                st.dataframe(m_df, use_container_width=True, hide_index=True)
+
+                # Summary: কোন numbers সবচেয়ে বেশি mirrored
+                top_mirror = pd.DataFrame(mirror_rows)['Common Number'].value_counts().head(10)
+                if len(top_mirror) > 0:
+                    st.markdown("**Top mirrored numbers:**")
+                    st.dataframe(
+                        top_mirror.reset_index().rename(columns={'Common Number': 'Number', 'count': 'Mirror Instances'}),
+                        use_container_width=True, hide_index=True
+                    )
+            else:
+                st.success(f"✅ No mirror call patterns found within ±{_sp_window} min window.")
+
+        with sp_tab2:
+            st.markdown("""
+            <div style="background:#fff7ed;border-left:4px solid #f59e0b;border-radius:8px;
+                        padding:0.75rem 1rem;font-size:0.83rem;color:#78350f;margin-bottom:0.75rem">
+            <b>🔗 Relay Pattern কী?</b><br>
+            Subject A → X call করে, তারপর X → Subject B call করে (±window মিনিটের মধ্যে)।
+            X একটা <b>intermediary (মধ্যবর্তী)</b> হিসেবে message বা instruction relay করছে।
+            Direct communication এড়িয়ে indirect coordination-এর indicator।
+            </div>
+            """, unsafe_allow_html=True)
+
+            if relay_rows:
+                r_df = pd.DataFrame(relay_rows)
+                st.warning(f"⚠️ {len(relay_rows)} relay pattern instance(s) detected")
+                st.dataframe(r_df, use_container_width=True, hide_index=True)
+
+                # Top relay numbers
+                top_relay = pd.DataFrame(relay_rows)['Relay Number (X)'].value_counts().head(10)
+                if len(top_relay) > 0:
+                    st.markdown("**Top relay numbers (most active intermediaries):**")
+                    st.dataframe(
+                        top_relay.reset_index().rename(columns={'Relay Number (X)': 'Number', 'count': 'Relay Instances'}),
+                        use_container_width=True, hide_index=True
+                    )
+            else:
+                st.success(f"✅ No relay patterns found within {_sp_window} min window.")
+
+
 
 
 def _parse_profile_docs(doc_files):
