@@ -8076,16 +8076,31 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
     edges = []
     eid = 0
     subject_set = set(subjects)
+    seen_subj_pairs = set()  # subject-to-subject duplicate edge প্রতিরোধ
+
     for pb, subj_dict in connections.items():
         for sub, data in subj_dict.items():
             total = data['total']
             if total == 0: continue
             is_common = pb in common
-            is_subj_to_subj = pb in subject_set  # subject-to-subject connection
-            dur = round(data['duration'], 1)
+            is_subj_to_subj = pb in subject_set
 
-            call_total = data['call_out'] + data['call_in']
-            sms_total  = data['sms_out'] + data['sms_in']
+            # Subject-to-subject: A→B এবং B→A দুটো entry আসে — একটাই edge বানাও
+            if is_subj_to_subj:
+                pair = tuple(sorted([sub, pb]))
+                if pair in seen_subj_pairs:
+                    continue
+                seen_subj_pairs.add(pair)
+                # দুইদিকের data মিলিয়ে combined stats
+                rev = connections.get(sub, {}).get(pb, {})
+                call_total  = data['call_out'] + data['call_in'] + rev.get('call_out', 0) + rev.get('call_in', 0)
+                sms_total   = data['sms_out']  + data['sms_in']  + rev.get('sms_out', 0)  + rev.get('sms_in', 0)
+                dur = round(data['duration'] + rev.get('duration', 0), 1)
+            else:
+                call_total = data['call_out'] + data['call_in']
+                sms_total  = data['sms_out'] + data['sms_in']
+                dur = round(data['duration'], 1)
+
             grand_total = call_total + sms_total
 
             # রং নির্ধারণ
