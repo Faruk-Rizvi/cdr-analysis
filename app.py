@@ -8066,6 +8066,8 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             '_total': total,
             '_important': is_important,
             '_cname': _cname,
+            # per-subject total — JS slider-এ প্রতিটি subject-এর জন্য আলাদা top-N filter করার জন্য
+            '_subj_totals': {s: d['total'] for s, d in subj_dict.items()},
         }
 
     # ── Edges — single combined edge per (subject, contact) pair ──
@@ -8131,6 +8133,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
 
     nodes_json = json.dumps(list(nodes.values()), ensure_ascii=False)
     edges_json = json.dumps(edges, ensure_ascii=False)
+    subjects_json = json.dumps(subjects, ensure_ascii=False)
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -8304,6 +8307,7 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
 <script>
 var nodesData = {nodes_json};
 var edgesData = {edges_json};
+var subjectsData = {subjects_json};  // subject phone list
 var allNodes  = new vis.DataSet(nodesData);
 var allEdges  = new vis.DataSet(edgesData);
 // Delete history for undo
@@ -8658,34 +8662,38 @@ function filterByConnCount(val){{
   val=parseInt(val);
   document.getElementById('minConnVal').textContent=val===0?'সব':val;
 
-  // Non-common contact গুলো total connection অনুযায়ী sort করে top-N দেখানো হবে
-  // val=0 মানে সব non-common দেখাও
-  var nonCommon=nodesData.filter(function(n){{
-    return n.group!=='subject'&&n.group!=='isolated_subject'&&n.group!=='common';
+  // প্রতিটি subject-এর জন্য আলাদাভাবে non-common contact sort করে top-N বের করা
+  // যেসব node দেখাবে তাদের id set
+  var showSet=new Set();
+
+  subjectsData.forEach(function(subj){{
+    // এই subject-এর সাথে connected non-common contacts
+    // _subj_totals[subj] আছে এমন nodes
+    var contactsForSubj=nodesData.filter(function(n){{
+      if(n.group==='subject'||n.group==='isolated_subject'||n.group==='common') return false;
+      return n._subj_totals && n._subj_totals[subj]!==undefined;
+    }});
+    // total connection (এই subject-এর সাথে) অনুযায়ী descending sort
+    contactsForSubj.sort(function(a,b){{
+      return (b._subj_totals[subj]||0)-(a._subj_totals[subj]||0);
+    }});
+    // val=0 → সব, নয়তো top-N
+    var limit=val===0?contactsForSubj.length:Math.min(val,contactsForSubj.length);
+    for(var i=0;i<limit;i++) showSet.add(contactsForSubj[i].id);
   }});
-  // total connection অনুযায়ী descending sort
-  nonCommon.sort(function(a,b){{return (b._total||0)-(a._total||0);}});
-  // top-N এর id set
-  var showNonCommon=new Set();
-  var limit=val===0?nonCommon.length:Math.min(val,nonCommon.length);
-  for(var i=0;i<limit;i++) showNonCommon.add(nonCommon[i].id);
 
   var updates=[];
   nodesData.forEach(function(n){{
-    // Subject সবসময় দেখাবে
     if(n.group==='subject'||n.group==='isolated_subject'){{
       updates.push({{id:n.id,hidden:false}});return;
     }}
-    // Common contact সবসময় দেখাবে
     if(n.group==='common'){{
       updates.push({{id:n.id,hidden:false}});return;
     }}
-    // Non-common: শুধু top-N দেখাবে
-    updates.push({{id:n.id,hidden:!showNonCommon.has(n.id)}});
+    updates.push({{id:n.id,hidden:!showSet.has(n.id)}});
   }});
   allNodes.update(updates);
 
-  // Edge: hidden node-এর edge লুকাও
   var hiddenNodes=new Set();
   allNodes.get().forEach(function(n){{if(n.hidden)hiddenNodes.add(n.id);}});
   allEdges.update(allEdges.get().map(function(e){{
