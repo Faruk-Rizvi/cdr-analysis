@@ -8115,10 +8115,10 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
                 'color': {'color': ec, 'opacity': 0.85},
                 'width': width,
                 'font': {
-                    'size': 11,
+                    'size': 14,
                     'color': '#1e3a8a',
                     'bold': True,
-                    'strokeWidth': 2,
+                    'strokeWidth': 3,
                     'strokeColor': '#ffffff',
                     'align': 'middle',
                 },
@@ -8240,10 +8240,10 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   </div>
   <button class="btn" id="impRingBtn" onclick="toggleImportanceRing()" title="High-frequency gold ring">&#11088; Ring: ON</button>
   <div class="sl">
-    <span>Top contacts (0=সব):</span>
-    <input type="range" id="minConn" min="0" max="20" value="0"
+    <span>Top contacts (common বাদে):</span>
+    <input type="range" id="minConn" min="0" max="20" value="20"
            oninput="filterByConnCount(this.value)">
-    <span id="minConnVal">সব</span>
+    <span id="minConnVal">20</span>
   </div>
   <div class="sl">
     <span>Node Lbl:</span>
@@ -8253,9 +8253,9 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   </div>
   <div class="sl">
     <span>Edge Lbl:</span>
-    <input type="range" id="edgeFontSz" min="0" max="20" value="11"
+    <input type="range" id="edgeFontSz" min="0" max="20" value="14"
            oninput="changeEdgeFontSize(this.value)">
-    <span id="edgeFontVal">11</span>
+    <span id="edgeFontVal">14</span>
   </div>
   <div class="sl">
     <span>Node Size:</span>
@@ -8362,6 +8362,8 @@ network.once('stabilizationIterationsDone', function(){{
   network.setOptions({{physics:{{enabled:false}}}});
   physicsOn=false;
   document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
+  // Default: top-20 non-common contact দেখাও
+  filterByConnCount(20);
 }});
 
 setTimeout(function(){{if(network)network.fit();}}, 2500);
@@ -8677,27 +8679,25 @@ function toggleImportanceRing(){{
 // ── Filter by min connection count ──
 function filterByConnCount(val){{
   val=parseInt(val);
-  document.getElementById('minConnVal').textContent=val===0?'সব':val;
+  document.getElementById('minConnVal').textContent=val===0?'০':val;
 
-  // প্রতিটি subject-এর জন্য আলাদাভাবে non-common contact sort করে top-N বের করা
-  // যেসব node দেখাবে তাদের id set
+  // val=0 → non-common কিছুই দেখাবে না (শুধু subject + common)
+  // val=1..20 → প্রতিটি subject-এর জন্য আলাদাভাবে top-N non-common দেখাবে
   var showSet=new Set();
 
-  subjectsData.forEach(function(subj){{
-    // এই subject-এর সাথে connected non-common contacts
-    // _subj_totals[subj] আছে এমন nodes
-    var contactsForSubj=nodesData.filter(function(n){{
-      if(n.group==='subject'||n.group==='isolated_subject'||n.group==='common') return false;
-      return n._subj_totals && n._subj_totals[subj]!==undefined;
+  if(val>0){{
+    subjectsData.forEach(function(subj){{
+      var contactsForSubj=nodesData.filter(function(n){{
+        if(n.group==='subject'||n.group==='isolated_subject'||n.group==='common') return false;
+        return n._subj_totals && n._subj_totals[subj]!==undefined;
+      }});
+      contactsForSubj.sort(function(a,b){{
+        return (b._subj_totals[subj]||0)-(a._subj_totals[subj]||0);
+      }});
+      var limit=Math.min(val,contactsForSubj.length);
+      for(var i=0;i<limit;i++) showSet.add(contactsForSubj[i].id);
     }});
-    // total connection (এই subject-এর সাথে) অনুযায়ী descending sort
-    contactsForSubj.sort(function(a,b){{
-      return (b._subj_totals[subj]||0)-(a._subj_totals[subj]||0);
-    }});
-    // val=0 → সব, নয়তো top-N
-    var limit=val===0?contactsForSubj.length:Math.min(val,contactsForSubj.length);
-    for(var i=0;i<limit;i++) showSet.add(contactsForSubj[i].id);
-  }});
+  }}
 
   var updates=[];
   nodesData.forEach(function(n){{
