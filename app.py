@@ -7089,23 +7089,28 @@ def _build_suspicious_patterns(dfs, window_min=30):
                 times_b = dfb[dfb['_pb'] == num]['start'].sort_values().values
 
                 # Find pairs within window
+                # pd.Timestamp ব্যবহার করা হচ্ছে dtype-safe comparison-এর জন্য
+                # (pandas 2.x-এ datetime64[us/s] হলে int() এর scale আলাদা হয়)
                 hits = []
                 bi = 0
+                window_sec = window_min * 60
                 for ta in times_a:
-                    while bi < len(times_b) and times_b[bi] < ta - window_td.value:
+                    ta_ts = pd.Timestamp(ta)
+                    while bi < len(times_b) and pd.Timestamp(times_b[bi]) < ta_ts - window_td:
                         bi += 1
                     for k in range(bi, len(times_b)):
                         tb = times_b[k]
-                        diff = abs(int(tb) - int(ta)) / 1e9  # nanoseconds → seconds
-                        if diff <= window_min * 60:
+                        tb_ts = pd.Timestamp(tb)
+                        diff_sec = abs((tb_ts - ta_ts).total_seconds())
+                        if diff_sec <= window_sec:
                             hits.append({
                                 'Subject A': sa, 'Subject B': sb,
                                 'Common Number': num,
-                                'Time A': pd.Timestamp(ta).strftime('%Y-%m-%d %H:%M'),
-                                'Time B': pd.Timestamp(tb).strftime('%Y-%m-%d %H:%M'),
-                                'Gap (min)': round(diff / 60, 1),
+                                'Time A': ta_ts.strftime('%Y-%m-%d %H:%M'),
+                                'Time B': tb_ts.strftime('%Y-%m-%d %H:%M'),
+                                'Gap (min)': round(diff_sec / 60, 1),
                             })
-                        elif int(tb) > int(ta) + window_td.value:
+                        elif tb_ts > ta_ts + window_td:
                             break
 
                 if hits:
@@ -7137,23 +7142,26 @@ def _build_suspicious_patterns(dfs, window_min=30):
 
                 hits = []
                 bi = 0
+                window_sec = window_min * 60
                 for ta in times_ax:
+                    ta_ts = pd.Timestamp(ta)
                     # Find X→B calls that happen AFTER A→X within window
-                    while bi < len(times_xb) and int(times_xb[bi]) < int(ta):
+                    while bi < len(times_xb) and pd.Timestamp(times_xb[bi]) < ta_ts:
                         bi += 1
                     for k in range(bi, len(times_xb)):
                         tb = times_xb[k]
-                        diff = (int(tb) - int(ta)) / 1e9
-                        if 0 <= diff <= window_min * 60:
+                        tb_ts = pd.Timestamp(tb)
+                        diff_sec = (tb_ts - ta_ts).total_seconds()
+                        if 0 <= diff_sec <= window_sec:
                             hits.append({
                                 'Subject A': sa,
                                 'Relay Number (X)': x,
                                 'Subject B': sb,
-                                'A↔X Time': pd.Timestamp(ta).strftime('%Y-%m-%d %H:%M'),
-                                'X↔B Time': pd.Timestamp(tb).strftime('%Y-%m-%d %H:%M'),
-                                'Relay Gap (min)': round(diff / 60, 1),
+                                'A↔X Time': ta_ts.strftime('%Y-%m-%d %H:%M'),
+                                'X↔B Time': tb_ts.strftime('%Y-%m-%d %H:%M'),
+                                'Relay Gap (min)': round(diff_sec / 60, 1),
                             })
-                        elif int(tb) > int(ta) + window_td.value:
+                        elif tb_ts > ta_ts + window_td:
                             break
 
                 if hits:
@@ -8060,8 +8068,8 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             '_cname': _cname,
         }
 
-    # ── Edges — combined (undirected): one edge per pair per type ──
-    # Call edges: MOC+MTC combined; SMS edges: sms_out+sms_in combined
+    # ── Edges — single combined edge per (subject, contact) pair ──
+    # Call + SMS একসাথে একটি edge-এ দেখানো হবে, label-এ মোট সংখ্যা
     edges = []
     eid = 0
     for pb, subj_dict in connections.items():
@@ -8071,61 +8079,55 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             is_common = pb in common
             dur = round(data['duration'], 1)
 
-            ec_common = '#dc2626'
-
-            # ── Combined Call edge (MOC + MTC) ──
             call_total = data['call_out'] + data['call_in']
-            if call_total > 0:
-                ec = ec_common if is_common else '#2563eb'
-                call_title = (
-                    f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
-                    f"padding:10px 14px;line-height:1.8'>"
-                    f"<b style='font-size:15px;color:{ec}'>\U0001f4de {sub} ↔ {pb}</b><br>"
-                    f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
-                    f"&nbsp;&nbsp;MOC (outgoing): <b>{data['call_out']}</b><br>"
-                    f"&nbsp;&nbsp;MTC (incoming): <b>{data['call_in']}</b><br>"
-                    f"&nbsp;&nbsp;Total Calls: <b>{call_total}</b><br>"
-                    f"&nbsp;&nbsp;\u23f1 Duration: {dur} min</div>"
-                )
-                edges.append({
-                    'id': eid, 'from': sub, 'to': pb,
-                    'label': '',
-                    'arrows': {'to': {'enabled': False}},
-                    'color': {'color': ec, 'opacity': 0.85},
-                    'width': max(1, min(6, call_total//5+1)) + (2 if is_common else 0),
-                    'font': {'size': 0},
-                    'smooth': {'type': 'dynamic'},
-                    'title': call_title,
-                    '_total': call_total, '_etype': 'call',
-                })
-                eid += 1
+            sms_total  = data['sms_out'] + data['sms_in']
+            grand_total = call_total + sms_total   # label-এ এই সংখ্যা দেখাবে
 
-            # ── Combined SMS edge (sms_out + sms_in) ──
-            sms_total = data['sms_out'] + data['sms_in']
-            if sms_total > 0:
-                ec = ec_common if is_common else '#16a34a'
-                sms_title = (
-                    f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
-                    f"padding:10px 14px;line-height:1.8'>"
-                    f"<b style='font-size:15px;color:{ec}'>\U0001f4ac {sub} ↔ {pb}</b><br>"
-                    f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
-                    f"&nbsp;&nbsp;SMS sent: <b>{data['sms_out']}</b><br>"
-                    f"&nbsp;&nbsp;SMS received: <b>{data['sms_in']}</b><br>"
-                    f"&nbsp;&nbsp;Total SMS: <b>{sms_total}</b></div>"
-                )
-                edges.append({
-                    'id': eid, 'from': sub, 'to': pb,
-                    'label': '',
-                    'arrows': {'to': {'enabled': False}},
-                    'color': {'color': ec, 'opacity': 0.65},
-                    'width': max(1, min(4, sms_total//5+1)),
-                    'dashes': True,
-                    'font': {'size': 0},
-                    'smooth': {'type': 'dynamic'},
-                    'title': sms_title,
-                    '_total': sms_total, '_etype': 'sms',
-                })
-                eid += 1
+            ec_common = '#dc2626'
+            ec = ec_common if is_common else '#2563eb'
+
+            # ── Tooltip: call + sms breakdown ──
+            edge_title = (
+                f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
+                f"padding:10px 14px;line-height:1.8'>"
+                f"<b style='font-size:15px;color:{ec}'>\U0001f4de\U0001f4ac {sub} ↔ {pb}</b><br>"
+                f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
+                f"&nbsp;&nbsp;\U0001f4de MOC (outgoing): <b>{data['call_out']}</b><br>"
+                f"&nbsp;&nbsp;\U0001f4de MTC (incoming): <b>{data['call_in']}</b><br>"
+                f"&nbsp;&nbsp;\U0001f4ac SMS sent: <b>{data['sms_out']}</b><br>"
+                f"&nbsp;&nbsp;\U0001f4ac SMS received: <b>{data['sms_in']}</b><br>"
+                f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
+                f"&nbsp;&nbsp;\U0001f4de Total Calls: <b>{call_total}</b> &nbsp; "
+                f"\U0001f4ac Total SMS: <b>{sms_total}</b><br>"
+                f"&nbsp;&nbsp;\U0001f522 Grand Total: <b>{grand_total}</b><br>"
+                f"&nbsp;&nbsp;\u23f1 Duration: {dur} min</div>"
+            )
+
+            # Width: call-এর ভিত্তিতে, common হলে একটু মোটা
+            width = max(1, min(7, call_total // 5 + 1)) + (2 if is_common else 0)
+
+            edges.append({
+                'id': eid, 'from': sub, 'to': pb,
+                'label': str(grand_total),
+                'arrows': {'to': {'enabled': False}},
+                'color': {'color': ec, 'opacity': 0.85},
+                'width': width,
+                'font': {
+                    'size': 11,
+                    'color': '#1e3a8a',
+                    'bold': True,
+                    'strokeWidth': 2,
+                    'strokeColor': '#ffffff',
+                    'align': 'middle',
+                },
+                'smooth': {'type': 'dynamic'},
+                'title': edge_title,
+                '_total': grand_total,
+                '_call': call_total,
+                '_sms': sms_total,
+                '_etype': 'combined',
+            })
+            eid += 1
 
     nodes_json = json.dumps(list(nodes.values()), ensure_ascii=False)
     edges_json = json.dumps(edges, ensure_ascii=False)
@@ -8195,10 +8197,8 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <div class="li"><div class="dot" style="background:#dc2626"></div>Common Contact</div>
   <div class="li"><div class="dot" style="background:#64748b"></div>Single Contact</div>
   <div class="li"><div class="dot" style="background:#e2e8f0;border:3px solid #f59e0b;width:13px;height:13px;"></div>High-freq ⭐</div>
-  <div class="li"><div class="ln" style="background:#2563eb"></div>MOC→</div>
-  <div class="li"><div class="ln" style="background:#0891b2"></div>←MTC</div>
-  <div class="li"><div class="ln" style="background:#16a34a;border-top:2px dashed #16a34a;height:0"></div>SMS→</div>
-  <div class="li"><div class="ln" style="background:#7c3aed;border-top:2px dashed #7c3aed;height:0"></div>←SMS</div>
+  <div class="li"><div class="ln" style="background:#2563eb"></div>Connection (সংখ্যা = Call+SMS)</div>
+  <div class="li"><div class="ln" style="background:#dc2626"></div>Common Contact Edge</div>
 </div>
 <div class="bar">
   <button class="btn" onclick="network.fit()">&#x229F; Fit</button>
@@ -8221,11 +8221,7 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
     <button class="btn" style="background:#475569;padding:3px 8px;"
       onclick="document.getElementById('searchBox').value='';searchNodes('')">✕</button>
   </div>
-  <!-- Edge type filter -->
-  <span style="font-size:11px;font-weight:600;color:#1e3a8a;">Edge:</span>
-  <button class="btn" id="fAll"  onclick="filterEdgeType('all')"  style="background:#0f172a;">All</button>
-  <button class="btn" id="fCall" onclick="filterEdgeType('call')" style="background:#1d4ed8;">Call</button>
-  <button class="btn" id="fSms"  onclick="filterEdgeType('sms')"  style="background:#16a34a;">SMS</button>
+  <!-- Edge type filter removed: edges are now combined (Call+SMS) -->
   <div class="sl">
     <span style="font-weight:600;color:#1e3a8a;">&#x25A6; Layout:</span>
     <select id="layoutSel" onchange="applyLayout(this.value)"
@@ -8241,10 +8237,10 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   </div>
   <button class="btn" id="impRingBtn" onclick="toggleImportanceRing()" title="High-frequency gold ring">&#11088; Ring: ON</button>
   <div class="sl">
-    <span>Min conn:</span>
-    <input type="range" id="minConn" min="1" max="20" value="1"
+    <span>Top contacts (0=সব):</span>
+    <input type="range" id="minConn" min="0" max="20" value="0"
            oninput="filterByConnCount(this.value)">
-    <span id="minConnVal">1</span>
+    <span id="minConnVal">সব</span>
   </div>
   <div class="sl">
     <span>Node Lbl:</span>
@@ -8254,9 +8250,9 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   </div>
   <div class="sl">
     <span>Edge Lbl:</span>
-    <input type="range" id="edgeFontSz" min="0" max="20" value="0"
+    <input type="range" id="edgeFontSz" min="0" max="20" value="11"
            oninput="changeEdgeFontSize(this.value)">
-    <span id="edgeFontVal">0</span>
+    <span id="edgeFontVal">11</span>
   </div>
   <div class="sl">
     <span>Node Size:</span>
@@ -8660,31 +8656,41 @@ function toggleImportanceRing(){{
 // ── Filter by min connection count ──
 function filterByConnCount(val){{
   val=parseInt(val);
-  document.getElementById('minConnVal').textContent=val;
+  document.getElementById('minConnVal').textContent=val===0?'সব':val;
+
+  // Non-common contact গুলো total connection অনুযায়ী sort করে top-N দেখানো হবে
+  // val=0 মানে সব non-common দেখাও
+  var nonCommon=nodesData.filter(function(n){{
+    return n.group!=='subject'&&n.group!=='isolated_subject'&&n.group!=='common';
+  }});
+  // total connection অনুযায়ী descending sort
+  nonCommon.sort(function(a,b){{return (b._total||0)-(a._total||0);}});
+  // top-N এর id set
+  var showNonCommon=new Set();
+  var limit=val===0?nonCommon.length:Math.min(val,nonCommon.length);
+  for(var i=0;i<limit;i++) showNonCommon.add(nonCommon[i].id);
+
   var updates=[];
   nodesData.forEach(function(n){{
+    // Subject সবসময় দেখাবে
     if(n.group==='subject'||n.group==='isolated_subject'){{
       updates.push({{id:n.id,hidden:false}});return;
     }}
-    var tot=n._total||0;
-    updates.push({{id:n.id,hidden:(tot<val)}});
+    // Common contact সবসময় দেখাবে
+    if(n.group==='common'){{
+      updates.push({{id:n.id,hidden:false}});return;
+    }}
+    // Non-common: শুধু top-N দেখাবে
+    updates.push({{id:n.id,hidden:!showNonCommon.has(n.id)}});
   }});
   allNodes.update(updates);
-  // Re-apply edge filter respecting both hidden nodes + active etype
+
+  // Edge: hidden node-এর edge লুকাও
   var hiddenNodes=new Set();
   allNodes.get().forEach(function(n){{if(n.hidden)hiddenNodes.add(n.id);}});
-  var edgeUpdates=[];
-  allEdges.get().forEach(function(e){{
-    var nodeHidden=hiddenNodes.has(e.to)||hiddenNodes.has(e.from);
-    var etypeHidden=false;
-    if(_activeEtype!=='all'){{
-      if(_activeEtype==='call') etypeHidden=e._etype!=='call';
-      else if(_activeEtype==='sms') etypeHidden=e._etype!=='sms';
-      else etypeHidden=e._etype!==_activeEtype;
-    }}
-    edgeUpdates.push({{id:e.id,hidden:nodeHidden||etypeHidden}});
-  }});
-  allEdges.update(edgeUpdates);
+  allEdges.update(allEdges.get().map(function(e){{
+    return{{id:e.id,hidden:hiddenNodes.has(e.to)||hiddenNodes.has(e.from)}};
+  }}));
 }}
 
 // ── Delete selected node/edge ──
@@ -8798,25 +8804,11 @@ function searchNodes(q){{
   }}
 }}
 
-// ── Edge type filter ──
+// ── Edge type filter (simplified — edges now combined) ──
 var _activeEtype = 'all';
 function filterEdgeType(etype){{
+  // edges এখন combined, এই function টি legacy compatibility-র জন্য রাখা হয়েছে
   _activeEtype = etype;
-  // button highlight
-  ['fAll','fCall','fSms'].forEach(function(id){{
-    document.getElementById(id).style.opacity='0.5';
-  }});
-  var activeId = etype==='all'?'fAll':etype==='call'?'fCall':'fSms';
-  document.getElementById(activeId).style.opacity='1.0';
-
-  var hiddenNodes=new Set();
-  allNodes.get().forEach(function(n){{if(n.hidden)hiddenNodes.add(n.id);}});
-
-  allEdges.update(allEdges.get().map(function(e){{
-    if(hiddenNodes.has(e.from)||hiddenNodes.has(e.to)) return{{id:e.id,hidden:true}};
-    if(etype==='all') return{{id:e.id,hidden:false}};
-    return{{id:e.id,hidden:e._etype!==etype}};
-  }}));
 }}
 
 // ── Info panel ──
