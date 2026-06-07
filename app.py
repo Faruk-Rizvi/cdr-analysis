@@ -8308,6 +8308,23 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
 var nodesData = {nodes_json};
 var edgesData = {edges_json};
 var subjectsData = {subjects_json};  // subject phone list
+
+// vis.js tooltip: string title → HTML render হয় না, DOM element দিতে হয়
+function _makeTitleEl(html){{
+  var d=document.createElement('div');
+  d.innerHTML=html;
+  return d;
+}}
+// Node ও edge-এর title convert করা
+nodesData = nodesData.map(function(n){{
+  if(n.title && typeof n.title==='string') n.title=_makeTitleEl(n.title);
+  return n;
+}});
+edgesData = edgesData.map(function(e){{
+  if(e.title && typeof e.title==='string') e.title=_makeTitleEl(e.title);
+  return e;
+}});
+
 var allNodes  = new vis.DataSet(nodesData);
 var allEdges  = new vis.DataSet(edgesData);
 // Delete history for undo
@@ -8899,13 +8916,7 @@ def link_analysis_page():
             coloc_window = st.slider("Co-location time window (minutes)", 5, 120, 30)
         with c3:
             radius_km = st.slider("Co-location radius (km)", 1, 20, 5)
-        exclude_noise = st.checkbox(
-            "🧹 Carrier/service numbers ফিল্টার করুন (IVR, promo, shortcode)",
-            value=True,
-            help="ON থাকলে operator IVR, promotional ও shortcode numbers — connections, "
-                 "common contacts এবং network graph — সব জায়গা থেকে বাদ যাবে। "
-                 "কোনো specific service number investigate করতে চাইলে OFF করুন।"
-        )
+        exclude_noise = True  # Carrier/service numbers সবসময় filter হবে
 
     # ── Subject Name & Photo ──
     with st.expander("👤 Subject Names & Photos (optional)", expanded=False):
@@ -9006,7 +9017,7 @@ def link_analysis_page():
 
         if common_contacts:
             rows = []
-            for pb, subj_dict in common_contacts[:50]:
+            for pb, subj_dict in common_contacts:
                 row = {'Contact Number': pb, 'Shared By': len(subj_dict)}
                 total_calls = total_sms = total_dur = 0
                 for sub in subjects:
@@ -9204,35 +9215,6 @@ Cell Tower CSV আপলোড করলে accuracy উন্নত হবে�
         st.markdown("---")
 
         # ══════════════════════════════════════════════════════════════════
-        # ── Section: Noise Filter Report ──
-        # ══════════════════════════════════════════════════════════════════
-        st.markdown("### 🧹 Noise Filter — Carrier & Service Numbers")
-
-        with st.spinner("Running noise analysis..."):
-            # exclude_noise=False — raw connections থেকে কী filter হয়েছে সেটা দেখাতে
-            # raw_connections build করি (সব number সহ)
-            raw_connections = _build_connections(dfs, exclude_noise=False)
-            carrier_list, _ = _build_noise_analysis(dfs, raw_connections)
-
-        if carrier_list:
-            noise_df = pd.DataFrame(carrier_list)
-            if exclude_noise:
-                st.success(
-                    f"✅ **{len(carrier_list)}টি** carrier/service number **সব জায়গা থেকে** "
-                    f"(connections, common contacts, network graph) automatically filter হয়েছে।"
-                )
-            else:
-                st.warning(
-                    f"⚠️ Filter OFF আছে — **{len(carrier_list)}টি** carrier/service number "
-                    f"এখনও সব জায়গায় দেখাচ্ছে। Settings-এ filter চালু করুন।"
-                )
-            st.dataframe(noise_df, use_container_width=True, hide_index=True)
-        else:
-            st.success("✅ কোনো carrier/service number পাওয়া যায়নি।")
-
-        st.markdown("---")
-
-        # ══════════════════════════════════════════════════════════════════
         # ── Section: First / Last Contact Date ──
         # ══════════════════════════════════════════════════════════════════
         st.markdown("### 📅 First & Last Contact Date")
@@ -9244,7 +9226,7 @@ Cell Tower CSV আপলোড করলে accuracy উন্নত হবে�
         if fl_dates and common_contacts:
             fl_rows = []
             # শুধু common contacts-এর জন্য দেখাও (most investigative value)
-            for pb, subj_dict in common_contacts[:50]:
+            for pb, subj_dict in common_contacts:
                 if _is_carrier_number(pb) or _is_promotional(pb): continue
                 for sub in subjects:
                     if sub not in subj_dict: continue
