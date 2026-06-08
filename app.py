@@ -1,4 +1,4 @@
-"""
+ওরে"""
 ==============================================================================
 CDR Analysis Web App — Streamlit
 ==============================================================================
@@ -7974,9 +7974,9 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
 
 
 def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_meta=None, contact_names=None):
-    """Network graph — clean labels, delete nodes, filter by connection count.
+    """Network graph \u2014 clean labels, delete nodes, filter by connection count.
 
-    contact_names : dict  {phone_str: name_str}  — optional display names for
+    contact_names : dict  {phone_str: name_str}  \u2014 optional display names for
                     contact nodes (non-subject). When provided, node labels show
                     "Name\nPhone" instead of phone only.
     """
@@ -8113,12 +8113,12 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             + (f"<br><b style='color:#1e3a8a'>\U0001f464 {_cname}</b>" if _cname else "") +
             f"<br><span style='color:#64748b;font-size:12px'>"
             f"Shared: {len(subj_dict)} | Total: {total}"
-            + (" | <b style='color:#f59e0b'>⭐ High-frequency</b>" if is_important else "") +
+            + (" | <b style='color:#f59e0b'>\u2b50 High-frequency</b>" if is_important else "") +
             f"</span><br>"
             f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
             + "<br>".join(subj_lines) +
             f"<br><span style='color:#94a3b8;font-size:11px'>"
-            f"Right-click → Expand to see this contact's CDR connections</span></div>"
+            f"Right-click \u2192 Expand to see this contact's CDR connections</span></div>"
         )
         # Importance ring → thicker border + slightly larger
         _bw   = 5 if is_important else 2
@@ -8159,7 +8159,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
     edges = []
     eid = 0
     subject_set = set(subjects)
-    seen_subj_pairs = set()  # subject-to-subject duplicate edge প্রতিরোধ
+    seen_subj_pairs = set()  # subject-to-subject duplicate edge \u09aa\u09cd\u09b0\u09a4\u09bf\u09b0\u09cb\u09a7
 
     for pb, subj_dict in connections.items():
         for sub, data in subj_dict.items():
@@ -8188,17 +8188,17 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
 
             # রং নির্ধারণ
             if is_subj_to_subj:
-                ec = '#7c3aed'  # purple — subject-to-subject
+                ec = '#7c3aed'  # purple \u2014 subject-to-subject
             elif is_common:
-                ec = '#dc2626'  # red — common contact
+                ec = '#dc2626'  # red \u2014 common contact
             else:
-                ec = '#2563eb'  # blue — regular contact
+                ec = '#2563eb'  # blue \u2014 regular contact
 
             # ── Tooltip: call + sms breakdown ──
             edge_title = (
                 f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
                 f"padding:10px 14px;line-height:1.8'>"
-                f"<b style='font-size:15px;color:{ec}'>\U0001f4de\U0001f4ac {sub} ↔ {pb}</b><br>"
+                f"<b style='font-size:15px;color:{ec}'>\U0001f4de\U0001f4ac {sub} \u2194 {pb}</b><br>"
                 f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
                 f"&nbsp;&nbsp;\U0001f4de MOC (outgoing): <b>{data['call_out']}</b><br>"
                 f"&nbsp;&nbsp;\U0001f4de MTC (incoming): <b>{data['call_in']}</b><br>"
@@ -8252,10 +8252,10 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
                 expandable_data[pb_exp] = {}
             expandable_data[pb_exp][subj_exp] = int(cnt)
 
-    nodes_json      = json.dumps(list(nodes.values()), ensure_ascii=False)
-    edges_json      = json.dumps(edges, ensure_ascii=False)
-    subjects_json   = json.dumps(subjects, ensure_ascii=False)
-    expandable_json = json.dumps(expandable_data, ensure_ascii=False)
+    nodes_json      = json.dumps(list(nodes.values()), ensure_ascii=True)
+    edges_json      = json.dumps(edges, ensure_ascii=True)
+    subjects_json   = json.dumps(subjects, ensure_ascii=True)
+    expandable_json = json.dumps(expandable_data, ensure_ascii=True)
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -8295,7 +8295,7 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
 #panelX{{cursor:pointer;color:#94a3b8;font-size:20px;line-height:1}}
 #panelX:hover{{color:#dc2626}}
 #wrap{{position:relative}}
-/* ── Export modal ── */
+/* \u2500\u2500 Export modal \u2500\u2500 */
 #exportModal{{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);
   z-index:9999;align-items:center;justify-content:center}}
 #exportModal.show{{display:flex}}
@@ -8321,16 +8321,16 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <div class="li"><div class="dot" style="background:#1d4ed8"></div>Subject</div>
   <div class="li"><div class="dot" style="background:#dc2626"></div>Common Contact</div>
   <div class="li"><div class="dot" style="background:#64748b"></div>Single Contact</div>
-  <div class="li"><div class="dot" style="background:#e2e8f0;border:3px solid #f59e0b;width:13px;height:13px;"></div>High-freq ⭐</div>
-  <div class="li"><div class="ln" style="background:#2563eb"></div>Connection (সংখ্যা = Call+SMS)</div>
+  <div class="li"><div class="dot" style="background:#e2e8f0;border:3px solid #f59e0b;width:13px;height:13px;"></div>High-freq \u2b50</div>
+  <div class="li"><div class="ln" style="background:#2563eb"></div>Connection (\u09b8\u0982\u0996\u09cd\u09af\u09be = Call+SMS)</div>
   <div class="li"><div class="ln" style="background:#dc2626"></div>Common Contact Edge</div>
-  <div class="li"><div class="ln" style="background:#7c3aed"></div>Subject ↔ Subject</div>
+  <div class="li"><div class="ln" style="background:#7c3aed"></div>Subject \u2194 Subject</div>
 </div>
 <div class="bar">
   <button class="btn" onclick="network.fit()">&#x229F; Fit</button>
   <button class="btn" id="physBtn" onclick="togglePhysics()">&#x23F8; Freeze</button>
-  <button class="btn" style="background:#0369a1;" onclick="unpinAll()" title="সব node unpin করো — drag করে সাজানোর পর আবার সরাতে চাইলে">&#x1F513; Unpin All</button>
-  <button class="btn" style="background:#374151;" onclick="pinAll()" title="সব node pin করো — layout lock করতে">&#x1F512; Pin All</button>
+  <button class="btn" style="background:#0369a1;" onclick="unpinAll()" title="\u09b8\u09ac node unpin \u0995\u09b0\u09cb \u2014 drag \u0995\u09b0\u09c7 \u09b8\u09be\u099c\u09be\u09a8\u09cb\u09b0 \u09aa\u09b0 \u0986\u09ac\u09be\u09b0 \u09b8\u09b0\u09be\u09a4\u09c7 \u099a\u09be\u0987\u09b2\u09c7">&#x1F513; Unpin All</button>
+  <button class="btn" style="background:#374151;" onclick="pinAll()" title="\u09b8\u09ac node pin \u0995\u09b0\u09cb \u2014 layout lock \u0995\u09b0\u09a4\u09c7">&#x1F512; Pin All</button>
   <button class="btn red" onclick="showOnlyCommon()">&#128308; Common</button>
   <button class="btn grn" onclick="showAll()">&#128065; All</button>
   <button class="btn del" id="delBtn" onclick="deleteSelected()">&#x1F5D1; Delete</button>
@@ -8342,12 +8342,12 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <!-- Search box -->
   <div class="sl" style="flex:1;min-width:180px;">
     <span style="font-weight:600;color:#1e3a8a;">&#x1F50D;</span>
-    <input type="text" id="searchBox" placeholder="নম্বর / নাম খুঁজুন…"
+    <input type="text" id="searchBox" placeholder="\u09a8\u09ae\u09cd\u09ac\u09b0 / \u09a8\u09be\u09ae \u0996\u09c1\u0981\u099c\u09c1\u09a8\u2026"
       oninput="searchNodes(this.value)"
       style="flex:1;font-size:11px;padding:3px 7px;border-radius:5px;
              border:1px solid #cbd5e1;background:#f8fafc;color:#0f172a;outline:none;">
     <button class="btn" style="background:#475569;padding:3px 8px;"
-      onclick="document.getElementById('searchBox').value='';searchNodes('')">✕</button>
+      onclick="document.getElementById('searchBox').value='';searchNodes('')">\u2715</button>
   </div>
   <!-- Edge type filter removed: edges are now combined (Call+SMS) -->
   <div class="sl">
@@ -8356,8 +8356,8 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
       style="font-size:11px;padding:2px 6px;border-radius:5px;border:1px solid #cbd5e1;
              background:#f8fafc;color:#1e3a8a;cursor:pointer;">
       <option value="physics">&#x1F300; Physics (default)</option>
-      <option value="hierarchyLR">&#x27A1; Hierarchy L→R</option>
-      <option value="hierarchyUD">&#x2B07; Hierarchy U→D</option>
+      <option value="hierarchyLR">&#x27A1; Hierarchy L\u2192R</option>
+      <option value="hierarchyUD">&#x2B07; Hierarchy U\u2192D</option>
       <option value="bipartite">&#x21C4; Bipartite (Subj left/right)</option>
       <option value="circle">&#x25EF; Circle</option>
       <option value="grid">&#x22EE; Grid</option>
@@ -8365,7 +8365,7 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   </div>
   <button class="btn" id="impRingBtn" onclick="toggleImportanceRing()" title="High-frequency gold ring">&#11088; Ring: ON</button>
   <div class="sl">
-    <span>Top contacts (common বাদে):</span>
+    <span>Top contacts (common \u09ac\u09be\u09a6\u09c7):</span>
     <input type="range" id="minConn" min="1" max="20" value="20"
            oninput="filterByConnCount(this.value)">
     <span id="minConnVal">20</span>
@@ -8403,15 +8403,15 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   </div>
 </div>
 
-<!-- ── Capture overlay ── -->
+<!-- \u2500\u2500 Capture overlay \u2500\u2500 -->
 <div id="captureOverlay">
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1e3a8a" stroke-width="2.5">
     <circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/>
   </svg>
-  Capturing graph…
+  Capturing graph\u2026
 </div>
 
-<!-- ── Export modal ── -->
+<!-- \u2500\u2500 Export modal \u2500\u2500 -->
 <div id="exportModal">
   <div id="exportBox">
     <button id="exportClose" onclick="closeExportModal()">&#xd7;</button>
@@ -8424,8 +8424,8 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
       <span id="exportStatus"></span>
     </div>
     <div style="font-size:11px;color:#94a3b8;margin-top:10px;">
-      &#x2139;&#xFE0F; PNG download করুন → Word/PowerPoint-এ Insert → Pictures দিয়ে যোগ করুন।
-      অথবা Copy করে সরাসরি Ctrl+V দিয়ে paste করুন।
+      &#x2139;&#xFE0F; PNG download \u0995\u09b0\u09c1\u09a8 \u2192 Word/PowerPoint-\u098f Insert \u2192 Pictures \u09a6\u09bf\u09af\u09bc\u09c7 \u09af\u09cb\u0997 \u0995\u09b0\u09c1\u09a8\u0964
+      \u0985\u09a5\u09ac\u09be Copy \u0995\u09b0\u09c7 \u09b8\u09b0\u09be\u09b8\u09b0\u09bf Ctrl+V \u09a6\u09bf\u09af\u09bc\u09c7 paste \u0995\u09b0\u09c1\u09a8\u0964
     </div>
   </div>
 </div>
@@ -8435,13 +8435,13 @@ var edgesData = {edges_json};
 var subjectsData = {subjects_json};  // subject phone list
 var expandableData = {expandable_json};  // right-click expand node data
 
-// vis.js tooltip: string title → HTML render হয় না, DOM element দিতে হয়
+// vis.js tooltip: string title \u2192 HTML render \u09b9\u09af\u09bc \u09a8\u09be, DOM element \u09a6\u09bf\u09a4\u09c7 \u09b9\u09af\u09bc
 function _makeTitleEl(html){{
   var d=document.createElement('div');
   d.innerHTML=html;
   return d;
 }}
-// Node ও edge-এর title convert করা
+// Node \u0993 edge-\u098f\u09b0 title convert \u0995\u09b0\u09be
 nodesData = nodesData.map(function(n){{
   if(n.title && typeof n.title==='string') n.title=_makeTitleEl(n.title);
   return n;
@@ -8468,14 +8468,14 @@ var network = new vis.Network(
     nodes:{{
       borderWidth:2,
       shadow:{{enabled:true,size:4}},
-      // i2-style: node drag করলে সাথে সাথে snap হবে
+      // i2-style: node drag \u0995\u09b0\u09b2\u09c7 \u09b8\u09be\u09a5\u09c7 \u09b8\u09be\u09a5\u09c7 snap \u09b9\u09ac\u09c7
       physics: false,
     }},
     edges:{{
-      // 'continuous' → dynamic-এর চেয়ে stable, drag করলেও edge সাথে চলে
+      // 'continuous' \u2192 dynamic-\u098f\u09b0 \u099a\u09c7\u09af\u09bc\u09c7 stable, drag \u0995\u09b0\u09b2\u09c7\u0993 edge \u09b8\u09be\u09a5\u09c7 \u099a\u09b2\u09c7
       smooth:{{type:'continuous', roundness:0.2}},
       shadow:false,
-      // Edge physics বন্ধ — manual drag-এ edge position drift করবে না
+      // Edge physics \u09ac\u09a8\u09cd\u09a7 \u2014 manual drag-\u098f edge position drift \u0995\u09b0\u09ac\u09c7 \u09a8\u09be
       physics: false,
     }},
     physics:{{
@@ -8489,7 +8489,7 @@ var network = new vis.Network(
       hover:true,
       tooltipDelay:150,
       navigationButtons:true,
-      // hideEdgesOnDrag:false → drag করার সময়ও edge দেখা যাবে (i2-style)
+      // hideEdgesOnDrag:false \u2192 drag \u0995\u09b0\u09be\u09b0 \u09b8\u09ae\u09af\u09bc\u0993 edge \u09a6\u09c7\u0996\u09be \u09af\u09be\u09ac\u09c7 (i2-style)
       hideEdgesOnDrag:false,
       hideNodesOnDrag:false,
       keyboard:true,
@@ -8509,13 +8509,13 @@ network.once('stabilizationIterationsDone', function(){{
   network.setOptions({{physics:{{enabled:false}}}});
   physicsOn=false;
   document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
-  // Default: top-20 non-common contact দেখাও
+  // Default: top-20 non-common contact \u09a6\u09c7\u0996\u09be\u0993
   filterByConnCount(20);
 }});
 
 setTimeout(function(){{if(network)network.fit();}}, 2500);
 
-// ── Shared: capture graph canvas to dataURL ──
+// \u2500\u2500 Shared: capture graph canvas to dataURL \u2500\u2500
 var _exportDataURL = null;
 
 function _captureGraph(callback){{
@@ -8538,7 +8538,7 @@ function _captureGraph(callback){{
     if(!canvas){{
       ov.classList.remove('show');
       panel.style.display = prevPanel;
-      alert('Canvas not found — try again after graph settles.');
+      alert('Canvas not found \u2014 try again after graph settles.');
       return;
     }}
 
@@ -8577,7 +8577,7 @@ function _captureGraph(callback){{
   }}, 350);
 }}
 
-// ── Export PNG → opens preview modal ──
+// \u2500\u2500 Export PNG \u2192 opens preview modal \u2500\u2500
 function exportGraphPNG(){{
   _captureGraph(function(dataURL){{
     document.getElementById('exportPreview').src = dataURL;
@@ -8586,7 +8586,7 @@ function exportGraphPNG(){{
   }});
 }}
 
-// ── Quick copy (no modal) ──
+// \u2500\u2500 Quick copy (no modal) \u2500\u2500
 function copyGraphToClipboard(){{
   _captureGraph(function(dataURL){{
     document.getElementById('exportPreview').src = dataURL;
@@ -8594,25 +8594,25 @@ function copyGraphToClipboard(){{
   }});
 }}
 
-// ── Download from modal ──
+// \u2500\u2500 Download from modal \u2500\u2500
 function downloadExportedPNG(){{
   if(!_exportDataURL)return;
   var a = document.createElement('a');
   a.href = _exportDataURL;
   a.download = 'CDR_Network_Graph_' + Date.now() + '.png';
   a.click();
-  document.getElementById('exportStatus').textContent = '✅ Downloaded!';
+  document.getElementById('exportStatus').textContent = '\u2705 Downloaded!';
   setTimeout(function(){{document.getElementById('exportStatus').textContent='';}},2500);
 }}
 
-// ── Copy from modal ──
+// \u2500\u2500 Copy from modal \u2500\u2500
 function copyExportedToClipboard(){{
   if(!_exportDataURL)return;
   _doCopy(_exportDataURL, false);
 }}
 
 function _doCopy(dataURL, quick){{
-  // Convert dataURL → Blob → ClipboardItem
+  // Convert dataURL \u2192 Blob \u2192 ClipboardItem
   var b64 = dataURL.split(',')[1];
   var byteChars = atob(b64);
   var byteArr = new Uint8Array(byteChars.length);
@@ -8622,22 +8622,22 @@ function _doCopy(dataURL, quick){{
   if(navigator.clipboard && window.ClipboardItem){{
     navigator.clipboard.write([new ClipboardItem({{'image/png':blob}})])
       .then(function(){{
-        var msg = '✅ Clipboard-এ copy হয়েছে! Ctrl+V দিয়ে Word/PowerPoint-এ paste করুন।';
+        var msg = '\u2705 Clipboard-\u098f copy \u09b9\u09af\u09bc\u09c7\u099b\u09c7! Ctrl+V \u09a6\u09bf\u09af\u09bc\u09c7 Word/PowerPoint-\u098f paste \u0995\u09b0\u09c1\u09a8\u0964';
         if(quick){{ alert(msg); }}
-        else{{ document.getElementById('exportStatus').textContent='✅ Copied!';
+        else{{ document.getElementById('exportStatus').textContent='\u2705 Copied!';
                setTimeout(function(){{document.getElementById('exportStatus').textContent='';}},2500); }}
       }})
       .catch(function(){{
         // Fallback: open in new tab
         var w=window.open();
         w.document.write('<img src="'+dataURL+'" style="max-width:100%"><br>'
-          +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click → Copy Image অথবা Save Image As করুন।</p>');
+          +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click \u2192 Copy Image \u0985\u09a5\u09ac\u09be Save Image As \u0995\u09b0\u09c1\u09a8\u0964</p>');
       }});
   }} else {{
     // Old browser fallback
     var w=window.open();
     w.document.write('<img src="'+dataURL+'" style="max-width:100%"><br>'
-      +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click → Copy Image অথবা Save Image As করুন।</p>');
+      +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click \u2192 Copy Image \u0985\u09a5\u09ac\u09be Save Image As \u0995\u09b0\u09c1\u09a8\u0964</p>');
   }}
 }}
 
@@ -8652,15 +8652,15 @@ function togglePhysics(){{
 }}
 
 function unpinAll(){{
-  // সব node-এর fixed সরাও — আবার drag করে সাজানো যাবে
+  // \u09b8\u09ac node-\u098f\u09b0 fixed \u09b8\u09b0\u09be\u0993 \u2014 \u0986\u09ac\u09be\u09b0 drag \u0995\u09b0\u09c7 \u09b8\u09be\u099c\u09be\u09a8\u09cb \u09af\u09be\u09ac\u09c7
   allNodes.update(allNodes.get().map(function(n){{
     return{{id:n.id,fixed:{{x:false,y:false}}}};
   }}));
-  _tk('\uD83D\uDD13 All nodes unpinned — drag to rearrange');
+  _tk('\uD83D\uDD13 All nodes unpinned \u2014 drag to rearrange');
 }}
 
 function pinAll(){{
-  // সব visible node-এর current position pin করো
+  // \u09b8\u09ac visible node-\u098f\u09b0 current position pin \u0995\u09b0\u09cb
   var positions=network.getPositions();
   var updates=[];
   Object.keys(positions).forEach(function(nid){{
@@ -8668,15 +8668,15 @@ function pinAll(){{
     updates.push({{id:nid,x:pos.x,y:pos.y,fixed:{{x:true,y:true}}}});
   }});
   allNodes.update(updates);
-  _tk('\uD83D\uDD12 All nodes pinned — layout locked');
+  _tk('\uD83D\uDD12 All nodes pinned \u2014 layout locked');
 }}
 
-// ── Expand Node (i2-style) ─────────────────────────────────────────────────
-// Right-click → Expand Node: এই contact-এর CDR connections গ্রাফে যোগ করো
-var _expandedNodes = new Set();  // কোন node expand করা হয়েছে track করা
+// \u2500\u2500 Expand Node (i2-style) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// Right-click \u2192 Expand Node: \u098f\u0987 contact-\u098f\u09b0 CDR connections \u0997\u09cd\u09b0\u09be\u09ab\u09c7 \u09af\u09cb\u0997 \u0995\u09b0\u09cb
+var _expandedNodes = new Set();  // \u0995\u09cb\u09a8 node expand \u0995\u09b0\u09be \u09b9\u09af\u09bc\u09c7\u099b\u09c7 track \u0995\u09b0\u09be
 function expandNode(nid){{
   var numId = String(nid).replace(/[^0-9]/g,'');
-  // ইতিমধ্যে expand হলে collapse করো
+  // \u0987\u09a4\u09bf\u09ae\u09a7\u09cd\u09af\u09c7 expand \u09b9\u09b2\u09c7 collapse \u0995\u09b0\u09cb
   if(_expandedNodes.has(numId)){{
     collapseNode(numId); return;
   }}
@@ -8686,7 +8686,7 @@ function expandNode(nid){{
     return;
   }}
   _expandedNodes.add(numId);
-  // Parent node-এর position নাও
+  // Parent node-\u098f\u09b0 position \u09a8\u09be\u0993
   var parentPos = network.getPositions([nid]);
   var px = (parentPos[nid]||{{x:0}}).x;
   var py = (parentPos[nid]||{{y:0}}).y;
@@ -8698,14 +8698,14 @@ function expandNode(nid){{
     var childId = '0'+numId.slice(2);
     // Expanded contact ID = original number
     var expandId = nid+'_exp_'+subj.replace(/[^0-9]/g,'');
-    // Child contact — arc shape-এ parent-এর চারপাশে
+    // Child contact \u2014 arc shape-\u098f parent-\u098f\u09b0 \u099a\u09be\u09b0\u09aa\u09be\u09b6\u09c7
     var angle = (2*Math.PI*i/Math.max(total,1)) - Math.PI/2;
     var r = 180;
     var cx = Math.round(px + r*Math.cos(angle));
     var cy = Math.round(py + r*Math.sin(angle));
     // Node already exists? skip
     if(!existingIds.has(String(nid))){{
-      // parent নেই? return
+      // parent \u09a8\u09c7\u0987? return
       return;
     }}
     // New expanded node
@@ -8735,7 +8735,7 @@ function expandNode(nid){{
   if(newNodes.length>0){{
     allNodes.add(newNodes);
     allEdges.add(newEdges);
-    // Expanded node গুলো highlight করো
+    // Expanded node \u0997\u09c1\u09b2\u09cb highlight \u0995\u09b0\u09cb
     setTimeout(function(){{
       network.selectNodes(newNodes.map(function(n){{return n.id;}}));
     }},100);
@@ -8746,7 +8746,7 @@ function expandNode(nid){{
 }}
 
 function collapseNode(numId){{
-  // এই node থেকে expand হওয়া সব node+edge সরাও
+  // \u098f\u0987 node \u09a5\u09c7\u0995\u09c7 expand \u09b9\u0993\u09af\u09bc\u09be \u09b8\u09ac node+edge \u09b8\u09b0\u09be\u0993
   _expandedNodes.delete(numId);
   var toRemoveNodes = allNodes.get().filter(function(n){{
     return n._expanded_from === numId;
@@ -8759,8 +8759,8 @@ function collapseNode(numId){{
   _tk('\uD83D\uDDD8 Collapsed '+toRemoveNodes.length+' expanded nodes');
 }}
 
-// ── Drag handling (i2-style) ──────────────────────────────────────────────
-// dragStart: physics চালু থাকলে drag করা node টা temporarily unfix করো
+// \u2500\u2500 Drag handling (i2-style) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// dragStart: physics \u099a\u09be\u09b2\u09c1 \u09a5\u09be\u0995\u09b2\u09c7 drag \u0995\u09b0\u09be node \u099f\u09be temporarily unfix \u0995\u09b0\u09cb
 network.on('dragStart',function(params){{
   if(params.nodes.length>0){{
     params.nodes.forEach(function(nid){{
@@ -8769,10 +8769,10 @@ network.on('dragStart',function(params){{
   }}
 }});
 
-// dragEnd: node pin করো এবং position নিশ্চিত করো
+// dragEnd: node pin \u0995\u09b0\u09cb \u098f\u09ac\u0982 position \u09a8\u09bf\u09b6\u09cd\u099a\u09bf\u09a4 \u0995\u09b0\u09cb
 network.on('dragEnd',function(params){{
   if(params.nodes.length>0){{
-    // Physics বন্ধ করো — drag শেষে অন্য node drift করবে না
+    // Physics \u09ac\u09a8\u09cd\u09a7 \u0995\u09b0\u09cb \u2014 drag \u09b6\u09c7\u09b7\u09c7 \u0985\u09a8\u09cd\u09af node drift \u0995\u09b0\u09ac\u09c7 \u09a8\u09be
     if(physicsOn){{
       network.setOptions({{physics:{{enabled:false}}}});
       physicsOn=false;
@@ -8780,13 +8780,13 @@ network.on('dragEnd',function(params){{
     }}
     params.nodes.forEach(function(nid){{
       var pos=network.getPositions([nid])[nid];
-      // Position explicitly set + fixed — পরে physics চালু হলেও এই node নড়বে না
+      // Position explicitly set + fixed \u2014 \u09aa\u09b0\u09c7 physics \u099a\u09be\u09b2\u09c1 \u09b9\u09b2\u09c7\u0993 \u098f\u0987 node \u09a8\u09a1\u09bc\u09ac\u09c7 \u09a8\u09be
       allNodes.update({{id:nid,x:pos.x,y:pos.y,fixed:{{x:true,y:true}}}});
     }});
   }}
 }});
 
-// doubleClick on empty: সব node unpin করো
+// doubleClick on empty: \u09b8\u09ac node unpin \u0995\u09b0\u09cb
 network.on('doubleClick',function(params){{
   if(params.nodes.length===0&&params.edges.length===0){{
     allNodes.update(allNodes.get().map(n=>({{id:n.id,fixed:{{x:false,y:false}}}})));
@@ -8799,16 +8799,16 @@ network.on('click',function(params){{
   if(params.nodes.length>0){{
     var nid=params.nodes[0];
     var n=allNodes.get(nid);
-    // Pinned node → orange border indicator
+    // Pinned node \u2192 orange border indicator
     var isPinned=n&&n.fixed&&(n.fixed===true||(n.fixed.x&&n.fixed.y));
     // Visual feedback already handled by selectConnectedEdges
   }}
 }});
 
-// ── Layout switcher (i2-style) ──
+// \u2500\u2500 Layout switcher (i2-style) \u2500\u2500
 function applyLayout(mode){{
   if(mode==='physics'){{
-    // Physics restart করার আগে সব node unpin করো
+    // Physics restart \u0995\u09b0\u09be\u09b0 \u0986\u0997\u09c7 \u09b8\u09ac node unpin \u0995\u09b0\u09cb
     allNodes.update(allNodes.get().map(function(n){{
       return{{id:n.id,fixed:{{x:false,y:false}}}};
     }}));
@@ -8946,7 +8946,7 @@ function applyLayout(mode){{
   }}
 }}
 
-// ── Importance Ring toggle ──
+// \u2500\u2500 Importance Ring toggle \u2500\u2500
 var _impRingOn = true;
 function toggleImportanceRing(){{
   _impRingOn = !_impRingOn;
@@ -8968,13 +8968,13 @@ function toggleImportanceRing(){{
   allNodes.update(updates);
 }}
 
-// ── Filter by min connection count ──
+// \u2500\u2500 Filter by min connection count \u2500\u2500
 function filterByConnCount(val){{
   val=parseInt(val);
-  document.getElementById('minConnVal').textContent=val===0?'০':val;
+  document.getElementById('minConnVal').textContent=val===0?'\u09e6':val;
 
-  // val=0 → non-common কিছুই দেখাবে না (শুধু subject + common)
-  // val=1..20 → প্রতিটি subject-এর জন্য আলাদাভাবে top-N non-common দেখাবে
+  // val=0 \u2192 non-common \u0995\u09bf\u099b\u09c1\u0987 \u09a6\u09c7\u0996\u09be\u09ac\u09c7 \u09a8\u09be (\u09b6\u09c1\u09a7\u09c1 subject + common)
+  // val=1..20 \u2192 \u09aa\u09cd\u09b0\u09a4\u09bf\u099f\u09bf subject-\u098f\u09b0 \u099c\u09a8\u09cd\u09af \u0986\u09b2\u09be\u09a6\u09be\u09ad\u09be\u09ac\u09c7 top-N non-common \u09a6\u09c7\u0996\u09be\u09ac\u09c7
   var showSet=new Set();
 
   if(val>0){{
@@ -9010,7 +9010,7 @@ function filterByConnCount(val){{
   }}));
 }}
 
-// ── Delete selected node/edge ──
+// \u2500\u2500 Delete selected node/edge \u2500\u2500
 function deleteSelected(){{
   if(selectedNodeId!==null){{
     var node=allNodes.get(selectedNodeId);
@@ -9036,7 +9036,7 @@ function deleteSelected(){{
   }}
 }}
 
-// ── Undo last delete ──
+// \u2500\u2500 Undo last delete \u2500\u2500
 function undoDelete(){{
   if(deletedNodes.length>0){{
     var last=deletedNodes.pop();
@@ -9047,7 +9047,7 @@ function undoDelete(){{
   }}
 }}
 
-// ── Keyboard delete ──
+// \u2500\u2500 Keyboard delete \u2500\u2500
 document.addEventListener('keydown',function(e){{
   if(e.key==='Delete'||e.key==='Backspace'){{
     if(document.activeElement===document.body||
@@ -9069,7 +9069,7 @@ function showAll(){{
   network.fit();
 }}
 
-// ── Label / node size sliders ──
+// \u2500\u2500 Label / node size sliders \u2500\u2500
 function changeFontSize(val){{
   val=parseInt(val);
   document.getElementById('fontVal').textContent=val===0?'off':val;
@@ -9091,7 +9091,7 @@ function changeNodeSize(val){{
   }}));
 }}
 
-// ── Search nodes by number or name ──
+// \u2500\u2500 Search nodes by number or name \u2500\u2500
 function searchNodes(q){{
   q = q.trim().toLowerCase();
   if(!q){{
@@ -9121,14 +9121,14 @@ function searchNodes(q){{
   }}
 }}
 
-// ── Edge type filter (simplified — edges now combined) ──
+// \u2500\u2500 Edge type filter (simplified \u2014 edges now combined) \u2500\u2500
 var _activeEtype = 'all';
 function filterEdgeType(etype){{
-  // edges এখন combined, এই function টি legacy compatibility-র জন্য রাখা হয়েছে
+  // edges \u098f\u0996\u09a8 combined, \u098f\u0987 function \u099f\u09bf legacy compatibility-\u09b0 \u099c\u09a8\u09cd\u09af \u09b0\u09be\u0996\u09be \u09b9\u09af\u09bc\u09c7\u099b\u09c7
   _activeEtype = etype;
 }}
 
-// ── Info panel ──
+// \u2500\u2500 Info panel \u2500\u2500
 function closePanel(){{document.getElementById('panel').style.display='none';}}
 function showPanel(tag,html){{
   document.getElementById('panelTag').textContent=tag;
@@ -9136,7 +9136,7 @@ function showPanel(tag,html){{
   document.getElementById('panel').style.display='block';
 }}
 
-// ── Click handler ──
+// \u2500\u2500 Click handler \u2500\u2500
 network.on('click',function(params){{
   if(params.nodes.length>0){{
     selectedNodeId=params.nodes[0];
@@ -9162,7 +9162,7 @@ network.on('click',function(params){{
 __EXTRA_JS__
 </script>
 </body>
-</html>""".replace("__EXTRA_JS__", "\n// ── Search ───────────────────────────────────────────────────────────────\nvar _sm=[],_si=-1,_ha=false,_ocs=false;\nfunction searchNodes(q){\n  q=q.trim().toLowerCase();\n  var ce=document.getElementById('searchCount');\n  if(!q){\n    _sm=[];_si=-1;\n    if(!_ha){\n      allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined})));\n      allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:false,opacity:1.0})));\n    }\n    if(ce)ce.textContent='';return;\n  }\n  var mt=new Set();\n  allNodes.get().forEach(function(n){\n    if((n.label||'').toLowerCase().includes(q)||String(n.id||'').toLowerCase().includes(q))mt.add(n.id);\n  });\n  _sm=[...mt];_si=_sm.length>0?0:-1;\n  allNodes.update(allNodes.get().map(function(n){\n    if(mt.has(n.id))return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    return{id:n.id,opacity:0.08,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:!(mt.has(e.from)&&mt.has(e.to))})));\n  if(ce)ce.textContent=mt.size>0?mt.size+' found':'No match';\n  if(_sm.length>0){network.focus(_sm[0],{scale:1.6,animation:{duration:400}});network.selectNodes([_sm[0]]);}\n}\nfunction handleSearchKey(e){\n  if(e.key!=='Enter'||_sm.length===0)return;\n  _si=(_si+1)%_sm.length;\n  network.focus(_sm[_si],{scale:1.6,animation:{duration:300}});\n  network.selectNodes([_sm[_si]]);\n}\n// ── Hover dim ────────────────────────────────────────────────────────────\nfunction _soc(){\n  if(_ocs)return;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,_oc:n.color||null,_bg:n.color&&n.color.background?n.color.background:null,_bw:n.borderWidth||2};\n  }));\n  _ocs=true;\n}\nnetwork.on('hoverNode',function(p){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _soc();_ha=true;\n  var h=p.node,cn=new Set(network.getConnectedNodes(h));cn.add(h);\n  allNodes.update(allNodes.get().map(function(n){\n    if(n.id===h)return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    if(cn.has(n.id))return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n    return{id:n.id,opacity:0.07,borderWidth:1,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:e.from===h||e.to===h?1.0:0.05};\n  }));\n});\nnetwork.on('blurNode',function(){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _ha=false;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:1.0};\n  }));\n});\n// ── Context menu ─────────────────────────────────────────────────────────\nvar _cm=(function(){\n  var el=document.createElement('div');\n  el.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px 0;min-width:185px;font-family:Segoe UI,Arial,sans-serif;font-size:13px;display:none';\n  document.body.appendChild(el);\n  function it(ic,lb,fn,dg){\n    var d=document.createElement('div');\n    d.style.cssText='padding:7px 14px;cursor:pointer;display:flex;gap:8px;align-items:center;'+(dg?'color:#dc2626':'color:#0f172a');\n    d.innerHTML='<span>'+ic+'</span><span>'+lb+'</span>';\n    d.onmouseenter=function(){d.style.background='#f1f5f9';};d.onmouseleave=function(){d.style.background='';};\n    d.onclick=function(){hide();fn();};return d;\n  }\n  function sp(){var h=document.createElement('hr');h.style.cssText='margin:3px 0;border:none;border-top:1px solid #f1f5f9';return h;}\n  function show(x,y,items){\n    el.innerHTML='';\n    items.forEach(function(i){if(i==='sep')el.appendChild(sp());else el.appendChild(i);});\n    el.style.display='block';\n    var vw=window.innerWidth,vh=window.innerHeight,r=el.getBoundingClientRect();\n    el.style.left=(x+r.width>vw?vw-r.width-8:x)+'px';el.style.top=(y+r.height>vh?vh-r.height-8:y)+'px';\n  }\n  function hide(){el.style.display='none';}\n  document.addEventListener('click',hide);\n  document.addEventListener('keydown',function(e){if(e.key==='Escape')hide();});\n  return{show:show,hide:hide,it:it};\n})();\nfunction _cp(t){\n  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(function(){_tk('Copied: '+t);}).catch(function(){_cf(t);});\n  else _cf(t);\n}\nfunction _cf(t){var a=document.createElement('textarea');a.value=t;a.style.cssText='position:fixed;opacity:0';document.body.appendChild(a);a.select();try{document.execCommand('copy');_tk('Copied: '+t);}catch(e){}document.body.removeChild(a);}\nfunction _tk(m){var t=document.createElement('div');t.textContent=m;t.style.cssText='position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:8px 18px;border-radius:20px;font-size:13px;z-index:99999;pointer-events:none;opacity:0;transition:opacity .2s';document.body.appendChild(t);requestAnimationFrame(function(){t.style.opacity='1';});setTimeout(function(){t.style.opacity='0';setTimeout(function(){document.body.removeChild(t);},300);},2000);}\nnetwork.on('oncontext',function(params){\n  params.event.preventDefault();\n  var x=params.event.clientX,y=params.event.clientY;\n  if(params.nodes.length>0){\n    var nid=params.nodes[0];selectedNodeId=nid;\n    var obj=allNodes.get(nid);var lbl=obj?(obj.label||nid):nid;\n    var num=String(nid).replace(/[^0-9+]/g,'');\n    _cm.show(x,y,[\n      _cm.it('📋','Copy Number',function(){_cp(num||String(nid));}),\n      _cm.it('📝','Copy Full Label',function(){_cp(lbl);}),\n      'sep',\n      _cm.it('🔦','Highlight',function(){var cn=new Set(network.getConnectedNodes(nid));cn.add(nid);allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:cn.has(n.id)?1.0:0.08})));},false),\n      _cm.it('👁','Show Info',function(){if(obj&&obj.title)showPanel('NODE INFO',obj.title);}),\n      _cm.it('🌐','Expand Node',function(){expandNode(String(nid));}),\n      'sep',\n      _cm.it('🗑','Remove',function(){deleteSelected();},true),\n    ]);\n  }else if(params.edges.length>0){\n    var eid=params.edges[0];selectedEdgeId=eid;var eo=allEdges.get(eid);\n    _cm.show(x,y,[\n      _cm.it('📋','Copy: '+(eo?String(eo.from).slice(-8):''),function(){_cp(eo?String(eo.from):'');}),\n      _cm.it('📋','Copy: '+(eo?String(eo.to).slice(-8):''),function(){_cp(eo?String(eo.to):'');}),\n      'sep',\n      _cm.it('ℹ️','Edge Info',function(){if(eo&&eo.title)showPanel('LINK INFO',eo.title);}),\n      'sep',\n      _cm.it('🗑','Remove',function(){deleteSelected();},true),\n    ]);\n  }else{\n    _cm.show(x,y,[\n      _cm.it('🔲','Fit All',function(){network.fit();}),\n      _cm.it('👁','Show All',function(){showAll();}),\n      _cm.it('🔴','Common Only',function(){showOnlyCommon();}),\n    ]);\n  }\n});\n")
+</html>""".replace("__EXTRA_JS__", "\n// \u2500\u2500 Search \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nvar _sm=[],_si=-1,_ha=false,_ocs=false;\nfunction searchNodes(q){\n  q=q.trim().toLowerCase();\n  var ce=document.getElementById('searchCount');\n  if(!q){\n    _sm=[];_si=-1;\n    if(!_ha){\n      allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined})));\n      allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:false,opacity:1.0})));\n    }\n    if(ce)ce.textContent='';return;\n  }\n  var mt=new Set();\n  allNodes.get().forEach(function(n){\n    if((n.label||'').toLowerCase().includes(q)||String(n.id||'').toLowerCase().includes(q))mt.add(n.id);\n  });\n  _sm=[...mt];_si=_sm.length>0?0:-1;\n  allNodes.update(allNodes.get().map(function(n){\n    if(mt.has(n.id))return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    return{id:n.id,opacity:0.08,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:!(mt.has(e.from)&&mt.has(e.to))})));\n  if(ce)ce.textContent=mt.size>0?mt.size+' found':'No match';\n  if(_sm.length>0){network.focus(_sm[0],{scale:1.6,animation:{duration:400}});network.selectNodes([_sm[0]]);}\n}\nfunction handleSearchKey(e){\n  if(e.key!=='Enter'||_sm.length===0)return;\n  _si=(_si+1)%_sm.length;\n  network.focus(_sm[_si],{scale:1.6,animation:{duration:300}});\n  network.selectNodes([_sm[_si]]);\n}\n// \u2500\u2500 Hover dim \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nfunction _soc(){\n  if(_ocs)return;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,_oc:n.color||null,_bg:n.color&&n.color.background?n.color.background:null,_bw:n.borderWidth||2};\n  }));\n  _ocs=true;\n}\nnetwork.on('hoverNode',function(p){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _soc();_ha=true;\n  var h=p.node,cn=new Set(network.getConnectedNodes(h));cn.add(h);\n  allNodes.update(allNodes.get().map(function(n){\n    if(n.id===h)return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    if(cn.has(n.id))return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n    return{id:n.id,opacity:0.07,borderWidth:1,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:e.from===h||e.to===h?1.0:0.05};\n  }));\n});\nnetwork.on('blurNode',function(){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _ha=false;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:1.0};\n  }));\n});\n// \u2500\u2500 Context menu \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nvar _cm=(function(){\n  var el=document.createElement('div');\n  el.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px 0;min-width:185px;font-family:Segoe UI,Arial,sans-serif;font-size:13px;display:none';\n  document.body.appendChild(el);\n  function it(ic,lb,fn,dg){\n    var d=document.createElement('div');\n    d.style.cssText='padding:7px 14px;cursor:pointer;display:flex;gap:8px;align-items:center;'+(dg?'color:#dc2626':'color:#0f172a');\n    d.innerHTML='<span>'+ic+'</span><span>'+lb+'</span>';\n    d.onmouseenter=function(){d.style.background='#f1f5f9';};d.onmouseleave=function(){d.style.background='';};\n    d.onclick=function(){hide();fn();};return d;\n  }\n  function sp(){var h=document.createElement('hr');h.style.cssText='margin:3px 0;border:none;border-top:1px solid #f1f5f9';return h;}\n  function show(x,y,items){\n    el.innerHTML='';\n    items.forEach(function(i){if(i==='sep')el.appendChild(sp());else el.appendChild(i);});\n    el.style.display='block';\n    var vw=window.innerWidth,vh=window.innerHeight,r=el.getBoundingClientRect();\n    el.style.left=(x+r.width>vw?vw-r.width-8:x)+'px';el.style.top=(y+r.height>vh?vh-r.height-8:y)+'px';\n  }\n  function hide(){el.style.display='none';}\n  document.addEventListener('click',hide);\n  document.addEventListener('keydown',function(e){if(e.key==='Escape')hide();});\n  return{show:show,hide:hide,it:it};\n})();\nfunction _cp(t){\n  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(function(){_tk('Copied: '+t);}).catch(function(){_cf(t);});\n  else _cf(t);\n}\nfunction _cf(t){var a=document.createElement('textarea');a.value=t;a.style.cssText='position:fixed;opacity:0';document.body.appendChild(a);a.select();try{document.execCommand('copy');_tk('Copied: '+t);}catch(e){}document.body.removeChild(a);}\nfunction _tk(m){var t=document.createElement('div');t.textContent=m;t.style.cssText='position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:8px 18px;border-radius:20px;font-size:13px;z-index:99999;pointer-events:none;opacity:0;transition:opacity .2s';document.body.appendChild(t);requestAnimationFrame(function(){t.style.opacity='1';});setTimeout(function(){t.style.opacity='0';setTimeout(function(){document.body.removeChild(t);},300);},2000);}\nnetwork.on('oncontext',function(params){\n  params.event.preventDefault();\n  var x=params.event.clientX,y=params.event.clientY;\n  if(params.nodes.length>0){\n    var nid=params.nodes[0];selectedNodeId=nid;\n    var obj=allNodes.get(nid);var lbl=obj?(obj.label||nid):nid;\n    var num=String(nid).replace(/[^0-9+]/g,'');\n    _cm.show(x,y,[\n      _cm.it('\U0001f4cb','Copy Number',function(){_cp(num||String(nid));}),\n      _cm.it('\U0001f4dd','Copy Full Label',function(){_cp(lbl);}),\n      'sep',\n      _cm.it('\U0001f526','Highlight',function(){var cn=new Set(network.getConnectedNodes(nid));cn.add(nid);allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:cn.has(n.id)?1.0:0.08})));},false),\n      _cm.it('\U0001f441','Show Info',function(){if(obj&&obj.title)showPanel('NODE INFO',obj.title);}),\n      _cm.it('\U0001f310','Expand Node',function(){expandNode(String(nid));}),\n      'sep',\n      _cm.it('\U0001f5d1','Remove',function(){deleteSelected();},true),\n    ]);\n  }else if(params.edges.length>0){\n    var eid=params.edges[0];selectedEdgeId=eid;var eo=allEdges.get(eid);\n    _cm.show(x,y,[\n      _cm.it('\U0001f4cb','Copy: '+(eo?String(eo.from).slice(-8):''),function(){_cp(eo?String(eo.from):'');}),\n      _cm.it('\U0001f4cb','Copy: '+(eo?String(eo.to).slice(-8):''),function(){_cp(eo?String(eo.to):'');}),\n      'sep',\n      _cm.it('\u2139\ufe0f','Edge Info',function(){if(eo&&eo.title)showPanel('LINK INFO',eo.title);}),\n      'sep',\n      _cm.it('\U0001f5d1','Remove',function(){deleteSelected();},true),\n    ]);\n  }else{\n    _cm.show(x,y,[\n      _cm.it('\U0001f532','Fit All',function(){network.fit();}),\n      _cm.it('\U0001f441','Show All',function(){showAll();}),\n      _cm.it('\U0001f534','Common Only',function(){showOnlyCommon();}),\n    ]);\n  }\n});\n")
     return html
 
 
@@ -9422,6 +9422,8 @@ def link_analysis_page():
                 _subj_meta_by_phone[sub] = meta
 
             graph_html = _build_network_html(dfs, top_connections, subjects, subj_edge_count, _subj_meta_by_phone, _contact_names_dict)
+            # UnicodeEncodeError প্রতিরোধ: non-ASCII → XML entity
+            graph_html = graph_html.encode('ascii', errors='xmlcharrefreplace').decode('ascii')
 
         st.components.v1.html(graph_html, height=780, scrolling=False)
 
