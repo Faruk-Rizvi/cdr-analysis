@@ -2992,23 +2992,6 @@ def _home_district(df):
     return None
 
 
-def _work_district(df):
-    """Detect work district from daytime BTS addresses."""
-    if 'address' not in df.columns or 'start' not in df.columns:
-        return None
-    day = df[(df['start'].dt.hour.astype(int) >= 8) & (df['start'].dt.hour.astype(int) < 18)]
-    if day.empty:
-        return None
-    addr_counts = (day['address'].dropna()
-                   .apply(lambda a: a if _is_valid_address(a) else None)
-                   .dropna().value_counts())
-    for addr in addr_counts.index:
-        d = _extract_district(addr)
-        if d:
-            return d
-    return None
-
-
 def _is_valid_address(addr):
     """Check if BTS address is meaningful (not just dashes, commas, or empty)."""
     if not addr or pd.isna(addr):
@@ -4775,6 +4758,114 @@ def _imei_change_html(df):
         <tbody>{rows}</tbody>
     </table>"""
 
+def mobile_no_change_analysis(df):
+    """
+    Track Party A (mobile number) changes over time.
+    IMEI CDR-এ একাধিক নম্বর থাকতে পারে — কখন কোন নম্বর ব্যবহার হয়েছে track করে।
+    Returns list of period dicts or None if no change detected.
+    """
+    if 'party_a' not in df.columns and '_pa' not in df.columns:
+        return None
+    if 'start' not in df.columns:
+        return None
+
+    pa_col = '_pa' if '_pa' in df.columns else 'party_a'
+
+    def _norm(v):
+        s = str(v).strip()
+        if s.startswith('880') and len(s) == 13: return '0' + s[3:]
+        if s.startswith('88') and len(s) == 12: return '0' + s[2:]
+        return s
+
+    df_s = df[df[pa_col].notna()].copy()
+    df_s['_pa_norm'] = df_s[pa_col].astype(str).apply(_norm)
+    df_s = df_s[df_s['_pa_norm'].str.match(r'^0[0-9]{9,10}$')]
+    df_s = df_s.sort_values('start').reset_index(drop=True)
+
+    if df_s.empty or df_s['_pa_norm'].nunique() <= 1:
+        return None  # একটিই number — কোনো change নেই
+
+    periods = []
+    current_num  = df_s.iloc[0]['_pa_norm']
+    period_start = df_s.iloc[0]['start']
+    period_end   = df_s.iloc[0]['start']
+    period_count = 1
+
+    for _, row in df_s.iloc[1:].iterrows():
+        num = row['_pa_norm']
+        ts  = row['start']
+        if num == current_num:
+            period_end   = ts
+            period_count += 1
+        else:
+            days = max(1, (period_end - period_start).days + 1)
+            periods.append({
+                'Mobile Number': current_num,
+                'From':          str(period_start)[:19],
+                'To':            str(period_end)[:19],
+                'Days Active':   days,
+                'Records':       period_count,
+            })
+            current_num  = num
+            period_start = ts
+            period_end   = ts
+            period_count = 1
+
+    days = max(1, (period_end - period_start).days + 1)
+    periods.append({
+        'Mobile Number': current_num,
+        'From':          str(period_start)[:19],
+        'To':            str(period_end)[:19],
+        'Days Active':   days,
+        'Records':       period_count,
+    })
+
+    return periods if len(periods) > 1 else None
+
+
+def _mobile_no_change_html(df):
+    """Generate HTML section for Mobile Number change tracking (section 2c)."""
+    periods = mobile_no_change_analysis(df)
+    if not periods:
+        return ''
+
+    rows = ''.join([
+        f"""<tr style="background:{'#f8fafc' if i%2==0 else 'white'};">
+            <td style="padding:0.7rem 1rem; font-family:monospace; font-weight:600;">{p['Mobile Number']}</td>
+            <td style="padding:0.7rem 1rem;">{p['From']}</td>
+            <td style="padding:0.7rem 1rem;">{p['To']}</td>
+            <td style="padding:0.7rem 1rem; text-align:center;">
+                <span style="background:#dcfce7; color:#166534; border-radius:12px;
+                             padding:0.2rem 0.7rem; font-weight:700;">{p['Days Active']}</span>
+            </td>
+            <td style="padding:0.7rem 1rem; text-align:center;">{p['Records']}</td>
+        </tr>"""
+        for i, p in enumerate(periods)
+    ])
+
+    return f"""
+    <h2>2c. Mobile Number Change Analysis</h2>
+    <div style="background:#dcfce7; border-left:4px solid #16a34a; border-radius:8px;
+                padding:0.75rem 1.25rem; margin-bottom:1rem; color:#14532d;">
+        <strong>&#x26A0; Multiple Mobile Numbers Detected!</strong>
+        This device (IMEI) was used by <strong>{len(periods)}</strong> different mobile
+        numbers — indicating possible SIM change or multiple users.
+    </div>
+    <table style="width:100%; border-collapse:collapse; border:1px solid #e2e8f0;
+                  border-radius:10px; overflow:hidden;">
+        <thead>
+            <tr style="background:#1e3a8a; color:white;">
+                <th style="padding:0.7rem 1rem; text-align:left;">Mobile Number</th>
+                <th style="padding:0.7rem 1rem; text-align:left;">Active From</th>
+                <th style="padding:0.7rem 1rem; text-align:left;">Active To</th>
+                <th style="padding:0.7rem 1rem; text-align:center;">Days</th>
+                <th style="padding:0.7rem 1rem; text-align:center;">Records</th>
+            </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+    </table>"""
+
+
 def target_location_analysis(df, target_location):
     """
     Target Location Analysis:
@@ -5324,6 +5415,7 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
     <tr><td>{"Device IMEI / SIM(s)" if is_imei_cdr(df) else "Phone Number"}</td><td>{html_safe(phone)}</td></tr></table>
     {_imsi_change_html(df)}
     {_imei_change_html(df)}
+    {_mobile_no_change_html(df)}
     <h2>3. Call Analysis</h2>
     <h3>3.1 Call Analysis Summary</h3>{df_to_html(call_summary(df))}
     <h2>4. Call Count Analysis</h2>
@@ -5613,6 +5705,17 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
         )
         p.runs[0].font.name = FONT; p.runs[0].font.size = _DocxPt(10)
         add_df_table(pd.DataFrame(imei_periods))
+
+    # Mobile Number Change (IMEI CDR-এ Party A-তে একাধিক নম্বর)
+    mob_periods = mobile_no_change_analysis(df)
+    if mob_periods:
+        add_h('2c. Mobile Number Change Analysis', 2)
+        p = doc.add_paragraph(
+            f'⚠ Multiple Mobile Numbers Detected! This device (IMEI) was used by '
+            f'{len(mob_periods)} different mobile numbers — indicating possible SIM change or multiple users.'
+        )
+        p.runs[0].font.name = FONT; p.runs[0].font.size = _DocxPt(10)
+        add_df_table(pd.DataFrame(mob_periods))
 
     # ════════════════════════════════════════════════════════════════════
     # 3. CALL ANALYSIS
@@ -6998,36 +7101,6 @@ def _build_first_last_dates(dfs):
     return result
 
 
-
-def _build_noise_analysis(dfs, connections):
-    """
-    Carrier/service numbers যেগুলো common contact হিসেবে দেখাচ্ছে কিন্তু
-    আসলে operator IVR/promo — সেগুলো flag করে।
-    Returns:
-      carrier_list  — list of dicts (number, shared_by, total_calls, reason)
-      clean_common  — common contacts with carrier numbers removed
-    """
-    carrier_list = []
-    clean_common = {}
-
-    for pb, subj_dict in connections.items():
-        if len(subj_dict) < 2: continue  # শুধু common contacts check করব
-        is_carrier  = _is_carrier_number(pb)
-        is_promo    = _is_promotional(pb)
-        total_calls = sum(d.get('call_out', 0) + d.get('call_in', 0) for d in subj_dict.values())
-
-        if is_carrier or is_promo:
-            reason = 'Carrier/IVR' if is_carrier else 'Promotional/Service'
-            carrier_list.append({
-                'Number':      pb,
-                'Shared By':   len(subj_dict),
-                'Total Calls': total_calls,
-                'Reason':      reason,
-            })
-        else:
-            clean_common[pb] = subj_dict
-
-    return carrier_list, clean_common
 
 
 
