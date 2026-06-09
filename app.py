@@ -9304,6 +9304,8 @@ def link_analysis_page():
                 _subj_meta_by_phone[sub] = meta
 
             graph_html = _build_network_html(dfs, top_connections, subjects, subj_edge_count, _subj_meta_by_phone, _contact_names_dict)
+            # Encode all non-ASCII (emoji etc) to HTML entities for Streamlit srcdoc
+            graph_html = graph_html.encode('ascii', errors='xmlcharrefreplace').decode('ascii')
 
         st.components.v1.html(graph_html, height=780, scrolling=False)
 
