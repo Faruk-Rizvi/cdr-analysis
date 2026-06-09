@@ -8146,16 +8146,16 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             '_total': total,
             '_important': is_important,
             '_cname': _cname,
-            # per-subject total — JS slider-এ প্রতিটি subject-এর জন্য আলাদা top-N filter করার জন্য
+            # per-subject total for JS top-N filter per subject
             '_subj_totals': {s: d['total'] for s, d in subj_dict.items()},
         }
 
-    # ── Edges — single combined edge per (subject, contact) pair ──
-    # Call + SMS একসাথে একটি edge-এ দেখানো হবে, label-এ মোট সংখ্যা
+    # ── Edges: single combined edge per (subject, contact) pair ──
+    # Call + SMS combined in one edge, label shows total count
     edges = []
     eid = 0
     subject_set = set(subjects)
-    seen_subj_pairs = set()  # subject-to-subject duplicate edge প্রতিরোধ
+    seen_subj_pairs = set()  # subject-to-subject duplicate edge prevention
 
     for pb, subj_dict in connections.items():
         for sub, data in subj_dict.items():
@@ -8164,13 +8164,13 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             is_common = pb in common
             is_subj_to_subj = pb in subject_set
 
-            # Subject-to-subject: A→B এবং B→A দুটো entry আসে — একটাই edge বানাও
+            # Subject-to-subject: A→B and B→A both exist — build only one edge
             if is_subj_to_subj:
                 pair = tuple(sorted([sub, pb]))
                 if pair in seen_subj_pairs:
                     continue
                 seen_subj_pairs.add(pair)
-                # দুইদিকের data মিলিয়ে combined stats
+                # Merge both directions into combined stats
                 rev = connections.get(sub, {}).get(pb, {})
                 call_total  = data['call_out'] + data['call_in'] + rev.get('call_out', 0) + rev.get('call_in', 0)
                 sms_total   = data['sms_out']  + data['sms_in']  + rev.get('sms_out', 0)  + rev.get('sms_in', 0)
@@ -8182,7 +8182,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
 
             grand_total = call_total + sms_total
 
-            # রং নির্ধারণ
+            # Color assignment
             if is_subj_to_subj:
                 ec = '#7c3aed'  # purple — subject-to-subject
             elif is_common:
@@ -8207,7 +8207,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
                 f"&nbsp;&nbsp;\u23f1 Duration: {dur} min</div>"
             )
 
-            # Width: subject-to-subject মোটা, common হলেও মোটা
+            # Width: thicker for subject-to-subject and common
             width = max(1, min(7, call_total // 5 + 1)) + (3 if is_subj_to_subj else (2 if is_common else 0))
 
             edges.append({
@@ -8316,7 +8316,7 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <div class="li"><div class="dot" style="background:#dc2626"></div>Common Contact</div>
   <div class="li"><div class="dot" style="background:#64748b"></div>Single Contact</div>
   <div class="li"><div class="dot" style="background:#e2e8f0;border:3px solid #f59e0b;width:13px;height:13px;"></div>High-freq ⭐</div>
-  <div class="li"><div class="ln" style="background:#2563eb"></div>Connection (সংখ্যা = Call+SMS)</div>
+  <div class="li"><div class="ln" style="background:#2563eb"></div>Connection (count = Call+SMS)</div>
   <div class="li"><div class="ln" style="background:#dc2626"></div>Common Contact Edge</div>
   <div class="li"><div class="ln" style="background:#7c3aed"></div>Subject ↔ Subject</div>
 </div>
@@ -8336,7 +8336,7 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <!-- Search box -->
   <div class="sl" style="flex:1;min-width:180px;">
     <span style="font-weight:600;color:#1e3a8a;">&#x1F50D;</span>
-    <input type="text" id="searchBox" placeholder="নম্বর / নাম খুঁজুন…"
+    <input type="text" id="searchBox" placeholder="Search number / name..."
       oninput="searchNodes(this.value)"
       style="flex:1;font-size:11px;padding:3px 7px;border-radius:5px;
              border:1px solid #cbd5e1;background:#f8fafc;color:#0f172a;outline:none;">
@@ -8359,7 +8359,7 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   </div>
   <button class="btn" id="impRingBtn" onclick="toggleImportanceRing()" title="High-frequency gold ring">&#11088; Ring: ON</button>
   <div class="sl">
-    <span>Top contacts (common বাদে):</span>
+    <span>Top contacts (excl. common):</span>
     <input type="range" id="minConn" min="1" max="20" value="20"
            oninput="filterByConnCount(this.value)">
     <span id="minConnVal">20</span>
@@ -8402,7 +8402,7 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1e3a8a" stroke-width="2.5">
     <circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/>
   </svg>
-  Capturing graph…
+  Capturing graph...
 </div>
 
 <!-- ── Export modal ── -->
@@ -8418,8 +8418,8 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
       <span id="exportStatus"></span>
     </div>
     <div style="font-size:11px;color:#94a3b8;margin-top:10px;">
-      &#x2139;&#xFE0F; PNG download করুন → Word/PowerPoint-এ Insert → Pictures দিয়ে যোগ করুন।
-      অথবা Copy করে সরাসরি Ctrl+V দিয়ে paste করুন।
+      &#x2139;&#xFE0F; Download PNG → In Word/PowerPoint use Insert → Pictures.
+      Or Copy and paste directly with Ctrl+V.
     </div>
   </div>
 </div>
@@ -8429,13 +8429,13 @@ var edgesData = {edges_json};
 var subjectsData = {subjects_json};
 var expandableData = {expandable_json};  // subject phone list
 
-// vis.js tooltip: string title → HTML render হয় না, DOM element দিতে হয়
+// vis.js tooltip: string title does not render HTML, must use DOM element
 function _makeTitleEl(html){{
   var d=document.createElement('div');
   d.innerHTML=html;
   return d;
 }}
-// Node ও edge-এর title convert করা
+// Convert node and edge title strings to DOM elements
 nodesData = nodesData.map(function(n){{
   if(n.title && typeof n.title==='string') n.title=_makeTitleEl(n.title);
   return n;
@@ -8482,7 +8482,7 @@ network.once('stabilizationIterationsDone', function(){{
   network.setOptions({{physics:{{enabled:false}}}});
   physicsOn=false;
   document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
-  // Default: top-20 non-common contact দেখাও
+  // Default: show top-20 non-common contacts
   filterByConnCount(20);
 }});
 
@@ -8550,7 +8550,7 @@ function _captureGraph(callback){{
   }}, 350);
 }}
 
-// ── Export PNG → opens preview modal ──
+// ── Export PNG: opens preview modal ──
 function exportGraphPNG(){{
   _captureGraph(function(dataURL){{
     document.getElementById('exportPreview').src = dataURL;
@@ -8585,7 +8585,7 @@ function copyExportedToClipboard(){{
 }}
 
 function _doCopy(dataURL, quick){{
-  // Convert dataURL → Blob → ClipboardItem
+  // Convert dataURL to Blob then ClipboardItem
   var b64 = dataURL.split(',')[1];
   var byteChars = atob(b64);
   var byteArr = new Uint8Array(byteChars.length);
@@ -8595,7 +8595,7 @@ function _doCopy(dataURL, quick){{
   if(navigator.clipboard && window.ClipboardItem){{
     navigator.clipboard.write([new ClipboardItem({{'image/png':blob}})])
       .then(function(){{
-        var msg = '✅ Clipboard-এ copy হয়েছে! Ctrl+V দিয়ে Word/PowerPoint-এ paste করুন।';
+        var msg = '✅ Copied to clipboard! Paste with Ctrl+V in Word/PowerPoint.';
         if(quick){{ alert(msg); }}
         else{{ document.getElementById('exportStatus').textContent='✅ Copied!';
                setTimeout(function(){{document.getElementById('exportStatus').textContent='';}},2500); }}
@@ -8604,13 +8604,13 @@ function _doCopy(dataURL, quick){{
         // Fallback: open in new tab
         var w=window.open();
         w.document.write('<img src="'+dataURL+'" style="max-width:100%"><br>'
-          +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click → Copy Image অথবা Save Image As করুন।</p>');
+          +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click → Copy Image or Save Image As.</p>');
       }});
   }} else {{
     // Old browser fallback
     var w=window.open();
     w.document.write('<img src="'+dataURL+'" style="max-width:100%"><br>'
-      +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click → Copy Image অথবা Save Image As করুন।</p>');
+      +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click → Copy Image or Save Image As.</p>');
   }}
 }}
 
@@ -8635,7 +8635,7 @@ function pinAll(){{
   _tk('\uD83D\uDD12 Layout locked');
 }}
 
-// ── Expand Node ────────────────────────────────────────────────────────────
+// ── Expand Node ──
 var _expandedNodes=new Set();
 function expandNode(nid){{
   var numId=String(nid).replace(/[^0-9]/g,'');
@@ -8711,7 +8711,7 @@ network.on('doubleClick',function(params){{
   }}
 }});
 
-// ── Layout switcher (i2-style) ──
+// ── Layout switcher ──
 function applyLayout(mode){{
   if(mode==='physics'){{
     allNodes.update(allNodes.get().map(function(n){{
@@ -8873,13 +8873,13 @@ function toggleImportanceRing(){{
   allNodes.update(updates);
 }}
 
-// ── Filter by min connection count ──
+// ── Filter by connection count ──
 function filterByConnCount(val){{
   val=parseInt(val);
-  document.getElementById('minConnVal').textContent=val===0?'০':val;
+  document.getElementById('minConnVal').textContent=val===0?'0':val;
 
-  // val=0 → non-common কিছুই দেখাবে না (শুধু subject + common)
-  // val=1..20 → প্রতিটি subject-এর জন্য আলাদাভাবে top-N non-common দেখাবে
+  // val=0 → hide all non-common (show subject + common only)
+  // val=1..20 → show top-N non-common per subject separately
   var showSet=new Set();
 
   if(val>0){{
@@ -8952,7 +8952,7 @@ function undoDelete(){{
   }}
 }}
 
-// ── Keyboard delete ──
+// ── Keyboard shortcut: delete ──
 document.addEventListener('keydown',function(e){{
   if(e.key==='Delete'||e.key==='Backspace'){{
     if(document.activeElement===document.body||
@@ -9026,10 +9026,10 @@ function searchNodes(q){{
   }}
 }}
 
-// ── Edge type filter (simplified — edges now combined) ──
+// ── Edge type filter (combined edges) ──
 var _activeEtype = 'all';
 function filterEdgeType(etype){{
-  // edges এখন combined, এই function টি legacy compatibility-র জন্য রাখা হয়েছে
+  // edges are now combined; this function kept for legacy compatibility
   _activeEtype = etype;
 }}
 
@@ -9327,16 +9327,6 @@ def link_analysis_page():
                 _subj_meta_by_phone[sub] = meta
 
             graph_html = _build_network_html(dfs, top_connections, subjects, subj_edge_count, _subj_meta_by_phone, _contact_names_dict)
-            # UnicodeEncodeError fix: Bengali chars → HTML entities, keep emoji as-is
-            import re as _re_html
-            def _to_entity(m):
-                ch = m.group(0)
-                cp = ord(ch)
-                # Bengali Unicode block: U+0980–U+09FF
-                if 0x0980 <= cp <= 0x09FF:
-                    return f'&#{cp};'
-                return ch
-            graph_html = _re_html.sub(r'[^\x00-\x7F]', _to_entity, graph_html)
 
         st.components.v1.html(graph_html, height=780, scrolling=False)
 
