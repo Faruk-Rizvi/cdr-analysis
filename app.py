@@ -311,9 +311,15 @@ def _load_password_store():
 _PASSWORD_STORE = _load_password_store()
 
 def _check_login(username: str, password: str) -> bool:
+    # Pre-computed dummy hash for timing-safe constant-time comparison
+    # Prevents timing attacks when username not found
+    _DUMMY_HASH = b"$2b$04$xTCh2B8jdHPHSSdpmYqlHOnyu8IXNWUA5fHR75MZYTvZJttuUo2i6"
     hashed = _PASSWORD_STORE.get(username.strip().lower())
     if not hashed:
-        _bcrypt.checkpw(b"dummy", b"$2b$12$" + b"x"*53)
+        try:
+            _bcrypt.checkpw(b"_dummy_timing_check_", _DUMMY_HASH)
+        except Exception:
+            pass
         return False
     try:
         return _bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
@@ -9321,6 +9327,16 @@ def link_analysis_page():
                 _subj_meta_by_phone[sub] = meta
 
             graph_html = _build_network_html(dfs, top_connections, subjects, subj_edge_count, _subj_meta_by_phone, _contact_names_dict)
+            # UnicodeEncodeError fix: Bengali chars → HTML entities, keep emoji as-is
+            import re as _re_html
+            def _to_entity(m):
+                ch = m.group(0)
+                cp = ord(ch)
+                # Bengali Unicode block: U+0980–U+09FF
+                if 0x0980 <= cp <= 0x09FF:
+                    return f'&#{cp};'
+                return ch
+            graph_html = _re_html.sub(r'[^\x00-\x7F]', _to_entity, graph_html)
 
         st.components.v1.html(graph_html, height=780, scrolling=False)
 
