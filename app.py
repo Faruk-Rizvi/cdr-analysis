@@ -311,15 +311,9 @@ def _load_password_store():
 _PASSWORD_STORE = _load_password_store()
 
 def _check_login(username: str, password: str) -> bool:
-    # Pre-computed dummy hash for timing-safe constant-time comparison
-    # Prevents timing attacks when username not found
-    _DUMMY_HASH = b"$2b$04$xTCh2B8jdHPHSSdpmYqlHOnyu8IXNWUA5fHR75MZYTvZJttuUo2i6"
     hashed = _PASSWORD_STORE.get(username.strip().lower())
     if not hashed:
-        try:
-            _bcrypt.checkpw(b"_dummy_timing_check_", _DUMMY_HASH)
-        except Exception:
-            pass
+        _bcrypt.checkpw(b"dummy", b"$2b$12$" + b"x"*53)
         return False
     try:
         return _bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
@@ -5366,7 +5360,7 @@ def _intl_html(intl, sec_num=11):
     </table>"""
 
 
-def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None, target_location=None, profile_data=None, top_n_contact=10, top_n_location=10):
+def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None, target_location=None, profile_data=None):
     import re as _re_html
     def _clean_id(series):
         result = []
@@ -5431,27 +5425,27 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
     <h3>4.4 Monthly Call Count</h3>{df_to_html(monthly_call_count(df))}
     <h2>5. Contact Analysis</h2>
     <h3>5.1 Contact Summary</h3>{df_to_html(contact_summary(df))}
-    <h3>5.2 Top {top_n_contact} Frequent Outgoing</h3>{df_to_html(top_contacts(df,'out',top_n_contact))}
-    <h3>5.3 Top {top_n_contact} Frequent Incoming</h3>{df_to_html(top_contacts(df,'in',top_n_contact))}
-    <h3>5.4 Top {top_n_contact} Lengthy Outgoing</h3>{df_to_html(top_lengthy(df,'out',top_n_contact))}
-    <h3>5.5 Top {top_n_contact} Lengthy Incoming</h3>{df_to_html(top_lengthy(df,'in',top_n_contact))}
-    <h3>5.6 Top Call Overall</h3>{df_to_html(top_call_overall(df,top_n_contact))}
-    <h3>5.6a Top Call Overall Chart</h3>{fig_to_html_img(plot_top_call_overall(df,top_n_contact))}
+    <h3>5.2 Top 10 Frequent Outgoing</h3>{df_to_html(top_contacts(df,'out',10))}
+    <h3>5.3 Top 10 Frequent Incoming</h3>{df_to_html(top_contacts(df,'in',10))}
+    <h3>5.4 Top 10 Lengthy Outgoing</h3>{df_to_html(top_lengthy(df,'out',10))}
+    <h3>5.5 Top 10 Lengthy Incoming</h3>{df_to_html(top_lengthy(df,'in',10))}
+    <h3>5.6 Top Call Overall</h3>{df_to_html(top_call_overall(df,10))}
+    <h3>5.6a Top Call Overall Chart</h3>{fig_to_html_img(plot_top_call_overall(df,10))}
     <h2>6. Location Analysis</h2>
     {_loc_accuracy_html(df)}
     <h3>6.1 Location Summary</h3>{df_to_html(location_summary(df))}
-    <h3>6.2 Top {top_n_location} Frequent Locations</h3>{df_to_html(top_locations(df,None,top_n_location))}
-    <h3>6.4 Possible Home Locations</h3>{df_to_html(top_locations(df,home_mask,top_n_location))}
-    <h3>6.6 Possible Work Locations</h3>{df_to_html(top_locations(df,work_mask,top_n_location))}
-    <h3>6.8 Possible Weekend Locations</h3>{df_to_html(top_locations(df,weekend_mask,top_n_location))}
+    <h3>6.2 Top 10 Frequent Locations</h3>{df_to_html(top_locations(df,None,10))}
+    <h3>6.4 Possible Home Locations</h3>{df_to_html(top_locations(df,home_mask,10))}
+    <h3>6.6 Possible Work Locations</h3>{df_to_html(top_locations(df,work_mask,10))}
+    <h3>6.8 Possible Weekend Locations</h3>{df_to_html(top_locations(df,weekend_mask,10))}
 
     <h2>7. SMS Contact Analysis</h2>
-    <h3>7.1 Top {top_n_contact} Sent SMS Contacts</h3>{df_to_html(top_sms_contacts(df,'out',top_n_contact))}
-    <h3>7.2 Top {top_n_contact} Received SMS Contacts</h3>{df_to_html(top_sms_contacts(df,'in',top_n_contact))}
+    <h3>7.1 Top 5 Sent SMS Contacts</h3>{df_to_html(top_sms_contacts(df,'out',5))}
+    <h3>7.2 Top 5 Received SMS Contacts</h3>{df_to_html(top_sms_contacts(df,'in',5))}
 
     <h2>8. Last 10 Days Analysis</h2>
-    <h3>8.1 Top Contacts in Last 10 Days (MOC + MTC)</h3>{df_to_html(last_n_days_top_contacts(df, 10, top_n_contact))}
-    <h3>8.2 Top Locations in Last 10 Days</h3>{df_to_html(last_n_days_top_locations(df, 10, top_n_location))}
+    <h3>8.1 Top Contacts in Last 10 Days (MOC + MTC)</h3>{df_to_html(last_n_days_top_contacts(df, 10, 10))}
+    <h3>8.2 Top Locations in Last 10 Days</h3>{df_to_html(last_n_days_top_locations(df, 10, 10))}
 
     <h2>9. Movement Pattern Analysis</h2>
     <p>Analysis of movement outside estimated home/work district and network disconnection periods.</p>
@@ -5475,7 +5469,7 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
 # ─────────────────────────────────────────────
 # WORD (DOCX) GENERATOR
 # ─────────────────────────────────────────────
-def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None, target_location=None, profile_data=None, top_n_contact=10, top_n_location=10):
+def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None, target_location=None, profile_data=None):
 
     doc = _DocxDocument()
 
@@ -5743,12 +5737,12 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
     # ════════════════════════════════════════════════════════════════════
     add_h('5. Contact Analysis')
     add_h('5.1 Contact Summary', 2);        add_df_table(contact_summary(df))
-    add_h(f'5.2 Top {top_n_contact} Frequent Outgoing', 2);add_df_table(top_contacts(df, 'out', top_n_contact))
-    add_h(f'5.3 Top {top_n_contact} Frequent Incoming', 2);add_df_table(top_contacts(df, 'in',  top_n_contact))
-    add_h(f'5.4 Top {top_n_contact} Lengthy Outgoing', 2); add_df_table(top_lengthy(df, 'out', top_n_contact))
-    add_h(f'5.5 Top {top_n_contact} Lengthy Incoming', 2); add_df_table(top_lengthy(df, 'in',  top_n_contact))
-    add_h(f'5.6 Top Call Overall', 2);        add_df_table(top_call_overall(df, top_n_contact))
-    add_h(f'5.6a Top Call Overall Chart', 2); add_fig(plot_top_call_overall(df, top_n_contact))
+    add_h('5.2 Top 10 Frequent Outgoing', 2);add_df_table(top_contacts(df, 'out', 10))
+    add_h('5.3 Top 10 Frequent Incoming', 2);add_df_table(top_contacts(df, 'in',  10))
+    add_h('5.4 Top 10 Lengthy Outgoing', 2); add_df_table(top_lengthy(df, 'out', 10))
+    add_h('5.5 Top 10 Lengthy Incoming', 2); add_df_table(top_lengthy(df, 'in',  10))
+    add_h('5.6 Top Call Overall', 2);        add_df_table(top_call_overall(df, 10))
+    add_h('5.6a Top Call Overall Chart', 2); add_fig(plot_top_call_overall(df, 10))
 
     # ════════════════════════════════════════════════════════════════════
     # 6. LOCATION ANALYSIS
@@ -5759,26 +5753,26 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
 
     add_h('6. Location Analysis')
     add_h('6.1 Location Summary', 2);       add_df_table(location_summary(df))
-    add_h(f'6.2 Top {top_n_location} Frequent Locations', 2); add_df_table(top_locations(df, None, top_n_location))
-    add_h(f'6.4 Possible Home Locations', 2);   add_df_table(top_locations(df, home_mask, top_n_location))
-    add_h(f'6.6 Possible Work Locations', 2);   add_df_table(top_locations(df, work_mask, top_n_location))
-    add_h(f'6.8 Possible Weekend Locations', 2);add_df_table(top_locations(df, weekend_mask, top_n_location))
+    add_h('6.2 Top 10 Frequent Locations', 2); add_df_table(top_locations(df, None, 10))
+    add_h('6.4 Possible Home Locations', 2);   add_df_table(top_locations(df, home_mask, 10))
+    add_h('6.6 Possible Work Locations', 2);   add_df_table(top_locations(df, work_mask, 10))
+    add_h('6.8 Possible Weekend Locations', 2);add_df_table(top_locations(df, weekend_mask, 10))
 
     # ════════════════════════════════════════════════════════════════════
     # 7. SMS CONTACT ANALYSIS
     # ════════════════════════════════════════════════════════════════════
     add_h('7. SMS Contact Analysis')
-    add_h(f'7.1 Top {top_n_contact} Sent SMS Contacts', 2);     add_df_table(top_sms_contacts(df, 'out', top_n_contact))
-    add_h(f'7.2 Top {top_n_contact} Received SMS Contacts', 2); add_df_table(top_sms_contacts(df, 'in',  top_n_contact))
+    add_h('7.1 Top 5 Sent SMS Contacts', 2);     add_df_table(top_sms_contacts(df, 'out', 5))
+    add_h('7.2 Top 5 Received SMS Contacts', 2); add_df_table(top_sms_contacts(df, 'in',  5))
 
     # ════════════════════════════════════════════════════════════════════
     # 8. LAST 10 DAYS ANALYSIS
     # ════════════════════════════════════════════════════════════════════
     add_h('8. Last 10 Days Analysis')
     add_h('8.1 Top Contacts in Last 10 Days (MOC + MTC)', 2)
-    add_df_table(last_n_days_top_contacts(df, 10, top_n_contact))
+    add_df_table(last_n_days_top_contacts(df, 10, 10))
     add_h('8.2 Top Locations in Last 10 Days', 2)
-    add_df_table(last_n_days_top_locations(df, 10, top_n_location))
+    add_df_table(last_n_days_top_locations(df, 10, 10))
 
     # ════════════════════════════════════════════════════════════════════
     # 9. MOVEMENT PATTERN ANALYSIS
@@ -8146,16 +8140,16 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             '_total': total,
             '_important': is_important,
             '_cname': _cname,
-            # per-subject total for JS top-N filter per subject
+            # per-subject total — JS slider-এ প্রতিটি subject-এর জন্য আলাদা top-N filter করার জন্য
             '_subj_totals': {s: d['total'] for s, d in subj_dict.items()},
         }
 
-    # ── Edges: single combined edge per (subject, contact) pair ──
-    # Call + SMS combined in one edge, label shows total count
+    # ── Edges — single combined edge per (subject, contact) pair ──
+    # Call + SMS একসাথে একটি edge-এ দেখানো হবে, label-এ মোট সংখ্যা
     edges = []
     eid = 0
     subject_set = set(subjects)
-    seen_subj_pairs = set()  # subject-to-subject duplicate edge prevention
+    seen_subj_pairs = set()  # subject-to-subject duplicate edge প্রতিরোধ
 
     for pb, subj_dict in connections.items():
         for sub, data in subj_dict.items():
@@ -8164,13 +8158,13 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             is_common = pb in common
             is_subj_to_subj = pb in subject_set
 
-            # Subject-to-subject: A→B and B→A both exist — build only one edge
+            # Subject-to-subject: A→B এবং B→A দুটো entry আসে — একটাই edge বানাও
             if is_subj_to_subj:
                 pair = tuple(sorted([sub, pb]))
                 if pair in seen_subj_pairs:
                     continue
                 seen_subj_pairs.add(pair)
-                # Merge both directions into combined stats
+                # দুইদিকের data মিলিয়ে combined stats
                 rev = connections.get(sub, {}).get(pb, {})
                 call_total  = data['call_out'] + data['call_in'] + rev.get('call_out', 0) + rev.get('call_in', 0)
                 sms_total   = data['sms_out']  + data['sms_in']  + rev.get('sms_out', 0)  + rev.get('sms_in', 0)
@@ -8182,7 +8176,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
 
             grand_total = call_total + sms_total
 
-            # Color assignment
+            # রং নির্ধারণ
             if is_subj_to_subj:
                 ec = '#7c3aed'  # purple — subject-to-subject
             elif is_common:
@@ -8207,7 +8201,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
                 f"&nbsp;&nbsp;\u23f1 Duration: {dur} min</div>"
             )
 
-            # Width: thicker for subject-to-subject and common
+            # Width: subject-to-subject মোটা, common হলেও মোটা
             width = max(1, min(7, call_total // 5 + 1)) + (3 if is_subj_to_subj else (2 if is_common else 0))
 
             edges.append({
@@ -8233,23 +8227,9 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             })
             eid += 1
 
-    # ── Expandable data: Right-click Expand Node ──
-    expandable_data = {}
-    _subject_set_exp = set(subjects)
-    for _df_exp in dfs:
-        if '_pa' not in _df_exp.columns or '_pb' not in _df_exp.columns: continue
-        _subj_exp = _df_exp['_subject'].iloc[0] if '_subject' in _df_exp.columns else None
-        if not _subj_exp: continue
-        _grp_exp = _df_exp[_df_exp['_pb'].str.match(r'^0[0-9]{9,10}$', na=False)].groupby('_pb').size()
-        for _pb_exp, _cnt_exp in _grp_exp.items():
-            if _pb_exp in _subject_set_exp: continue
-            if _pb_exp not in expandable_data: expandable_data[_pb_exp] = {}
-            expandable_data[_pb_exp][_subj_exp] = int(_cnt_exp)
-
-    nodes_json      = json.dumps(list(nodes.values()), ensure_ascii=False)
-    edges_json      = json.dumps(edges, ensure_ascii=False)
-    subjects_json   = json.dumps(subjects, ensure_ascii=False)
-    expandable_json = json.dumps(expandable_data, ensure_ascii=False)
+    nodes_json = json.dumps(list(nodes.values()), ensure_ascii=False)
+    edges_json = json.dumps(edges, ensure_ascii=False)
+    subjects_json = json.dumps(subjects, ensure_ascii=False)
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -8316,15 +8296,13 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <div class="li"><div class="dot" style="background:#dc2626"></div>Common Contact</div>
   <div class="li"><div class="dot" style="background:#64748b"></div>Single Contact</div>
   <div class="li"><div class="dot" style="background:#e2e8f0;border:3px solid #f59e0b;width:13px;height:13px;"></div>High-freq ⭐</div>
-  <div class="li"><div class="ln" style="background:#2563eb"></div>Connection (count = Call+SMS)</div>
+  <div class="li"><div class="ln" style="background:#2563eb"></div>Connection (সংখ্যা = Call+SMS)</div>
   <div class="li"><div class="ln" style="background:#dc2626"></div>Common Contact Edge</div>
   <div class="li"><div class="ln" style="background:#7c3aed"></div>Subject ↔ Subject</div>
 </div>
 <div class="bar">
   <button class="btn" onclick="network.fit()">&#x229F; Fit</button>
   <button class="btn" id="physBtn" onclick="togglePhysics()">&#x23F8; Freeze</button>
-  <button class="btn" style="background:#0369a1;" onclick="unpinAll()">&#x1F513; Unpin All</button>
-  <button class="btn" style="background:#374151;" onclick="pinAll()">&#x1F512; Pin All</button>
   <button class="btn red" onclick="showOnlyCommon()">&#128308; Common</button>
   <button class="btn grn" onclick="showAll()">&#128065; All</button>
   <button class="btn del" id="delBtn" onclick="deleteSelected()">&#x1F5D1; Delete</button>
@@ -8336,7 +8314,7 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <!-- Search box -->
   <div class="sl" style="flex:1;min-width:180px;">
     <span style="font-weight:600;color:#1e3a8a;">&#x1F50D;</span>
-    <input type="text" id="searchBox" placeholder="Search number / name..."
+    <input type="text" id="searchBox" placeholder="নম্বর / নাম খুঁজুন…"
       oninput="searchNodes(this.value)"
       style="flex:1;font-size:11px;padding:3px 7px;border-radius:5px;
              border:1px solid #cbd5e1;background:#f8fafc;color:#0f172a;outline:none;">
@@ -8359,7 +8337,7 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   </div>
   <button class="btn" id="impRingBtn" onclick="toggleImportanceRing()" title="High-frequency gold ring">&#11088; Ring: ON</button>
   <div class="sl">
-    <span>Top contacts (excl. common):</span>
+    <span>Top contacts (common বাদে):</span>
     <input type="range" id="minConn" min="1" max="20" value="20"
            oninput="filterByConnCount(this.value)">
     <span id="minConnVal">20</span>
@@ -8402,7 +8380,7 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1e3a8a" stroke-width="2.5">
     <circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/>
   </svg>
-  Capturing graph...
+  Capturing graph…
 </div>
 
 <!-- ── Export modal ── -->
@@ -8418,24 +8396,23 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
       <span id="exportStatus"></span>
     </div>
     <div style="font-size:11px;color:#94a3b8;margin-top:10px;">
-      &#x2139;&#xFE0F; Download PNG → In Word/PowerPoint use Insert → Pictures.
-      Or Copy and paste directly with Ctrl+V.
+      &#x2139;&#xFE0F; PNG download করুন → Word/PowerPoint-এ Insert → Pictures দিয়ে যোগ করুন।
+      অথবা Copy করে সরাসরি Ctrl+V দিয়ে paste করুন।
     </div>
   </div>
 </div>
 <script>
 var nodesData = {nodes_json};
 var edgesData = {edges_json};
-var subjectsData = {subjects_json};
-var expandableData = {expandable_json};  // subject phone list
+var subjectsData = {subjects_json};  // subject phone list
 
-// vis.js tooltip: string title does not render HTML, must use DOM element
+// vis.js tooltip: string title → HTML render হয় না, DOM element দিতে হয়
 function _makeTitleEl(html){{
   var d=document.createElement('div');
   d.innerHTML=html;
   return d;
 }}
-// Convert node and edge title strings to DOM elements
+// Node ও edge-এর title convert করা
 nodesData = nodesData.map(function(n){{
   if(n.title && typeof n.title==='string') n.title=_makeTitleEl(n.title);
   return n;
@@ -8470,8 +8447,8 @@ var network = new vis.Network(
                   nodeDistance:200,damping:.10}}
     }},
     interaction:{{hover:true,tooltipDelay:150,navigationButtons:true,
-                  hideEdgesOnDrag:false,keyboard:true,
-                  multiselect:true,dragNodes:true,dragView:true,zoomView:true}},
+                  hideEdgesOnDrag:true,keyboard:true,
+                  multiselect:true}},
     layout:{{improvedLayout:false}}
   }}
 );
@@ -8482,7 +8459,7 @@ network.once('stabilizationIterationsDone', function(){{
   network.setOptions({{physics:{{enabled:false}}}});
   physicsOn=false;
   document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
-  // Default: show top-20 non-common contacts
+  // Default: top-20 non-common contact দেখাও
   filterByConnCount(20);
 }});
 
@@ -8550,7 +8527,7 @@ function _captureGraph(callback){{
   }}, 350);
 }}
 
-// ── Export PNG: opens preview modal ──
+// ── Export PNG → opens preview modal ──
 function exportGraphPNG(){{
   _captureGraph(function(dataURL){{
     document.getElementById('exportPreview').src = dataURL;
@@ -8585,7 +8562,7 @@ function copyExportedToClipboard(){{
 }}
 
 function _doCopy(dataURL, quick){{
-  // Convert dataURL to Blob then ClipboardItem
+  // Convert dataURL → Blob → ClipboardItem
   var b64 = dataURL.split(',')[1];
   var byteChars = atob(b64);
   var byteArr = new Uint8Array(byteChars.length);
@@ -8595,7 +8572,7 @@ function _doCopy(dataURL, quick){{
   if(navigator.clipboard && window.ClipboardItem){{
     navigator.clipboard.write([new ClipboardItem({{'image/png':blob}})])
       .then(function(){{
-        var msg = '✅ Copied to clipboard! Paste with Ctrl+V in Word/PowerPoint.';
+        var msg = '✅ Clipboard-এ copy হয়েছে! Ctrl+V দিয়ে Word/PowerPoint-এ paste করুন।';
         if(quick){{ alert(msg); }}
         else{{ document.getElementById('exportStatus').textContent='✅ Copied!';
                setTimeout(function(){{document.getElementById('exportStatus').textContent='';}},2500); }}
@@ -8604,13 +8581,13 @@ function _doCopy(dataURL, quick){{
         // Fallback: open in new tab
         var w=window.open();
         w.document.write('<img src="'+dataURL+'" style="max-width:100%"><br>'
-          +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click → Copy Image or Save Image As.</p>');
+          +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click → Copy Image অথবা Save Image As করুন।</p>');
       }});
   }} else {{
     // Old browser fallback
     var w=window.open();
     w.document.write('<img src="'+dataURL+'" style="max-width:100%"><br>'
-      +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click → Copy Image or Save Image As.</p>');
+      +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click → Copy Image অথবা Save Image As করুন।</p>');
   }}
 }}
 
@@ -8623,100 +8600,26 @@ function togglePhysics(){{
   network.setOptions({{physics:{{enabled:physicsOn}}}});
   document.getElementById('physBtn').textContent=physicsOn?'\u23F8 Freeze':'\u25B6 Unfreeze';
 }}
-function unpinAll(){{
-  allNodes.update(allNodes.get().map(n=>({{id:n.id,fixed:{{x:false,y:false}}}})));
-  _tk('\uD83D\uDD13 All nodes unpinned');
-}}
-function pinAll(){{
-  var pos=network.getPositions();
-  allNodes.update(Object.keys(pos).map(function(id){{
-    return{{id:id,x:pos[id].x,y:pos[id].y,fixed:{{x:true,y:true}}}};
-  }}));
-  _tk('\uD83D\uDD12 Layout locked');
-}}
 
-// ── Expand Node ──
-var _expandedNodes=new Set();
-function expandNode(nid){{
-  var numId=String(nid).replace(/[^0-9]/g,'');
-  if(_expandedNodes.has(numId)){{collapseNode(numId);return;}}
-  var contacts=expandableData[nid]||expandableData['0'+numId.slice(2)]||null;
-  if(!contacts||Object.keys(contacts).length===0){{
-    _tk('\u274C No additional CDR data');return;
-  }}
-  _expandedNodes.add(numId);
-  var pp=network.getPositions([nid]);
-  var px=(pp[nid]||{{x:0}}).x,py=(pp[nid]||{{y:0}}).y;
-  var newNodes=[],newEdges=[],keys=Object.keys(contacts),total=keys.length;
-  keys.forEach(function(subj,i){{
-    var cnt=contacts[subj];
-    var eid2='exp_'+numId+'_'+i;
-    var angle=(2*Math.PI*i/Math.max(total,1))-Math.PI/2;
-    newNodes.push({{
-      id:eid2,label:subj,shape:'dot',size:10,
-      color:{{background:'#fef9c3',border:'#f59e0b'}},
-      font:{{size:11,color:'#374151',strokeWidth:2,strokeColor:'#fff'}},
-      x:Math.round(px+160*Math.cos(angle)),y:Math.round(py+160*Math.sin(angle)),
-      fixed:false,group:'expanded',_total:cnt,_expanded_from:numId,
-    }});
-    newEdges.push({{
-      id:'exp_e_'+numId+'_'+i,from:nid,to:eid2,
-      label:String(cnt),
-      color:{{color:'#f59e0b',opacity:.7}},
-      dashes:true,width:1,
-      font:{{size:10,color:'#374151',strokeWidth:1,strokeColor:'#fff',align:'middle'}},
-      smooth:{{type:'dynamic'}},
-    }});
-  }});
-  if(newNodes.length){{
-    allNodes.add(newNodes);allEdges.add(newEdges);
-    _tk('\uD83C\uDF10 Expanded '+newNodes.length+' connections');
-  }}
-}}
-function collapseNode(numId){{
-  _expandedNodes.delete(numId);
-  var rn=allNodes.get().filter(n=>n._expanded_from===numId).map(n=>n.id);
-  var re=allEdges.get().filter(e=>String(e.id).startsWith('exp_e_'+numId)).map(e=>e.id);
-  allNodes.remove(rn);allEdges.remove(re);
-  _tk('\uD83D\uDDD8 Collapsed');
-}}
-
-// dragStart: unfix node before drag
-network.on('dragStart',function(params){{
-  if(params.nodes.length>0){{
-    params.nodes.forEach(function(nid){{
-      allNodes.update({{id:nid,fixed:{{x:false,y:false}}}});
-    }});
-  }}
-}});
-// dragEnd: pin node, stop physics drift
+// dragEnd: pin node
 network.on('dragEnd',function(params){{
   if(params.nodes.length>0){{
-    if(physicsOn){{
-      network.setOptions({{physics:{{enabled:false}}}});
-      physicsOn=false;
-      document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
-    }}
     params.nodes.forEach(function(nid){{
       var pos=network.getPositions([nid])[nid];
       allNodes.update({{id:nid,x:pos.x,y:pos.y,fixed:{{x:true,y:true}}}});
     }});
   }}
 }});
-// doubleClick on empty: unpin all
+// doubleClick: unpin all
 network.on('doubleClick',function(params){{
   if(params.nodes.length===0&&params.edges.length===0){{
     allNodes.update(allNodes.get().map(n=>({{id:n.id,fixed:{{x:false,y:false}}}})));
-    _tk('\uD83D\uDD13 All nodes unpinned');
   }}
 }});
 
-// ── Layout switcher ──
+// ── Layout switcher (i2-style) ──
 function applyLayout(mode){{
   if(mode==='physics'){{
-    allNodes.update(allNodes.get().map(function(n){{
-      return{{id:n.id,fixed:{{x:false,y:false}}}};
-    }}));
     network.setOptions({{
       layout:{{improvedLayout:false,hierarchical:{{enabled:false}}}},
       physics:{{
@@ -8730,9 +8633,6 @@ function applyLayout(mode){{
     document.getElementById('physBtn').textContent='\u23F8 Stop';
     network.once('stabilizationIterationsDone',function(){{
       network.fit({{animation:{{duration:500,easingFunction:'easeInOutQuad'}}}});
-      network.setOptions({{physics:{{enabled:false}}}});
-      physicsOn=false;
-      document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
     }});
     return;
   }}
@@ -8873,13 +8773,13 @@ function toggleImportanceRing(){{
   allNodes.update(updates);
 }}
 
-// ── Filter by connection count ──
+// ── Filter by min connection count ──
 function filterByConnCount(val){{
   val=parseInt(val);
-  document.getElementById('minConnVal').textContent=val===0?'0':val;
+  document.getElementById('minConnVal').textContent=val===0?'০':val;
 
-  // val=0 → hide all non-common (show subject + common only)
-  // val=1..20 → show top-N non-common per subject separately
+  // val=0 → non-common কিছুই দেখাবে না (শুধু subject + common)
+  // val=1..20 → প্রতিটি subject-এর জন্য আলাদাভাবে top-N non-common দেখাবে
   var showSet=new Set();
 
   if(val>0){{
@@ -8952,7 +8852,7 @@ function undoDelete(){{
   }}
 }}
 
-// ── Keyboard shortcut: delete ──
+// ── Keyboard delete ──
 document.addEventListener('keydown',function(e){{
   if(e.key==='Delete'||e.key==='Backspace'){{
     if(document.activeElement===document.body||
@@ -9026,10 +8926,10 @@ function searchNodes(q){{
   }}
 }}
 
-// ── Edge type filter (combined edges) ──
+// ── Edge type filter (simplified — edges now combined) ──
 var _activeEtype = 'all';
 function filterEdgeType(etype){{
-  // edges are now combined; this function kept for legacy compatibility
+  // edges এখন combined, এই function টি legacy compatibility-র জন্য রাখা হয়েছে
   _activeEtype = etype;
 }}
 
@@ -9067,7 +8967,7 @@ network.on('click',function(params){{
 __EXTRA_JS__
 </script>
 </body>
-</html>""".replace("__EXTRA_JS__", "\n// ── Search ───────────────────────────────────────────────────────────────\nvar _sm=[],_si=-1,_ha=false,_ocs=false;\nfunction searchNodes(q){\n  q=q.trim().toLowerCase();\n  var ce=document.getElementById('searchCount');\n  if(!q){\n    _sm=[];_si=-1;\n    if(!_ha){\n      allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined})));\n      allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:false,opacity:1.0})));\n    }\n    if(ce)ce.textContent='';return;\n  }\n  var mt=new Set();\n  allNodes.get().forEach(function(n){\n    if((n.label||'').toLowerCase().includes(q)||String(n.id||'').toLowerCase().includes(q))mt.add(n.id);\n  });\n  _sm=[...mt];_si=_sm.length>0?0:-1;\n  allNodes.update(allNodes.get().map(function(n){\n    if(mt.has(n.id))return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    return{id:n.id,opacity:0.08,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:!(mt.has(e.from)&&mt.has(e.to))})));\n  if(ce)ce.textContent=mt.size>0?mt.size+' found':'No match';\n  if(_sm.length>0){network.focus(_sm[0],{scale:1.6,animation:{duration:400}});network.selectNodes([_sm[0]]);}\n}\nfunction handleSearchKey(e){\n  if(e.key!=='Enter'||_sm.length===0)return;\n  _si=(_si+1)%_sm.length;\n  network.focus(_sm[_si],{scale:1.6,animation:{duration:300}});\n  network.selectNodes([_sm[_si]]);\n}\n// ── Hover dim ────────────────────────────────────────────────────────────\nfunction _soc(){\n  if(_ocs)return;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,_oc:n.color||null,_bg:n.color&&n.color.background?n.color.background:null,_bw:n.borderWidth||2};\n  }));\n  _ocs=true;\n}\nnetwork.on('hoverNode',function(p){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _soc();_ha=true;\n  var h=p.node,cn=new Set(network.getConnectedNodes(h));cn.add(h);\n  allNodes.update(allNodes.get().map(function(n){\n    if(n.id===h)return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    if(cn.has(n.id))return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n    return{id:n.id,opacity:0.07,borderWidth:1,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:e.from===h||e.to===h?1.0:0.05};\n  }));\n});\nnetwork.on('blurNode',function(){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _ha=false;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:1.0};\n  }));\n});\n// ── Context menu ─────────────────────────────────────────────────────────\nvar _cm=(function(){\n  var el=document.createElement('div');\n  el.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px 0;min-width:185px;font-family:Segoe UI,Arial,sans-serif;font-size:13px;display:none';\n  document.body.appendChild(el);\n  function it(ic,lb,fn,dg){\n    var d=document.createElement('div');\n    d.style.cssText='padding:7px 14px;cursor:pointer;display:flex;gap:8px;align-items:center;'+(dg?'color:#dc2626':'color:#0f172a');\n    d.innerHTML='<span>'+ic+'</span><span>'+lb+'</span>';\n    d.onmouseenter=function(){d.style.background='#f1f5f9';};d.onmouseleave=function(){d.style.background='';};\n    d.onclick=function(){hide();fn();};return d;\n  }\n  function sp(){var h=document.createElement('hr');h.style.cssText='margin:3px 0;border:none;border-top:1px solid #f1f5f9';return h;}\n  function show(x,y,items){\n    el.innerHTML='';\n    items.forEach(function(i){if(i==='sep')el.appendChild(sp());else el.appendChild(i);});\n    el.style.display='block';\n    var vw=window.innerWidth,vh=window.innerHeight,r=el.getBoundingClientRect();\n    el.style.left=(x+r.width>vw?vw-r.width-8:x)+'px';el.style.top=(y+r.height>vh?vh-r.height-8:y)+'px';\n  }\n  function hide(){el.style.display='none';}\n  document.addEventListener('click',hide);\n  document.addEventListener('keydown',function(e){if(e.key==='Escape')hide();});\n  return{show:show,hide:hide,it:it};\n})();\nfunction _cp(t){\n  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(function(){_tk('Copied: '+t);}).catch(function(){_cf(t);});\n  else _cf(t);\n}\nfunction _cf(t){var a=document.createElement('textarea');a.value=t;a.style.cssText='position:fixed;opacity:0';document.body.appendChild(a);a.select();try{document.execCommand('copy');_tk('Copied: '+t);}catch(e){}document.body.removeChild(a);}\nfunction _tk(m){var t=document.createElement('div');t.textContent=m;t.style.cssText='position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:8px 18px;border-radius:20px;font-size:13px;z-index:99999;pointer-events:none;opacity:0;transition:opacity .2s';document.body.appendChild(t);requestAnimationFrame(function(){t.style.opacity='1';});setTimeout(function(){t.style.opacity='0';setTimeout(function(){document.body.removeChild(t);},300);},2000);}\nnetwork.on('oncontext',function(params){\n  params.event.preventDefault();\n  var x=params.event.clientX,y=params.event.clientY;\n  if(params.nodes.length>0){\n    var nid=params.nodes[0];selectedNodeId=nid;\n    var obj=allNodes.get(nid);var lbl=obj?(obj.label||nid):nid;\n    var num=String(nid).replace(/[^0-9+]/g,'');\n    _cm.show(x,y,[\n      _cm.it('📋','Copy Number',function(){_cp(num||String(nid));}),\n      _cm.it('📝','Copy Full Label',function(){_cp(lbl);}),\n      'sep',\n      _cm.it('🔦','Highlight',function(){var cn=new Set(network.getConnectedNodes(nid));cn.add(nid);allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:cn.has(n.id)?1.0:0.08})));},false),\n      _cm.it('👁','Show Info',function(){if(obj&&obj.title)showPanel('NODE INFO',obj.title);}),\n      _cm.it('🌐','Expand Node',function(){expandNode(String(nid));}),\n      'sep',\n      _cm.it('🗑','Remove',function(){deleteSelected();},true),\n    ]);\n  }else if(params.edges.length>0){\n    var eid=params.edges[0];selectedEdgeId=eid;var eo=allEdges.get(eid);\n    _cm.show(x,y,[\n      _cm.it('📋','Copy: '+(eo?String(eo.from).slice(-8):''),function(){_cp(eo?String(eo.from):'');}),\n      _cm.it('📋','Copy: '+(eo?String(eo.to).slice(-8):''),function(){_cp(eo?String(eo.to):'');}),\n      'sep',\n      _cm.it('ℹ️','Edge Info',function(){if(eo&&eo.title)showPanel('LINK INFO',eo.title);}),\n      'sep',\n      _cm.it('🗑','Remove',function(){deleteSelected();},true),\n    ]);\n  }else{\n    _cm.show(x,y,[\n      _cm.it('🔲','Fit All',function(){network.fit();}),\n      _cm.it('👁','Show All',function(){showAll();}),\n      _cm.it('🔴','Common Only',function(){showOnlyCommon();}),\n    ]);\n  }\n});\n")
+</html>""".replace("__EXTRA_JS__", "\n// ── Search ───────────────────────────────────────────────────────────────\nvar _sm=[],_si=-1,_ha=false,_ocs=false;\nfunction searchNodes(q){\n  q=q.trim().toLowerCase();\n  var ce=document.getElementById('searchCount');\n  if(!q){\n    _sm=[];_si=-1;\n    if(!_ha){\n      allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined})));\n      allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:false,opacity:1.0})));\n    }\n    if(ce)ce.textContent='';return;\n  }\n  var mt=new Set();\n  allNodes.get().forEach(function(n){\n    if((n.label||'').toLowerCase().includes(q)||String(n.id||'').toLowerCase().includes(q))mt.add(n.id);\n  });\n  _sm=[...mt];_si=_sm.length>0?0:-1;\n  allNodes.update(allNodes.get().map(function(n){\n    if(mt.has(n.id))return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    return{id:n.id,opacity:0.08,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:!(mt.has(e.from)&&mt.has(e.to))})));\n  if(ce)ce.textContent=mt.size>0?mt.size+' found':'No match';\n  if(_sm.length>0){network.focus(_sm[0],{scale:1.6,animation:{duration:400}});network.selectNodes([_sm[0]]);}\n}\nfunction handleSearchKey(e){\n  if(e.key!=='Enter'||_sm.length===0)return;\n  _si=(_si+1)%_sm.length;\n  network.focus(_sm[_si],{scale:1.6,animation:{duration:300}});\n  network.selectNodes([_sm[_si]]);\n}\n// ── Hover dim ────────────────────────────────────────────────────────────\nfunction _soc(){\n  if(_ocs)return;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,_oc:n.color||null,_bg:n.color&&n.color.background?n.color.background:null,_bw:n.borderWidth||2};\n  }));\n  _ocs=true;\n}\nnetwork.on('hoverNode',function(p){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _soc();_ha=true;\n  var h=p.node,cn=new Set(network.getConnectedNodes(h));cn.add(h);\n  allNodes.update(allNodes.get().map(function(n){\n    if(n.id===h)return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    if(cn.has(n.id))return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n    return{id:n.id,opacity:0.07,borderWidth:1,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:e.from===h||e.to===h?1.0:0.05};\n  }));\n});\nnetwork.on('blurNode',function(){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _ha=false;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:1.0};\n  }));\n});\n// ── Context menu ─────────────────────────────────────────────────────────\nvar _cm=(function(){\n  var el=document.createElement('div');\n  el.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px 0;min-width:185px;font-family:Segoe UI,Arial,sans-serif;font-size:13px;display:none';\n  document.body.appendChild(el);\n  function it(ic,lb,fn,dg){\n    var d=document.createElement('div');\n    d.style.cssText='padding:7px 14px;cursor:pointer;display:flex;gap:8px;align-items:center;'+(dg?'color:#dc2626':'color:#0f172a');\n    d.innerHTML='<span>'+ic+'</span><span>'+lb+'</span>';\n    d.onmouseenter=function(){d.style.background='#f1f5f9';};d.onmouseleave=function(){d.style.background='';};\n    d.onclick=function(){hide();fn();};return d;\n  }\n  function sp(){var h=document.createElement('hr');h.style.cssText='margin:3px 0;border:none;border-top:1px solid #f1f5f9';return h;}\n  function show(x,y,items){\n    el.innerHTML='';\n    items.forEach(function(i){if(i==='sep')el.appendChild(sp());else el.appendChild(i);});\n    el.style.display='block';\n    var vw=window.innerWidth,vh=window.innerHeight,r=el.getBoundingClientRect();\n    el.style.left=(x+r.width>vw?vw-r.width-8:x)+'px';el.style.top=(y+r.height>vh?vh-r.height-8:y)+'px';\n  }\n  function hide(){el.style.display='none';}\n  document.addEventListener('click',hide);\n  document.addEventListener('keydown',function(e){if(e.key==='Escape')hide();});\n  return{show:show,hide:hide,it:it};\n})();\nfunction _cp(t){\n  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(function(){_tk('Copied: '+t);}).catch(function(){_cf(t);});\n  else _cf(t);\n}\nfunction _cf(t){var a=document.createElement('textarea');a.value=t;a.style.cssText='position:fixed;opacity:0';document.body.appendChild(a);a.select();try{document.execCommand('copy');_tk('Copied: '+t);}catch(e){}document.body.removeChild(a);}\nfunction _tk(m){var t=document.createElement('div');t.textContent=m;t.style.cssText='position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:8px 18px;border-radius:20px;font-size:13px;z-index:99999;pointer-events:none;opacity:0;transition:opacity .2s';document.body.appendChild(t);requestAnimationFrame(function(){t.style.opacity='1';});setTimeout(function(){t.style.opacity='0';setTimeout(function(){document.body.removeChild(t);},300);},2000);}\nnetwork.on('oncontext',function(params){\n  params.event.preventDefault();\n  var x=params.event.clientX,y=params.event.clientY;\n  if(params.nodes.length>0){\n    var nid=params.nodes[0];selectedNodeId=nid;\n    var obj=allNodes.get(nid);var lbl=obj?(obj.label||nid):nid;\n    var num=String(nid).replace(/[^0-9+]/g,'');\n    _cm.show(x,y,[\n      _cm.it('📋','Copy Number',function(){_cp(num||String(nid));}),\n      _cm.it('📝','Copy Full Label',function(){_cp(lbl);}),\n      'sep',\n      _cm.it('🔦','Highlight',function(){var cn=new Set(network.getConnectedNodes(nid));cn.add(nid);allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:cn.has(n.id)?1.0:0.08})));},false),\n      _cm.it('👁','Show Info',function(){if(obj&&obj.title)showPanel('NODE INFO',obj.title);}),\n      'sep',\n      _cm.it('🗑','Remove',function(){deleteSelected();},true),\n    ]);\n  }else if(params.edges.length>0){\n    var eid=params.edges[0];selectedEdgeId=eid;var eo=allEdges.get(eid);\n    _cm.show(x,y,[\n      _cm.it('📋','Copy: '+(eo?String(eo.from).slice(-8):''),function(){_cp(eo?String(eo.from):'');}),\n      _cm.it('📋','Copy: '+(eo?String(eo.to).slice(-8):''),function(){_cp(eo?String(eo.to):'');}),\n      'sep',\n      _cm.it('ℹ️','Edge Info',function(){if(eo&&eo.title)showPanel('LINK INFO',eo.title);}),\n      'sep',\n      _cm.it('🗑','Remove',function(){deleteSelected();},true),\n    ]);\n  }else{\n    _cm.show(x,y,[\n      _cm.it('🔲','Fit All',function(){network.fit();}),\n      _cm.it('👁','Show All',function(){showAll();}),\n      _cm.it('🔴','Common Only',function(){showOnlyCommon();}),\n    ]);\n  }\n});\n")
     return html
 
 
@@ -12655,27 +12555,6 @@ def main():
         # Nominatim global enable/disable — _nominatim_geocode() এই flag check করে
         _NOMINATIM_CACHE['__enabled__'] = st.session_state.get('_nominatim_enabled', False)
 
-        # ── Report Settings ───────────────────────────────────────────────
-        with st.expander("📊 Report Settings", expanded=False):
-            _rs_c1, _rs_c2 = st.columns(2)
-            with _rs_c1:
-                st.slider(
-                    "📞 Top Contacts (Section 5 & 7)",
-                    min_value=5, max_value=50, value=10, step=5,
-                    key=f"top_n_contact_{_file_hash}",
-                    help="HTML & Word report-এ কতজন top contact দেখাবে"
-                )
-            with _rs_c2:
-                st.slider(
-                    "📍 Top Locations (Section 6)",
-                    min_value=5, max_value=30, value=10, step=5,
-                    key=f"top_n_location_{_file_hash}",
-                    help="HTML & Word report-এ কতটি top location দেখাবে"
-                )
-            _tc = st.session_state.get(f"top_n_contact_{_file_hash}", 10)
-            _tl = st.session_state.get(f"top_n_location_{_file_hash}", 10)
-            st.caption(f"Contact: top **{_tc}** · Location: top **{_tl}**")
-
         if st.button("▶️ Run Analysis", type="primary", use_container_width=False,
                      key=f"run_btn_{_file_hash}"):
             st.session_state[_run_key] = True
@@ -13751,9 +13630,7 @@ def main():
 
 
 
-        html_content = build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number, target_location, profile_data=profile_data,
-                                  top_n_contact=st.session_state.get(f"top_n_contact_{_file_hash}", 10),
-                                  top_n_location=st.session_state.get(f"top_n_location_{_file_hash}", 10))
+        html_content = build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number, target_location, profile_data=profile_data)
         # Inject Profile Analysis section after <h1>
         if profile_data and any(profile_data.get(k) for k in ['name','nid','passport','docs_found']):
             _prof_html = _profile_html_section(profile_data)
@@ -13765,9 +13642,7 @@ def main():
         html_bytes = html_content.encode('utf-8')
 
         progress.progress(80, text="📝 Generating Word report...")
-        docx_bytes = build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number, target_location, profile_data=profile_data,
-                                top_n_contact=st.session_state.get(f"top_n_contact_{_file_hash}", 10),
-                                top_n_location=st.session_state.get(f"top_n_location_{_file_hash}", 10))
+        docx_bytes = build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number, target_location, profile_data=profile_data)
 
         # ── Movement Map ──
         progress.progress(90, text="🗺️ Generating movement map...")
