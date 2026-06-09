@@ -311,9 +311,11 @@ def _load_password_store():
 _PASSWORD_STORE = _load_password_store()
 
 def _check_login(username: str, password: str) -> bool:
+    _DUMMY_HASH = b"$2b$04$xTCh2B8jdHPHSSdpmYqlHOnyu8IXNWUA5fHR75MZYTvZJttuUo2i6"
     hashed = _PASSWORD_STORE.get(username.strip().lower())
     if not hashed:
-        _bcrypt.checkpw(b"dummy", b"$2b$12$" + b"x"*53)
+        try: _bcrypt.checkpw(b"_dummy_", _DUMMY_HASH)
+        except Exception: pass
         return False
     try:
         return _bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
@@ -5360,7 +5362,7 @@ def _intl_html(intl, sec_num=11):
     </table>"""
 
 
-def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None, target_location=None, profile_data=None):
+def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None, target_location=None, profile_data=None, top_n_contact=10, top_n_location=10):
     import re as _re_html
     def _clean_id(series):
         result = []
@@ -5425,27 +5427,27 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
     <h3>4.4 Monthly Call Count</h3>{df_to_html(monthly_call_count(df))}
     <h2>5. Contact Analysis</h2>
     <h3>5.1 Contact Summary</h3>{df_to_html(contact_summary(df))}
-    <h3>5.2 Top 10 Frequent Outgoing</h3>{df_to_html(top_contacts(df,'out',10))}
-    <h3>5.3 Top 10 Frequent Incoming</h3>{df_to_html(top_contacts(df,'in',10))}
-    <h3>5.4 Top 10 Lengthy Outgoing</h3>{df_to_html(top_lengthy(df,'out',10))}
-    <h3>5.5 Top 10 Lengthy Incoming</h3>{df_to_html(top_lengthy(df,'in',10))}
-    <h3>5.6 Top Call Overall</h3>{df_to_html(top_call_overall(df,10))}
-    <h3>5.6a Top Call Overall Chart</h3>{fig_to_html_img(plot_top_call_overall(df,10))}
+    <h3>5.2 Top {top_n_contact} Frequent Outgoing</h3>{df_to_html(top_contacts(df,'out',top_n_contact))}
+    <h3>5.3 Top {top_n_contact} Frequent Incoming</h3>{df_to_html(top_contacts(df,'in',top_n_contact))}
+    <h3>5.4 Top {top_n_contact} Lengthy Outgoing</h3>{df_to_html(top_lengthy(df,'out',top_n_contact))}
+    <h3>5.5 Top {top_n_contact} Lengthy Incoming</h3>{df_to_html(top_lengthy(df,'in',top_n_contact))}
+    <h3>5.6 Top Call Overall</h3>{df_to_html(top_call_overall(df,top_n_contact))}
+    <h3>5.6a Top Call Overall Chart</h3>{fig_to_html_img(plot_top_call_overall(df,top_n_contact))}
     <h2>6. Location Analysis</h2>
     {_loc_accuracy_html(df)}
     <h3>6.1 Location Summary</h3>{df_to_html(location_summary(df))}
-    <h3>6.2 Top 10 Frequent Locations</h3>{df_to_html(top_locations(df,None,10))}
-    <h3>6.4 Possible Home Locations</h3>{df_to_html(top_locations(df,home_mask,10))}
-    <h3>6.6 Possible Work Locations</h3>{df_to_html(top_locations(df,work_mask,10))}
-    <h3>6.8 Possible Weekend Locations</h3>{df_to_html(top_locations(df,weekend_mask,10))}
+    <h3>6.2 Top {top_n_location} Frequent Locations</h3>{df_to_html(top_locations(df,None,top_n_location))}
+    <h3>6.4 Possible Home Locations</h3>{df_to_html(top_locations(df,home_mask,top_n_location))}
+    <h3>6.6 Possible Work Locations</h3>{df_to_html(top_locations(df,work_mask,top_n_location))}
+    <h3>6.8 Possible Weekend Locations</h3>{df_to_html(top_locations(df,weekend_mask,top_n_location))}
 
     <h2>7. SMS Contact Analysis</h2>
-    <h3>7.1 Top 5 Sent SMS Contacts</h3>{df_to_html(top_sms_contacts(df,'out',5))}
-    <h3>7.2 Top 5 Received SMS Contacts</h3>{df_to_html(top_sms_contacts(df,'in',5))}
+    <h3>7.1 Top {top_n_contact} Sent SMS Contacts</h3>{df_to_html(top_sms_contacts(df,'out',top_n_contact))}
+    <h3>7.2 Top {top_n_contact} Received SMS Contacts</h3>{df_to_html(top_sms_contacts(df,'in',top_n_contact))}
 
     <h2>8. Last 10 Days Analysis</h2>
-    <h3>8.1 Top Contacts in Last 10 Days (MOC + MTC)</h3>{df_to_html(last_n_days_top_contacts(df, 10, 10))}
-    <h3>8.2 Top Locations in Last 10 Days</h3>{df_to_html(last_n_days_top_locations(df, 10, 10))}
+    <h3>8.1 Top Contacts in Last 10 Days (MOC + MTC)</h3>{df_to_html(last_n_days_top_contacts(df, 10, top_n_contact))}
+    <h3>8.2 Top Locations in Last 10 Days</h3>{df_to_html(last_n_days_top_locations(df, 10, top_n_location))}
 
     <h2>9. Movement Pattern Analysis</h2>
     <p>Analysis of movement outside estimated home/work district and network disconnection periods.</p>
@@ -5469,7 +5471,7 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
 # ─────────────────────────────────────────────
 # WORD (DOCX) GENERATOR
 # ─────────────────────────────────────────────
-def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None, target_location=None, profile_data=None):
+def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None, target_location=None, profile_data=None, top_n_contact=10, top_n_location=10):
 
     doc = _DocxDocument()
 
@@ -5737,12 +5739,12 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
     # ════════════════════════════════════════════════════════════════════
     add_h('5. Contact Analysis')
     add_h('5.1 Contact Summary', 2);        add_df_table(contact_summary(df))
-    add_h('5.2 Top 10 Frequent Outgoing', 2);add_df_table(top_contacts(df, 'out', 10))
-    add_h('5.3 Top 10 Frequent Incoming', 2);add_df_table(top_contacts(df, 'in',  10))
-    add_h('5.4 Top 10 Lengthy Outgoing', 2); add_df_table(top_lengthy(df, 'out', 10))
-    add_h('5.5 Top 10 Lengthy Incoming', 2); add_df_table(top_lengthy(df, 'in',  10))
-    add_h('5.6 Top Call Overall', 2);        add_df_table(top_call_overall(df, 10))
-    add_h('5.6a Top Call Overall Chart', 2); add_fig(plot_top_call_overall(df, 10))
+    add_h(f'5.2 Top {top_n_contact} Frequent Outgoing', 2);add_df_table(top_contacts(df, 'out', top_n_contact))
+    add_h(f'5.3 Top {top_n_contact} Frequent Incoming', 2);add_df_table(top_contacts(df, 'in',  top_n_contact))
+    add_h(f'5.4 Top {top_n_contact} Lengthy Outgoing', 2); add_df_table(top_lengthy(df, 'out', top_n_contact))
+    add_h(f'5.5 Top {top_n_contact} Lengthy Incoming', 2); add_df_table(top_lengthy(df, 'in',  top_n_contact))
+    add_h(f'5.6 Top Call Overall', 2);        add_df_table(top_call_overall(df, top_n_contact))
+    add_h(f'5.6a Top Call Overall Chart', 2); add_fig(plot_top_call_overall(df, top_n_contact))
 
     # ════════════════════════════════════════════════════════════════════
     # 6. LOCATION ANALYSIS
@@ -5753,26 +5755,26 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
 
     add_h('6. Location Analysis')
     add_h('6.1 Location Summary', 2);       add_df_table(location_summary(df))
-    add_h('6.2 Top 10 Frequent Locations', 2); add_df_table(top_locations(df, None, 10))
-    add_h('6.4 Possible Home Locations', 2);   add_df_table(top_locations(df, home_mask, 10))
-    add_h('6.6 Possible Work Locations', 2);   add_df_table(top_locations(df, work_mask, 10))
-    add_h('6.8 Possible Weekend Locations', 2);add_df_table(top_locations(df, weekend_mask, 10))
+    add_h(f'6.2 Top {top_n_location} Frequent Locations', 2); add_df_table(top_locations(df, None, top_n_location))
+    add_h(f'6.4 Possible Home Locations', 2);   add_df_table(top_locations(df, home_mask, top_n_location))
+    add_h(f'6.6 Possible Work Locations', 2);   add_df_table(top_locations(df, work_mask, top_n_location))
+    add_h(f'6.8 Possible Weekend Locations', 2);add_df_table(top_locations(df, weekend_mask, top_n_location))
 
     # ════════════════════════════════════════════════════════════════════
     # 7. SMS CONTACT ANALYSIS
     # ════════════════════════════════════════════════════════════════════
     add_h('7. SMS Contact Analysis')
-    add_h('7.1 Top 5 Sent SMS Contacts', 2);     add_df_table(top_sms_contacts(df, 'out', 5))
-    add_h('7.2 Top 5 Received SMS Contacts', 2); add_df_table(top_sms_contacts(df, 'in',  5))
+    add_h(f'7.1 Top {top_n_contact} Sent SMS Contacts', 2);     add_df_table(top_sms_contacts(df, 'out', top_n_contact))
+    add_h(f'7.2 Top {top_n_contact} Received SMS Contacts', 2); add_df_table(top_sms_contacts(df, 'in',  top_n_contact))
 
     # ════════════════════════════════════════════════════════════════════
     # 8. LAST 10 DAYS ANALYSIS
     # ════════════════════════════════════════════════════════════════════
     add_h('8. Last 10 Days Analysis')
     add_h('8.1 Top Contacts in Last 10 Days (MOC + MTC)', 2)
-    add_df_table(last_n_days_top_contacts(df, 10, 10))
+    add_df_table(last_n_days_top_contacts(df, 10, top_n_contact))
     add_h('8.2 Top Locations in Last 10 Days', 2)
-    add_df_table(last_n_days_top_locations(df, 10, 10))
+    add_df_table(last_n_days_top_locations(df, 10, top_n_location))
 
     # ════════════════════════════════════════════════════════════════════
     # 9. MOVEMENT PATTERN ANALYSIS
@@ -12555,6 +12557,15 @@ def main():
         # Nominatim global enable/disable — _nominatim_geocode() এই flag check করে
         _NOMINATIM_CACHE['__enabled__'] = st.session_state.get('_nominatim_enabled', False)
 
+        with st.expander("Report Settings", expanded=False):
+            _c1, _c2 = st.columns(2)
+            with _c1:
+                st.slider("Top Contacts (Section 5 & 7)", min_value=5, max_value=50, value=10, step=5,
+                    key=f"top_n_contact_{_file_hash}", help="Top N contacts in report")
+            with _c2:
+                st.slider("Top Locations (Section 6)", min_value=5, max_value=30, value=10, step=5,
+                    key=f"top_n_location_{_file_hash}", help="Top N locations in report")
+
         if st.button("▶️ Run Analysis", type="primary", use_container_width=False,
                      key=f"run_btn_{_file_hash}"):
             st.session_state[_run_key] = True
@@ -13630,7 +13641,9 @@ def main():
 
 
 
-        html_content = build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number, target_location, profile_data=profile_data)
+        html_content = build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number, target_location, profile_data=profile_data,
+                                  top_n_contact=st.session_state.get(f"top_n_contact_{_file_hash}", 10),
+                                  top_n_location=st.session_state.get(f"top_n_location_{_file_hash}", 10))
         # Inject Profile Analysis section after <h1>
         if profile_data and any(profile_data.get(k) for k in ['name','nid','passport','docs_found']):
             _prof_html = _profile_html_section(profile_data)
@@ -13642,7 +13655,9 @@ def main():
         html_bytes = html_content.encode('utf-8')
 
         progress.progress(80, text="📝 Generating Word report...")
-        docx_bytes = build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number, target_location, profile_data=profile_data)
+        docx_bytes = build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number, target_location, profile_data=profile_data,
+                                top_n_contact=st.session_state.get(f"top_n_contact_{_file_hash}", 10),
+                                top_n_location=st.session_state.get(f"top_n_location_{_file_hash}", 10))
 
         # ── Movement Map ──
         progress.progress(90, text="🗺️ Generating movement map...")
