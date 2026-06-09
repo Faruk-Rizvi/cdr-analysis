@@ -8218,7 +8218,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
                     'strokeColor': '#ffffff',
                     'align': 'middle',
                 },
-                'smooth': {'type': 'continuous', 'roundness': 0.2},
+                'smooth': {'type': 'dynamic'},
                 'title': edge_title,
                 '_total': grand_total,
                 '_call': call_total,
@@ -8240,10 +8240,10 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             if _pb_exp not in expandable_data: expandable_data[_pb_exp] = {}
             expandable_data[_pb_exp][_subj_exp] = int(_cnt_exp)
 
-    nodes_json      = json.dumps(list(nodes.values()), ensure_ascii=True)
-    edges_json      = json.dumps(edges, ensure_ascii=True)
-    subjects_json   = json.dumps(subjects, ensure_ascii=True)
-    expandable_json = json.dumps(expandable_data, ensure_ascii=True)
+    nodes_json      = json.dumps(list(nodes.values()), ensure_ascii=False)
+    edges_json      = json.dumps(edges, ensure_ascii=False)
+    subjects_json   = json.dumps(subjects, ensure_ascii=False)
+    expandable_json = json.dumps(expandable_data, ensure_ascii=False)
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -8420,8 +8420,8 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
 <script>
 var nodesData = {nodes_json};
 var edgesData = {edges_json};
-var subjectsData = {subjects_json};  // subject phone list
-var expandableData = {expandable_json};
+var subjectsData = {subjects_json};
+var expandableData = {expandable_json};  // subject phone list
 
 // vis.js tooltip: string title → HTML render হয় না, DOM element দিতে হয়
 function _makeTitleEl(html){{
@@ -8455,7 +8455,7 @@ var network = new vis.Network(
   {{
     nodes:{{borderWidth:2,shadow:{{enabled:true,size:4}}}},
     edges:{{
-      smooth:{{type:'continuous',roundness:0.2}},shadow:false
+      smooth:{{type:'dynamic'}},shadow:false
     }},
     physics:{{
       enabled:true,solver:'repulsion',
@@ -8464,9 +8464,8 @@ var network = new vis.Network(
                   nodeDistance:200,damping:.10}}
     }},
     interaction:{{hover:true,tooltipDelay:150,navigationButtons:true,
-                  hideEdgesOnDrag:false,hideNodesOnDrag:false,
-                  keyboard:true,multiselect:true,
-                  dragNodes:true,dragView:true,zoomView:true}},
+                  hideEdgesOnDrag:false,keyboard:true,
+                  multiselect:true,dragNodes:true,dragView:true,zoomView:true}},
     layout:{{improvedLayout:false}}
   }}
 );
@@ -8630,54 +8629,53 @@ function pinAll(){{
   _tk('\uD83D\uDD12 Layout locked');
 }}
 
-// ── Expand Node (i2-style right-click) ───────────────────────────────────
-var _expandedNodes = new Set();
+// ── Expand Node ────────────────────────────────────────────────────────────
+var _expandedNodes=new Set();
 function expandNode(nid){{
-  var numId = String(nid).replace(/[^0-9]/g,'');
-  if(_expandedNodes.has(numId)){{ collapseNode(numId); return; }}
-  var contacts = expandableData[nid] || expandableData['0'+numId.slice(2)] || null;
-  if(!contacts || Object.keys(contacts).length===0){{
-    _tk('\u274C No additional CDR data for this number'); return;
+  var numId=String(nid).replace(/[^0-9]/g,'');
+  if(_expandedNodes.has(numId)){{collapseNode(numId);return;}}
+  var contacts=expandableData[nid]||expandableData['0'+numId.slice(2)]||null;
+  if(!contacts||Object.keys(contacts).length===0){{
+    _tk('\u274C No additional CDR data');return;
   }}
   _expandedNodes.add(numId);
-  var pp = network.getPositions([nid]);
-  var px = (pp[nid]||{{x:0}}).x, py = (pp[nid]||{{y:0}}).y;
-  var newNodes=[], newEdges=[], keys=Object.keys(contacts), total=keys.length;
+  var pp=network.getPositions([nid]);
+  var px=(pp[nid]||{{x:0}}).x,py=(pp[nid]||{{y:0}}).y;
+  var newNodes=[],newEdges=[],keys=Object.keys(contacts),total=keys.length;
   keys.forEach(function(subj,i){{
     var cnt=contacts[subj];
     var eid2='exp_'+numId+'_'+i;
     var angle=(2*Math.PI*i/Math.max(total,1))-Math.PI/2;
     newNodes.push({{
-      id:eid2, label:subj,
-      shape:'dot', size:10,
+      id:eid2,label:subj,shape:'dot',size:10,
       color:{{background:'#fef9c3',border:'#f59e0b'}},
       font:{{size:11,color:'#374151',strokeWidth:2,strokeColor:'#fff'}},
-      x:Math.round(px+160*Math.cos(angle)), y:Math.round(py+160*Math.sin(angle)),
-      fixed:false, group:'expanded', _total:cnt, _expanded_from:numId,
+      x:Math.round(px+160*Math.cos(angle)),y:Math.round(py+160*Math.sin(angle)),
+      fixed:false,group:'expanded',_total:cnt,_expanded_from:numId,
     }});
     newEdges.push({{
-      id:'exp_e_'+numId+'_'+i, from:nid, to:eid2,
+      id:'exp_e_'+numId+'_'+i,from:nid,to:eid2,
       label:String(cnt),
       color:{{color:'#f59e0b',opacity:.7}},
-      dashes:true, width:1,
+      dashes:true,width:1,
       font:{{size:10,color:'#374151',strokeWidth:1,strokeColor:'#fff',align:'middle'}},
-      smooth:{{type:'continuous',roundness:.3}},
+      smooth:{{type:'dynamic'}},
     }});
   }});
   if(newNodes.length){{
-    allNodes.add(newNodes); allEdges.add(newEdges);
+    allNodes.add(newNodes);allEdges.add(newEdges);
     _tk('\uD83C\uDF10 Expanded '+newNodes.length+' connections');
-  }} else _tk('\u274C No new connections to show');
+  }}
 }}
 function collapseNode(numId){{
   _expandedNodes.delete(numId);
   var rn=allNodes.get().filter(n=>n._expanded_from===numId).map(n=>n.id);
   var re=allEdges.get().filter(e=>String(e.id).startsWith('exp_e_'+numId)).map(e=>e.id);
-  allNodes.remove(rn); allEdges.remove(re);
+  allNodes.remove(rn);allEdges.remove(re);
   _tk('\uD83D\uDDD8 Collapsed');
 }}
 
-// dragStart: unfix node before dragging
+// dragStart: unfix node before drag
 network.on('dragStart',function(params){{
   if(params.nodes.length>0){{
     params.nodes.forEach(function(nid){{
@@ -8685,7 +8683,7 @@ network.on('dragStart',function(params){{
     }});
   }}
 }});
-// dragEnd: pin node, stop physics
+// dragEnd: pin node, stop physics drift
 network.on('dragEnd',function(params){{
   if(params.nodes.length>0){{
     if(physicsOn){{
@@ -9323,8 +9321,6 @@ def link_analysis_page():
                 _subj_meta_by_phone[sub] = meta
 
             graph_html = _build_network_html(dfs, top_connections, subjects, subj_edge_count, _subj_meta_by_phone, _contact_names_dict)
-            # Prevent UnicodeEncodeError in Streamlit srcdoc
-            graph_html = graph_html.encode('ascii', errors='xmlcharrefreplace').decode('ascii')
 
         st.components.v1.html(graph_html, height=780, scrolling=False)
 
@@ -12653,6 +12649,27 @@ def main():
         # Nominatim global enable/disable — _nominatim_geocode() এই flag check করে
         _NOMINATIM_CACHE['__enabled__'] = st.session_state.get('_nominatim_enabled', False)
 
+        # ── Report Settings ───────────────────────────────────────────────
+        with st.expander("📊 Report Settings", expanded=False):
+            _rs_c1, _rs_c2 = st.columns(2)
+            with _rs_c1:
+                st.slider(
+                    "📞 Top Contacts (Section 5 & 7)",
+                    min_value=5, max_value=50, value=10, step=5,
+                    key=f"top_n_contact_{_file_hash}",
+                    help="HTML & Word report-এ কতজন top contact দেখাবে"
+                )
+            with _rs_c2:
+                st.slider(
+                    "📍 Top Locations (Section 6)",
+                    min_value=5, max_value=30, value=10, step=5,
+                    key=f"top_n_location_{_file_hash}",
+                    help="HTML & Word report-এ কতটি top location দেখাবে"
+                )
+            _tc = st.session_state.get(f"top_n_contact_{_file_hash}", 10)
+            _tl = st.session_state.get(f"top_n_location_{_file_hash}", 10)
+            st.caption(f"Contact: top **{_tc}** · Location: top **{_tl}**")
+
         if st.button("▶️ Run Analysis", type="primary", use_container_width=False,
                      key=f"run_btn_{_file_hash}"):
             st.session_state[_run_key] = True
@@ -12752,28 +12769,6 @@ def main():
     class _DummyProgress:
         def progress(self, *a, **k): pass
         def empty(self, *a, **k): pass
-
-    # ── Report Settings — before report generation ────────────────────────
-    with st.expander("📊 Report Settings", expanded=False):
-        _rs_c1, _rs_c2 = st.columns(2)
-        with _rs_c1:
-            _top_n_contact = st.slider(
-                "📞 Top Contacts (Section 5 & 7)",
-                min_value=5, max_value=50, value=10, step=5,
-                key=f"top_n_contact_{_file_hash}",
-                help="How many top contacts to show in HTML & Word report"
-            )
-        with _rs_c2:
-            _top_n_location = st.slider(
-                "📍 Top Locations (Section 6)",
-                min_value=5, max_value=30, value=10, step=5,
-                key=f"top_n_location_{_file_hash}",
-                help="How many top locations to show in HTML & Word report"
-            )
-        st.caption(
-            f"Contact: top **{_top_n_contact}** · Location: top **{_top_n_location}** "
-            f"— Change and Re-run Analysis to apply."
-        )
 
     if not _from_cache:
         progress = st.progress(0, text="📥 Reading file...")
