@@ -8966,7 +8966,7 @@ var _autoPinEnabled = true;
 function toggleAutoPin(){{
   _autoPinEnabled = !_autoPinEnabled;
   var btn=document.getElementById('autoPinBtn');
-  btn.textContent = _autoPinEnabled ? '\uD83D\uDCCC AutoPin: ON' : '\uD83D\uDCCC AutoPin: OFF';
+  btn.textContent = _autoPinEnabled ? 'AutoPin: ON' : 'AutoPin: OFF';
   btn.style.background = _autoPinEnabled ? '#0e7490' : '#64748b';
 }}
 
@@ -8977,11 +8977,11 @@ function toggleLasso(){{
   var btn = document.getElementById('lassoBtn');
   if(_lassoOn){{
     network.setOptions({{interaction:{{dragView:false,selectionKeyValue:'none'}}}});
-    btn.textContent = '\uD83D\uDFE3 Lasso: ON';
+    btn.textContent = 'Lasso: ON';
     btn.style.background = '#6d28d9';
   }}else{{
     network.setOptions({{interaction:{{dragView:true,selectionKeyValue:'control'}}}});
-    btn.textContent = '\uD83D\uDFE3 Lasso: OFF';
+    btn.textContent = 'Lasso: OFF';
     btn.style.background = '#7c3aed';
   }}
 }}
