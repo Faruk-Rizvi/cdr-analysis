@@ -211,7 +211,7 @@ def validate_upload(uploaded_file, kind: str = "excel") -> bool:
     """
     Validate an uploaded file's size and magic bytes.
     kind: "excel" | "pdf" | "image" | "any_doc"
-    Excel kind CSV accept ।
+    Excel kind এখন CSV ও accept করে।
     Returns True if OK; calls st.error and returns False if invalid.
     """
     if uploaded_file is None:
@@ -234,7 +234,7 @@ def validate_upload(uploaded_file, kind: str = "excel") -> bool:
 
     ok = True
     if kind == "excel":
-        # Excel (.xlsx/.xls) CSV (.csv) — accept
+        # Excel (.xlsx/.xls) অথবা CSV (.csv) — দুটোই accept
         _is_excel = any(head.startswith(m) for m in _EXCEL_MAGIC)
         _fname    = getattr(uploaded_file, "name", "").lower()
         _is_csv   = _fname.endswith('.csv')
@@ -311,18 +311,16 @@ def _load_password_store():
 _PASSWORD_STORE = _load_password_store()
 
 def _check_login(username: str, password: str) -> bool:
-    _DUMMY_HASH = b"$2b$04$xTCh2B8jdHPHSSdpmYqlHOnyu8IXNWUA5fHR75MZYTvZJttuUo2i6"
     hashed = _PASSWORD_STORE.get(username.strip().lower())
     if not hashed:
-        try: _bcrypt.checkpw(b"_dummy_timing_check_", _DUMMY_HASH)
-        except Exception: pass
+        _bcrypt.checkpw(b"dummy", b"$2b$12$" + b"x"*53)
         return False
     try:
         return _bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
     except Exception:
         return False
 
-import time as _time_mod # session timeout- — login page-
+import time as _time_mod   # session timeout-এর জন্য — login page-এর আগে দরকার
 
 def _login_page():
     st.markdown("""
@@ -395,7 +393,7 @@ def _logout():
     st.rerun()
 
 # ── Auth gate ──────────────────────────────────────────────────────────────
-_SESSION_TIMEOUT = 30 * 60 # 30 (seconds)
+_SESSION_TIMEOUT = 30 * 60   # 30 মিনিট (seconds)
 
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
@@ -404,7 +402,7 @@ if not st.session_state["authenticated"]:
     _login_page()
     st.stop()
 
-# ── Session timeout check ( rerun-) ─────────────────────────────────
+# ── Session timeout check (প্রতি rerun-এ) ─────────────────────────────────
 _now = _time_mod.time()
 
 if "_last_active" not in st.session_state:
@@ -413,7 +411,7 @@ if "_last_active" not in st.session_state:
 _idle_secs = _now - st.session_state["_last_active"]
 
 if _idle_secs > _SESSION_TIMEOUT:
-    # 30 idle — auto logout
+    # 30 মিনিট idle — auto logout
     _user_who_timed = st.session_state.get("current_user", "")
     for key in ["authenticated", "current_user",
                 "_2fa_step", "_2fa_user", "_2fa_otp",
@@ -424,13 +422,13 @@ if _idle_secs > _SESSION_TIMEOUT:
     )
     st.rerun()
 
-# Activity timestamp
+# Activity timestamp আপডেট করো
 st.session_state["_last_active"] = _now
 
-# Timeout message (login page-)
-# _login_page()- set — authenticated=False
-# flow- st.stop() , ।
-# Timeout message login page- _login_page()- handle ।
+# Timeout message দেখাও (login page-এ)
+# এটা _login_page()-এর আগে set হয় — কিন্তু authenticated=False হলে
+# উপরের flow-এ আগেই st.stop() হয়ে যেত, তাই এখানে পৌঁছায় না।
+# Timeout message login page-এ দেখানোর জন্য _login_page()-এ handle করা হয়।
 
 # ─────────────────────────────────────────────
 # CUSTOM CSS — Professional Design
@@ -726,8 +724,8 @@ st.markdown("""
 
 # ─────────────────────────────────────────────
 # BANGLADESH GPS LOOKUP TABLES (single source of truth)
-# movement map + co-location constants ।
-# thana — function- reflect ।
+# movement map + co-location দুই জায়গাতেই এই constants ব্যবহার করা হয়।
+# নতুন thana যোগ করতে শুধু এখানে যোগ করুন — দুই function-এ আপনাআপনি reflect হবে।
 # ─────────────────────────────────────────────
 BD_THANA_GPS = {
     # ════════════════════════════════════════════════════════════════════
@@ -1663,8 +1661,8 @@ def _try_fix_merged_row(row_series, expected_cols):
 def _apply_bts_enrichment(df):
     """
     Teletalk CGI/ECGI + Robi BTS CSV GPS enrichment।
-    load_and_clean()- CSV Excel path- call ।
-    df- in-place modify modified df return ।
+    load_and_clean()-এর CSV ও Excel দুই path-এই call করা হয়।
+    df-কে in-place modify করে এবং modified df return করে।
     """
     import os as _os_e, tempfile as _tf_e, glob as _glob_e
 
@@ -1698,7 +1696,7 @@ def _apply_bts_enrichment(df):
                 _thana_col = next((c for c in _tt.columns if 'thana' in c or 'upazila' in c), None)
 
                 if _cgi_col and _lat_col and _lon_col:
-                    # ── Vectorized lookup build (iterrows ) ──────────────
+                    # ── Vectorized lookup build (iterrows বাদ) ──────────────
                     _tt2 = _tt[[_cgi_col, _lat_col, _lon_col]
                                + ([_addr_col] if _addr_col else [])
                                + ([_thana_col] if _thana_col and _thana_col != 'site id' else [])
@@ -1732,7 +1730,7 @@ def _apply_bts_enrichment(df):
                     ))
 
                     if _tt_map:
-                        # ── Vectorized GPS inject (iterrows ) ─────────────
+                        # ── Vectorized GPS inject (iterrows বাদ) ─────────────
                         _cid_series = df['cell_id'].astype(str).str.strip()
                         _cid_series = _cid_series.where(
                             ~(_cid_series.str.endswith('.0') & _cid_series.str[:-2].str.isdigit()),
@@ -1749,7 +1747,7 @@ def _apply_bts_enrichment(df):
                             )
                             if 'address' not in df.columns:
                                 df['address'] = ''
-                            # Address: blank row- CSV address
+                            # Address: blank row-এ CSV address দাও
                             _blank_mask = (
                                 df['address'].astype(str).str.strip().isin(
                                     ['','nan','None','NaN']) | ~df['address'].apply(_is_valid_address)
@@ -1771,8 +1769,8 @@ def _apply_bts_enrichment(df):
 
 def load_and_clean(file_bytes):
     # ── CSV format detect ──────────────────────────────────────────────────
-    # Excel magic bytes: 50 4B (xlsx) D0 CF (xls)
-    # CSV directly read , Excel path skip
+    # Excel magic bytes: 50 4B (xlsx) বা D0 CF (xls)
+    # CSV হলে directly read করো, Excel path skip করো
     _magic = file_bytes[:4]
     _is_csv = not (_magic[:2] in (b'PK', b'\xd0\xcf') or _magic[:4] == b'\xd0\xcf\x11\xe0')
 
@@ -1792,7 +1790,7 @@ def load_and_clean(file_bytes):
             except Exception:
                 continue
         if _csv_df is None or _csv_df.empty:
-            raise ValueError("CSV file — encoding empty file।")
+            raise ValueError("CSV file পড়া যাচ্ছে না — encoding সমস্যা বা empty file।")
 
         total_raw = len(_csv_df)
         df = _csv_df.copy()
@@ -2025,12 +2023,12 @@ def load_and_clean(file_bytes):
     df['is_sms_out']  = ut.isin(SMS_OUT_TYPES)
     df['is_sms_in']   = ut.isin(SMS_IN_TYPES)
 
-    # ── Teletalk: CGI/ECGI Address + GPS Enrichment ──────────────────────
-    # Teletalk CDR- Cell ID full CGI/ECGI (e.g. 470040122737532)।
-    # Address blank ।
-    # Teletalk.csv (uploads CELL_DIR-) CGI/ECGI → Full Address,
-    # Latitude, Longitude, District Address GPS ।
-    # operator- CDR- block ।
+    # ── Teletalk: CGI/ECGI দিয়ে Address + GPS Enrichment ──────────────────────
+    # Teletalk CDR-এ Cell ID কলামে full CGI/ECGI থাকে (e.g. 470040122737532)।
+    # Address কলাম সাধারণত blank থাকে।
+    # Teletalk.csv (uploads ফোল্ডারে বা CELL_DIR-এ) থেকে CGI/ECGI → Full Address,
+    # Latitude, Longitude, District মিলিয়ে ফাঁকা Address এবং GPS পূরণ করা হয়।
+    # অন্য operator-এর CDR-এ এই block কাজ করে না।
     try:
         _is_teletalk = False
         if 'operator' in df.columns:
@@ -2043,7 +2041,7 @@ def load_and_clean(file_bytes):
             _CELL_DIR_TT     = _os_tt.path.join(_tf_tt.gettempdir(), 'celltower_cache')
             _TELETALK_FNAME  = 'Teletalk.csv'
 
-            # CSV : uploads → celltower_cache
+            # CSV খোঁজার অগ্রাধিকার: uploads ফোল্ডার → celltower_cache
             _tt_csv_path = None
             for _d in [_UPLOADS_DIR_TT, _CELL_DIR_TT]:
                 _p = _os_tt.path.join(_d, _TELETALK_FNAME)
@@ -2052,7 +2050,7 @@ def load_and_clean(file_bytes):
                     break
 
             if _tt_csv_path:
-                # CGI/ECGI → (lat, lon, full_address, district, thana) lookup map
+                # CGI/ECGI → (lat, lon, full_address, district, thana) lookup map বানাই
                 _tt_csv = pd.read_csv(_tt_csv_path, dtype=str, encoding='utf-8',
                                       low_memory=False, on_bad_lines='skip')
                 _tt_csv.columns = [c.strip().lower() for c in _tt_csv.columns]
@@ -2084,11 +2082,11 @@ def load_and_clean(file_bytes):
                                 continue
                             _addr_v = str(_r[_addr_col]).strip() if _addr_col else ''
                             if _addr_v in ('nan', 'None'): _addr_v = ''
-                            # District: full address comma-part
+                            # District: full address শেষ comma-part
                             _dist_v = ''
                             if _addr_v and ',' in _addr_v:
                                 _dist_v = _addr_v.split(',')[-1].strip()
-                            # Thana: thana/upazila column — site id (site code)
+                            # Thana: thana/upazila column — site id বাদ (site code)
                             _thana_v = ''
                             if _thana_col and _thana_col != 'site id':
                                 _thana_v = str(_r[_thana_col]).strip()
@@ -2098,7 +2096,7 @@ def load_and_clean(file_bytes):
                             continue
 
                     if _tt_map:
-                        # CDR- Cell ID = CGI/ECGI → Address GPS
+                        # CDR-এর Cell ID = CGI/ECGI → মিলিয়ে Address ও GPS দাও
                         _new_addr    = df['address'].copy()   if 'address'      in df.columns else pd.Series([''] * len(df), dtype=str)
                         _new_lat     = pd.Series([None] * len(df), dtype=object)
                         _new_lon     = pd.Series([None] * len(df), dtype=object)
@@ -2109,7 +2107,7 @@ def load_and_clean(file_bytes):
 
                         for _idx, _row in df.iterrows():
                             _cid_raw = str(_row.get('cell_id', '')).strip()
-                            # float suffix (e.g. "470040122737532.0")
+                            # float suffix পরিষ্কার (e.g. "470040122737532.0")
                             if _cid_raw.endswith('.0') and _cid_raw[:-2].isdigit():
                                 _cid_raw = _cid_raw[:-2]
 
@@ -2118,8 +2116,8 @@ def load_and_clean(file_bytes):
 
                             _t_lat, _t_lon, _t_addr, _t_dist, _t_thana = _tt_map[_cid_raw]
 
-                            # Address: CDR- blank invalid CSV- Full Address
-                            # invalid = '', 'nan', '-', ',', '-,-', ',,', '- -'
+                            # Address: CDR-এ blank বা invalid থাকলে CSV-এর Full Address দাও
+                            # invalid = '', 'nan', '-', ',', '-,-', ',,', '- -' ইত্যাদি
                             _cur_addr = str(_row.get('address', '') or '').strip()
                             _addr_is_blank = (
                                 _cur_addr in ('', 'nan', 'None', 'NaN')
@@ -2129,7 +2127,7 @@ def load_and_clean(file_bytes):
                             if _addr_is_blank:
                                 _new_addr.at[_idx] = _t_addr if _t_addr else _cur_addr
 
-                            # GPS (exact CSV match)
+                            # GPS সবসময় দাও (exact CSV match)
                             _new_lat.at[_idx]    = _t_lat
                             _new_lon.at[_idx]    = _t_lon
                             _new_method.at[_idx] = 'cell_exact'
@@ -2137,7 +2135,7 @@ def load_and_clean(file_bytes):
                             _new_thana.at[_idx]  = _t_thana
                             _new_label.at[_idx]  = _t_addr  # CSV Full Address as label
 
-                        # DataFrame-
+                        # DataFrame-এ যোগ করি
                         if 'address' not in df.columns:
                             df['address'] = ''
                         df['address']       = _new_addr
@@ -2152,9 +2150,9 @@ def load_and_clean(file_bytes):
     # ── End Teletalk Enrichment ────────────────────────────────────────────────
 
     # ── Robi BTS CSV Enrichment ───────────────────────────────────────────────
-    # Robi 4G: ENODEBID//100 = CDR LAC_ID, Cell_ID digit = CSV CELL_ID
+    # Robi 4G: ENODEBID//100 = CDR LAC_ID, Cell_ID শেষ ২ digit = CSV CELL_ID
     # Robi 2G: CSV LAC = CDR LAC_ID, CSV CELL_ID = CDR Cell_ID (direct match)
-    # CSV : Robi_4G*.csv, Robi_2G*.csv (uploads celltower_cache)
+    # CSV ফাইল নাম: Robi_4G*.csv, Robi_2G*.csv (uploads বা celltower_cache)
     try:
         _is_robi = False
         if 'operator' in df.columns:
@@ -2168,7 +2166,7 @@ def load_and_clean(file_bytes):
             _CELL_DIR_R    = _os_r.path.join(_tf_r.gettempdir(), 'celltower_cache')
 
             def _find_robi_csv(tech_key):
-                """Robi_4G*.csv Robi_2G*.csv ।"""
+                """Robi_4G*.csv বা Robi_2G*.csv খোঁজো।"""
                 for _d in [_UPLOADS_DIR_R, _CELL_DIR_R]:
                     hits = _glob_r.glob(_os_r.path.join(_d, f'Robi_{tech_key}*.csv'))
                     hits += _glob_r.glob(_os_r.path.join(_d, f'robi_{tech_key.lower()}*.csv'))
@@ -2177,7 +2175,7 @@ def load_and_clean(file_bytes):
                         return hits[0]
                 return None
 
-            # ── Lookup map ──────────────────────────────────────────────
+            # ── Lookup map তৈরি ──────────────────────────────────────────────
             _robi_map = {}  # (lac_id, sector_cell_id) → (lat, lon, addr, dist, thana)
 
             # 4G CSV
@@ -2265,7 +2263,7 @@ def load_and_clean(file_bytes):
                 except Exception:
                     logger.debug('Suppressed exception', exc_info=True)
 
-            # ── CDR rows- GPS Address (Vectorized) ──────────
+            # ── CDR rows-এ GPS ও Address ইনজেক্ট করো (Vectorized) ──────────
             if _robi_map:
                 # cell_id normalize: '14025.0' → '14025'
                 _cid_s = df['cell_id'].astype(str).str.strip()
@@ -2278,7 +2276,7 @@ def load_and_clean(file_bytes):
                 _ctype_s   = df['cell_type'].astype(str).str.upper() if 'cell_type' in df.columns \
                              else pd.Series(['2G']*len(df))
 
-                # 4G: sector = digit
+                # 4G: sector = শেষ ২ digit
                 _sector_s = _cid_s.apply(
                     lambda s: int(s[-2:]) if len(s) >= 2 and s.isdigit() else None
                 )
@@ -2575,7 +2573,7 @@ def top_locations(df, mask=None, n=10):
     Top N locations with columns:
     CDR Location (BTS Address) | Cell Tower Location (CSV) | GPS Coordinates | Count
     Priority: CSV exact GPS → BD_COORDS text-based fallback
-    Teletalk: address-less rows cell_csv_label include ।
+    Teletalk: address-less rows যাদের cell_csv_label আছে সেগুলোও include করা হয়।
     """
     if 'address' not in df.columns and 'cell_csv_label' not in df.columns:
         return pd.DataFrame()
@@ -2587,7 +2585,7 @@ def top_locations(df, mask=None, n=10):
     else:
         valid_rows = pd.DataFrame()
 
-    # ── Teletalk fallback: address blank/invalid cell_csv_label ──
+    # ── Teletalk fallback: address blank/invalid কিন্তু cell_csv_label আছে ──
     if 'cell_csv_label' in data.columns and 'loc_method' in data.columns:
         enriched_cands = data[data['loc_method'] == 'cell_exact'].copy()
         if 'address' in data.columns:
@@ -2651,12 +2649,12 @@ def top_locations(df, mask=None, n=10):
 
 def location_summary(df):
     """Location summary with GPS Coordinates (lat, lon combined) from CSV first, text fallback.
-    Teletalk: address blank/invalid cell_csv_label address ।
+    Teletalk: address blank/invalid হলে cell_csv_label দিয়ে address পূরণ করা হয়।
     """
     if 'address' not in df.columns and 'cell_csv_label' not in df.columns:
         return pd.DataFrame()
 
-    # Teletalk fallback: address invalid rows- cell_csv_label (working copy)
+    # Teletalk fallback: address invalid rows-এ cell_csv_label বসাই (working copy)
     _df = df.copy()
     if 'cell_csv_label' in _df.columns and 'loc_method' in _df.columns:
         _mask_invalid = (
@@ -3006,8 +3004,8 @@ def _is_valid_address(addr):
 
 def _best_address_series(sub):
     """
-    DataFrame subset best address Series ।
-    CDR address valid , cell_csv_label (Teletalk CSV) ।
+    DataFrame subset থেকে best address Series বের করে।
+    CDR address valid হলে সেটা নেয়, না হলে cell_csv_label (Teletalk CSV) নেয়।
     """
     if 'address' not in sub.columns and 'cell_csv_label' not in sub.columns:
         return pd.Series(dtype=str)
@@ -3015,7 +3013,7 @@ def _best_address_series(sub):
         addr = sub['address'].copy().astype(str)
     else:
         addr = pd.Series([''] * len(sub), index=sub.index, dtype=str)
-    # Teletalk fallback: address invalid cell_csv_label
+    # Teletalk fallback: address invalid হলে cell_csv_label ব্যবহার করি
     if 'cell_csv_label' in sub.columns:
         invalid_mask = ~addr.apply(_is_valid_address)
         csv_lbl = sub['cell_csv_label'].fillna('').astype(str)
@@ -4009,7 +4007,7 @@ def movement_pattern_analysis(df):
     work_dist = None  # Not used in new logic
 
     # ── Home coord = Most Frequent Location GPS ──────────────────────────
-    # records BTS- GPS home ।
+    # সবচেয়ে বেশি records যে BTS-এ সেটার GPS home হিসেবে ব্যবহার করা হবে।
     # Priority: CSV exact GPS (most frequent) → text-based BD_COORDS → fallback
     home_coord = None
     home_label = None
@@ -4278,7 +4276,7 @@ def movement_pattern_analysis(df):
     # ── Top 3 Frequent Locations — Home + 2 others ────────────────────────
     top_locations = []
     try:
-        # df_loc = cleaned location rows — address + cell_lat/cell_lon
+        # df_loc = cleaned location rows — address + cell_lat/cell_lon সব আছে
         _tl_src     = df_loc.copy()
         _has_cell_tl = ('cell_lat' in _tl_src.columns and 'cell_lon' in _tl_src.columns)
         _has_loc_tl  = 'loc_method' in _tl_src.columns
@@ -4763,7 +4761,7 @@ def _imei_change_html(df):
 def mobile_no_change_analysis(df):
     """
     Track Party A (mobile number) changes over time.
-    IMEI CDR- — track ।
+    IMEI CDR-এ একাধিক নম্বর থাকতে পারে — কখন কোন নম্বর ব্যবহার হয়েছে track করে।
     Returns list of period dicts or None if no change detected.
     """
     if 'party_a' not in df.columns and '_pa' not in df.columns:
@@ -4785,7 +4783,7 @@ def mobile_no_change_analysis(df):
     df_s = df_s.sort_values('start').reset_index(drop=True)
 
     if df_s.empty or df_s['_pa_norm'].nunique() <= 1:
-        return None # number — change
+        return None  # একটিই number — কোনো change নেই
 
     periods = []
     current_num  = df_s.iloc[0]['_pa_norm']
@@ -5008,10 +5006,10 @@ def _target_number_html(df, target_number, sec_num=10):
 
 def burst_analysis(df, window_min=60, min_calls=15, daily_mult=4, max_show=10):
     """
-    CDR burst detection — method :
-      1. Rolling Window: T→T+60min ≥15 call → 🔴 Rolling
-      2. Daily Anomaly: total > daily_avg × 4 → 📊 Daily
-       → ⚡ Both
+    CDR burst detection — দুটো method একসাথে:
+      1. Rolling Window: T→T+60min এ ≥15 call → 🔴 Rolling
+      2. Daily Anomaly: দিনের total > daily_avg × 4 → 📊 Daily
+      উভয় → ⚡ Both
     Returns list of event dicts or empty list (if no burst found).
     """
     if 'start' not in df.columns or df['start'].isna().all():
@@ -5103,15 +5101,15 @@ def burst_analysis(df, window_min=60, min_calls=15, daily_mult=4, max_show=10):
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FOREIGN VOICE CALL DETECTION — Updated Logic
-# Voice Call (MOC/MTC) — SMS ।
-# Raw E.164 format (+ 00 prefix ) ।
-# Middle East, Pakistan, Afghanistan ।
+# শুধুমাত্র Voice Call (MOC/MTC) — SMS বাদ।
+# Raw E.164 format (+ বা 00 prefix ছাড়া) সাপোর্ট।
+# Middle East, Pakistan, Afghanistan সহ সকল দেশ।
 # ─────────────────────────────────────────────────────────────────────────────
 
 _VOICE_TYPES_INTL = {'MOC', 'MTC'}
 
 # (country_name, prefix_digits, min_total_len, max_total_len)
-# -digit prefix — greedy match collision
+# ৩-digit prefix আগে — greedy match এর জন্য collision এড়ানো
 _FOREIGN_PHONE_TABLE = [
     # ── Middle East (Gulf) ──────────────────────────────
     ('🇸🇦 Saudi Arabia',   '966', 12, 12),
@@ -5124,7 +5122,7 @@ _FOREIGN_PHONE_TABLE = [
     # ── Middle East (Levant / Mashreq) ──────────────────
     ('🇯🇴 Jordan',         '962', 12, 12),
     ('🇸🇾 Syria',          '963', 12, 12),
-    ('🇱🇧 Lebanon', '961', 11, 11), # mobile only (70x,71x,76x,78x,79x,81x) — landline (10 digit)
+    ('🇱🇧 Lebanon',        '961', 11, 11),  # mobile only (70x,71x,76x,78x,79x,81x) — landline (10 digit) বাদ
     ('🇮🇶 Iraq',           '964', 12, 13),
     ('🇵🇸 Palestine',      '970', 12, 12),
     ('🇮🇱 Israel',         '972', 12, 12),
@@ -5145,7 +5143,7 @@ _FOREIGN_PHONE_TABLE = [
     ('🇱🇰 Sri Lanka',      '94',  11, 11),
     ('🇳🇵 Nepal',          '977', 12, 12),
     ('🇧🇹 Bhutan',         '975', 11, 11),
-    ('🇲🇲 Myanmar', '95', 11, 12), # mobile only — landline (9-10 digit)
+    ('🇲🇲 Myanmar',        '95',  11, 12),  # mobile only — landline (9-10 digit) বাদ
     # ── Europe ──────────────────────────────────────────
     ('🇹🇷 Turkey',         '90',  12, 12),
     ('🇬🇧 United Kingdom', '44',  12, 12),
@@ -5164,14 +5162,14 @@ _FOREIGN_PHONE_TABLE = [
     ('🇸🇬 Singapore',      '65',  10, 10),
     ('🇹🇭 Thailand',       '66',  11, 11),
     ('🇵🇭 Philippines',    '63',  11, 12),
-    # ── Americas / Russia (1-digit — ) ─────────
+    # ── Americas / Russia (1-digit — সবার শেষে) ─────────
     ('🇺🇸 USA/Canada',     '1',   11, 11),
     ('🇷🇺 Russia',         '7',   11, 11),
 ]
 
 
 def _is_bd_number(digits: str) -> bool:
-    """Bangladesh mobile PSTN number ।"""
+    """Bangladesh mobile ও PSTN number চেনা।"""
     if digits.startswith('880'):
         return True
     # local format: 01XXXXXXXXX (11 digits)
@@ -5182,38 +5180,38 @@ def _is_bd_number(digits: str) -> bool:
 
 def _detect_foreign_voice_country(party_b_raw: str, usage_type_raw: str):
     """
-    Voice call (MOC/MTC) foreign country name return ।
-    SMS — None (check )।
-    Raw E.164 format (447..., 917..., 1347...) ।
+    Voice call (MOC/MTC) হলে foreign country name return করে।
+    SMS হলে — None (check করা হয় না)।
+    Raw E.164 format (447..., 917..., 1347...) সাপোর্ট করে।
 
-    Returns: str (country name with flag) None
+    Returns: str (country name with flag) অথবা None
     """
-    # ── Voice call ──────────────────────────────────
+    # ── শুধু Voice call ──────────────────────────────────
     if str(usage_type_raw).strip().upper() not in _VOICE_TYPES_INTL:
         return None
 
     digits = re.sub(r'[^0-9]', '', str(party_b_raw).strip())
 
-    # ── , clearly invalid ───────────────
+    # ── খুব ছোট, খালি বা clearly invalid ───────────────
     if len(digits) < 7:
         return None
 
-    # ── Bangladesh number ────────────────────────────
+    # ── Bangladesh number বাদ ────────────────────────────
     if _is_bd_number(digits):
         return None
 
     # ── '00' prefix normalize: 0091XXX → 91XXX ──────────
-    # '0088' = BD,
+    # '0088' = BD, বাদ দেওয়া হয়েছে
     if digits.startswith('00') and not digits.startswith('0088'):
         digits = digits[2:]
 
-    # ── Operator routing / SMSC prefix ───────────────
+    # ── Operator routing / SMSC prefix বাদ ───────────────
     # 475... = GP SMSC prefix, numeric only
     if digits.startswith('475') and len(digits) > 14:
         return None
 
     # ── Country prefix match ─────────────────────────────
-    # -digit , -digit, -digit
+    # ৩-digit আগে, তারপর ২-digit, তারপর ১-digit
     for country, prefix, min_len, max_len in _FOREIGN_PHONE_TABLE:
         if digits.startswith(prefix) and min_len <= len(digits) <= max_len:
             return country
@@ -5223,16 +5221,16 @@ def _detect_foreign_voice_country(party_b_raw: str, usage_type_raw: str):
 
 def international_call_analysis(df):
     """
-    Foreign VOICE CALL detection — MOC/MTC।
-    SMS (promotional/OTP false positive )।
-    Raw E.164 format ।
+    Foreign VOICE CALL detection — শুধু MOC/MTC।
+    SMS বাদ (promotional/OTP false positive এড়ানো)।
+    Raw E.164 format সাপোর্ট।
     Returns dict with summary + per-country table, or None if no intl found.
     """
     # ── Column lookup ────────────────────────────────────────────────────────
-    # party_b_norm — last-10-digit truncate foreign prefix ।
-    # party_b_clean — Party B Original (routing/callback number)
-    # overwrite , Indian/foreign ।
-    # party_b (raw) — CDR- actual dialed/received number।
+    # party_b_norm বাদ — last-10-digit truncate করে foreign prefix হারায়।
+    # party_b_clean বাদ — Party B Original (routing/callback number) দিয়ে
+    #   overwrite হয়, তাই Indian/foreign নম্বর হারিয়ে যায়।
+    # party_b (raw) সবার আগে — CDR-এর actual dialed/received number।
 
     raw_pb_col = next((c for c in ['party_b', 'Party B'] if c in df.columns), None)
     dis_pb_col = next((c for c in ['party_b_clean', 'party_b', 'Party B'] if c in df.columns), None)
@@ -5243,13 +5241,13 @@ def international_call_analysis(df):
 
     tmp = df[df['start'].notna()].copy()
 
-    # Detection: raw party_b (original dialed number)
-    # Display: party_b_clean (formatted, but raw raw)
+    # Detection: raw party_b দিয়ে (original dialed number)
+    # Display: party_b_clean দিয়ে (formatted, but raw হলে raw)
     tmp['_country'] = tmp.apply(
         lambda r: _detect_foreign_voice_country(r[raw_pb_col], r[ut_col]),
         axis=1
     )
-    # Display column — groupby- raw number
+    # Display column — groupby-তে raw number দেখাবে
     tmp['_pb_display'] = tmp[raw_pb_col].astype(str).str.strip()
 
     intl = tmp[tmp['_country'].notna()].copy()
@@ -5362,7 +5360,7 @@ def _intl_html(intl, sec_num=11):
     </table>"""
 
 
-def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None, target_location=None, profile_data=None, top_n_contact=10, top_n_location=10):
+def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None, target_location=None, profile_data=None):
     import re as _re_html
     def _clean_id(series):
         result = []
@@ -5379,13 +5377,13 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
     work_mask    = (df['start'].dt.hour.astype(int)>=8)&(df['start'].dt.hour.astype(int)<18)       if 'start' in df.columns else None
     weekend_mask = df['start'].dt.dayofweek.astype(int).isin([4,5])                               if 'start' in df.columns else None
 
-    # ── Pre-compute optional sections (data ) ──────────────
+    # ── Pre-compute optional sections (data থাকলেই দেখাবে) ──────────────
     _burst_data   = burst_analysis(df)
     _intl_data    = international_call_analysis(df)
     _has_burst    = bool(_burst_data)
     _has_intl     = bool(_intl_data)
 
-    # Dynamic section counter — conditional sections skip gap
+    # Dynamic section counter — conditional sections skip করলে gap হবে না
     _s  = [9]  # sections 1-9 fixed
     def _sec():
         _s[0] += 1
@@ -5427,27 +5425,27 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
     <h3>4.4 Monthly Call Count</h3>{df_to_html(monthly_call_count(df))}
     <h2>5. Contact Analysis</h2>
     <h3>5.1 Contact Summary</h3>{df_to_html(contact_summary(df))}
-    <h3>5.2 Top {top_n_contact} Frequent Outgoing</h3>{df_to_html(top_contacts(df,'out',top_n_contact))}
-    <h3>5.3 Top {top_n_contact} Frequent Incoming</h3>{df_to_html(top_contacts(df,'in',top_n_contact))}
-    <h3>5.4 Top {top_n_contact} Lengthy Outgoing</h3>{df_to_html(top_lengthy(df,'out',top_n_contact))}
-    <h3>5.5 Top {top_n_contact} Lengthy Incoming</h3>{df_to_html(top_lengthy(df,'in',top_n_contact))}
-    <h3>5.6 Top Call Overall</h3>{df_to_html(top_call_overall(df,top_n_contact))}
-    <h3>5.6a Top Call Overall Chart</h3>{fig_to_html_img(plot_top_call_overall(df,top_n_contact))}
+    <h3>5.2 Top 10 Frequent Outgoing</h3>{df_to_html(top_contacts(df,'out',10))}
+    <h3>5.3 Top 10 Frequent Incoming</h3>{df_to_html(top_contacts(df,'in',10))}
+    <h3>5.4 Top 10 Lengthy Outgoing</h3>{df_to_html(top_lengthy(df,'out',10))}
+    <h3>5.5 Top 10 Lengthy Incoming</h3>{df_to_html(top_lengthy(df,'in',10))}
+    <h3>5.6 Top Call Overall</h3>{df_to_html(top_call_overall(df,10))}
+    <h3>5.6a Top Call Overall Chart</h3>{fig_to_html_img(plot_top_call_overall(df,10))}
     <h2>6. Location Analysis</h2>
     {_loc_accuracy_html(df)}
     <h3>6.1 Location Summary</h3>{df_to_html(location_summary(df))}
-    <h3>6.2 Top {top_n_location} Frequent Locations</h3>{df_to_html(top_locations(df,None,top_n_location))}
-    <h3>6.4 Possible Home Locations</h3>{df_to_html(top_locations(df,home_mask,top_n_location))}
-    <h3>6.6 Possible Work Locations</h3>{df_to_html(top_locations(df,work_mask,top_n_location))}
-    <h3>6.8 Possible Weekend Locations</h3>{df_to_html(top_locations(df,weekend_mask,top_n_location))}
+    <h3>6.2 Top 10 Frequent Locations</h3>{df_to_html(top_locations(df,None,10))}
+    <h3>6.4 Possible Home Locations</h3>{df_to_html(top_locations(df,home_mask,10))}
+    <h3>6.6 Possible Work Locations</h3>{df_to_html(top_locations(df,work_mask,10))}
+    <h3>6.8 Possible Weekend Locations</h3>{df_to_html(top_locations(df,weekend_mask,10))}
 
     <h2>7. SMS Contact Analysis</h2>
-    <h3>7.1 Top {top_n_contact} Sent SMS Contacts</h3>{df_to_html(top_sms_contacts(df,'out',top_n_contact))}
-    <h3>7.2 Top {top_n_contact} Received SMS Contacts</h3>{df_to_html(top_sms_contacts(df,'in',top_n_contact))}
+    <h3>7.1 Top 5 Sent SMS Contacts</h3>{df_to_html(top_sms_contacts(df,'out',5))}
+    <h3>7.2 Top 5 Received SMS Contacts</h3>{df_to_html(top_sms_contacts(df,'in',5))}
 
     <h2>8. Last 10 Days Analysis</h2>
-    <h3>8.1 Top Contacts in Last 10 Days (MOC + MTC)</h3>{df_to_html(last_n_days_top_contacts(df, 10, top_n_contact))}
-    <h3>8.2 Top Locations in Last 10 Days</h3>{df_to_html(last_n_days_top_locations(df, 10, top_n_location))}
+    <h3>8.1 Top Contacts in Last 10 Days (MOC + MTC)</h3>{df_to_html(last_n_days_top_contacts(df, 10, 10))}
+    <h3>8.2 Top Locations in Last 10 Days</h3>{df_to_html(last_n_days_top_locations(df, 10, 10))}
 
     <h2>9. Movement Pattern Analysis</h2>
     <p>Analysis of movement outside estimated home/work district and network disconnection periods.</p>
@@ -5471,7 +5469,7 @@ def build_html(df, phone, operator, date_range, total_raw, anomaly_count, target
 # ─────────────────────────────────────────────
 # WORD (DOCX) GENERATOR
 # ─────────────────────────────────────────────
-def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None, target_location=None, profile_data=None, top_n_contact=10, top_n_location=10):
+def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number=None, target_location=None, profile_data=None):
 
     doc = _DocxDocument()
 
@@ -5624,27 +5622,27 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
             return f" [{sl[0][1]}]" if sl else ''
         add_h('Profile Analysis')
         _pf_rows = [
-            ('', profile_data.get('name','') + _src_lbl('name')),
-            ('', profile_data.get('father','') + _src_lbl('father')),
-            ('', profile_data.get('mother','') + _src_lbl('mother')),
-            ('/', profile_data.get('spouse','') + _src_lbl('spouse')),
-            ('', profile_data.get('dob','') + _src_lbl('dob')),
-            ('', profile_data.get('gender','') + _src_lbl('gender')),
-            ('', profile_data.get('profession','') + _src_lbl('profession')),
-            (' ', profile_data.get('blood_group','') + _src_lbl('blood_group')),
-            ('', profile_data.get('mobile','') + _src_lbl('mobile')),
+            ('নাম',           profile_data.get('name','')             + _src_lbl('name')),
+            ('পিতা',          profile_data.get('father','')           + _src_lbl('father')),
+            ('মাতা',          profile_data.get('mother','')           + _src_lbl('mother')),
+            ('স্ত্রী/স্বামী', profile_data.get('spouse','')           + _src_lbl('spouse')),
+            ('জন্মতারিখ',    profile_data.get('dob','')              + _src_lbl('dob')),
+            ('লিঙ্গ',         profile_data.get('gender','')           + _src_lbl('gender')),
+            ('পেশা',          profile_data.get('profession','')       + _src_lbl('profession')),
+            ('রক্তের গ্রুপ',  profile_data.get('blood_group','')      + _src_lbl('blood_group')),
+            ('মোবাইল',        profile_data.get('mobile','')           + _src_lbl('mobile')),
             ('NID',           profile_data.get('nid','')              + _src_lbl('nid')),
             ('Passport',      profile_data.get('passport','')         + _src_lbl('passport')),
             ('TIN',           profile_data.get('tin','')              + _src_lbl('tin')),
-            (' ', profile_data.get('license_no','') + _src_lbl('license_no')),
-            ('', profile_data.get('vehicle_reg','') + _src_lbl('vehicle_reg')),
-            (' ', profile_data.get('address_permanent','')+ _src_lbl('address_permanent')),
-            (' ', profile_data.get('address_present','') + _src_lbl('address_present')),
-            ('', ', '.join(profile_data.get('docs_found', []))),
+            ('ড্রাইভিং লাইসেন্স', profile_data.get('license_no','') + _src_lbl('license_no')),
+            ('গাড়ি',          profile_data.get('vehicle_reg','')      + _src_lbl('vehicle_reg')),
+            ('স্থায়ী ঠিকানা', profile_data.get('address_permanent','')+ _src_lbl('address_permanent')),
+            ('বর্তমান ঠিকানা', profile_data.get('address_present','') + _src_lbl('address_present')),
+            ('নথি', ', '.join(profile_data.get('docs_found', []))),
         ]
         add_kv_table([(k, v) for k, v in _pf_rows if v and v.strip()])
         if profile_data.get('mismatches'):
-            add_h(' (Mismatch)', 2)
+            add_h('তথ্য অসঙ্গতি (Mismatch)', 2)
             for _mm in profile_data['mismatches']:
                 _mp  = doc.add_paragraph(style='List Bullet')
                 _r2  = _mp.add_run(_mm)
@@ -5708,7 +5706,7 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
         p.runs[0].font.name = FONT; p.runs[0].font.size = _DocxPt(10)
         add_df_table(pd.DataFrame(imei_periods))
 
-    # Mobile Number Change (IMEI CDR- Party A- )
+    # Mobile Number Change (IMEI CDR-এ Party A-তে একাধিক নম্বর)
     mob_periods = mobile_no_change_analysis(df)
     if mob_periods:
         add_h('2c. Mobile Number Change Analysis', 2)
@@ -5739,12 +5737,12 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
     # ════════════════════════════════════════════════════════════════════
     add_h('5. Contact Analysis')
     add_h('5.1 Contact Summary', 2);        add_df_table(contact_summary(df))
-    add_h(f'5.2 Top {top_n_contact} Frequent Outgoing', 2);add_df_table(top_contacts(df, 'out', top_n_contact))
-    add_h(f'5.3 Top {top_n_contact} Frequent Incoming', 2);add_df_table(top_contacts(df, 'in',  top_n_contact))
-    add_h(f'5.4 Top {top_n_contact} Lengthy Outgoing', 2); add_df_table(top_lengthy(df, 'out', top_n_contact))
-    add_h(f'5.5 Top {top_n_contact} Lengthy Incoming', 2); add_df_table(top_lengthy(df, 'in',  top_n_contact))
-    add_h(f'5.6 Top Call Overall', 2);        add_df_table(top_call_overall(df, top_n_contact))
-    add_h(f'5.6a Top Call Overall Chart', 2); add_fig(plot_top_call_overall(df, top_n_contact))
+    add_h('5.2 Top 10 Frequent Outgoing', 2);add_df_table(top_contacts(df, 'out', 10))
+    add_h('5.3 Top 10 Frequent Incoming', 2);add_df_table(top_contacts(df, 'in',  10))
+    add_h('5.4 Top 10 Lengthy Outgoing', 2); add_df_table(top_lengthy(df, 'out', 10))
+    add_h('5.5 Top 10 Lengthy Incoming', 2); add_df_table(top_lengthy(df, 'in',  10))
+    add_h('5.6 Top Call Overall', 2);        add_df_table(top_call_overall(df, 10))
+    add_h('5.6a Top Call Overall Chart', 2); add_fig(plot_top_call_overall(df, 10))
 
     # ════════════════════════════════════════════════════════════════════
     # 6. LOCATION ANALYSIS
@@ -5755,26 +5753,26 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
 
     add_h('6. Location Analysis')
     add_h('6.1 Location Summary', 2);       add_df_table(location_summary(df))
-    add_h(f'6.2 Top {top_n_location} Frequent Locations', 2); add_df_table(top_locations(df, None, top_n_location))
-    add_h(f'6.4 Possible Home Locations', 2);   add_df_table(top_locations(df, home_mask, top_n_location))
-    add_h(f'6.6 Possible Work Locations', 2);   add_df_table(top_locations(df, work_mask, top_n_location))
-    add_h(f'6.8 Possible Weekend Locations', 2);add_df_table(top_locations(df, weekend_mask, top_n_location))
+    add_h('6.2 Top 10 Frequent Locations', 2); add_df_table(top_locations(df, None, 10))
+    add_h('6.4 Possible Home Locations', 2);   add_df_table(top_locations(df, home_mask, 10))
+    add_h('6.6 Possible Work Locations', 2);   add_df_table(top_locations(df, work_mask, 10))
+    add_h('6.8 Possible Weekend Locations', 2);add_df_table(top_locations(df, weekend_mask, 10))
 
     # ════════════════════════════════════════════════════════════════════
     # 7. SMS CONTACT ANALYSIS
     # ════════════════════════════════════════════════════════════════════
     add_h('7. SMS Contact Analysis')
-    add_h(f'7.1 Top {top_n_contact} Sent SMS Contacts', 2);     add_df_table(top_sms_contacts(df, 'out', top_n_contact))
-    add_h(f'7.2 Top {top_n_contact} Received SMS Contacts', 2); add_df_table(top_sms_contacts(df, 'in',  top_n_contact))
+    add_h('7.1 Top 5 Sent SMS Contacts', 2);     add_df_table(top_sms_contacts(df, 'out', 5))
+    add_h('7.2 Top 5 Received SMS Contacts', 2); add_df_table(top_sms_contacts(df, 'in',  5))
 
     # ════════════════════════════════════════════════════════════════════
     # 8. LAST 10 DAYS ANALYSIS
     # ════════════════════════════════════════════════════════════════════
     add_h('8. Last 10 Days Analysis')
     add_h('8.1 Top Contacts in Last 10 Days (MOC + MTC)', 2)
-    add_df_table(last_n_days_top_contacts(df, 10, top_n_contact))
+    add_df_table(last_n_days_top_contacts(df, 10, 10))
     add_h('8.2 Top Locations in Last 10 Days', 2)
-    add_df_table(last_n_days_top_locations(df, 10, top_n_location))
+    add_df_table(last_n_days_top_locations(df, 10, 10))
 
     # ════════════════════════════════════════════════════════════════════
     # 9. MOVEMENT PATTERN ANALYSIS
@@ -5919,9 +5917,9 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
 
 def _keyword_scan_gps(addr_upper):
     """
-    Fallback GPS: P.S keyword full address- known area name scan ।
+    Fallback GPS: P.S keyword ছাড়া full address-এ known area name scan করে।
     Returns (lat, lon, district, thana, radius_m, method) or None.
-    ±2-3km accuracy — P.S parse- accurate miss ।
+    ±2-3km accuracy — P.S parse-এর চেয়ে কম accurate কিন্তু miss কমায়।
     """
     # Sub-thana / area / mohalla level GPS for Bangladesh
     # Common in GP/Robi/BL BTS address without P.S: prefix
@@ -5995,7 +5993,7 @@ def _keyword_scan_gps(addr_upper):
         'Uposhohor':      (24.3800, 88.6100, 'Rajshahi', 'Rajshahi Sadar'),
     }
 
-    # Scan: address- area name match GPS
+    # Scan: address-এ যেকোনো area name match হলে GPS দাও
     # Longest match first to avoid partial false match (e.g. 'Paltan' before 'Purana Paltan')
     for area in sorted(BD_AREA_GPS.keys(), key=len, reverse=True):
         if area.upper() in addr_upper:
@@ -6012,12 +6010,12 @@ _NOMINATIM_CACHE = {}
 def _nominatim_geocode(addr_str):
     """
     OpenStreetMap Nominatim geocoding — free, no API key.
-    CDR address → GPS. Last resort fail ।
-    Rate limit: 1 req/sec. Same address cache ।
-    NOMINATIM_ENABLED = False skip ।
+    CDR address → GPS. Last resort যখন অন্য সব fail করে।
+    Rate limit: 1 req/sec. Same address cache করা হয়।
+    NOMINATIM_ENABLED = False হলে skip করা হবে।
     Returns (lat, lon, district, thana, radius_m, method) or None.
     """
-    # Global toggle — UI on/off
+    # Global toggle — UI থেকে on/off করা যাবে
     if not _NOMINATIM_CACHE.get('__enabled__', True):
         return None
 
@@ -6107,7 +6105,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
     import pandas as _pd
 
     # ── Thana/District GPS — module-level BD_THANA_GPS / BD_DISTRICT_GPS ──
-    # ( duplicate single source of truth )
+    # (দুই জায়গায় duplicate না রেখে একটা single source of truth থেকে নেওয়া হচ্ছে)
     THANA_GPS    = BD_THANA_GPS
     DISTRICT_GPS = BD_DISTRICT_GPS
 
@@ -6155,26 +6153,26 @@ def build_movement_map(df, phone, operator, mv_data=None):
         CDR address text → GPS.
         Priority chain (conditional):
           1. CSV LAC+CID (caller handles this before text_gps)
-          2a. P.S: → Thana parse → District parse
-          2b. P.S: → Area keyword scan → District fallback
-          3. path miss → Nominatim geocoding (last resort)
+          2a. P.S: আছে → Thana parse → District parse
+          2b. P.S: নেই → Area keyword scan → District fallback
+          3.  উভয় path miss → Nominatim geocoding (last resort)
         """
         if is_invalid(addr_str): return None
         s = str(addr_str).upper()
 
-        # ── P.S: keyword detect ──────────────────────────────────────
+        # ── P.S: keyword detect করো ──────────────────────────────────────
         mt = re.search(
             r'P[\.\s]*/?\s*S[\.\:\s\-/]+([A-Z][A-Z\s\-]{2,}?)(?:[,\.\n]|DIST|$)', s)
         has_ps = mt is not None
         thana  = mt.group(1).strip().rstrip('.,- ').title() if mt else ''
 
-        # DIST: → district ( path- )
+        # DIST: → district (উভয় path-এ দরকার)
         district = ''
         md = re.search(r'DIST[\.\:\s]+([A-Z][A-Z\s\-]{2,}?)(?:[,\.\n]|$|\s+BD)', s)
         if md:
             district = md.group(1).strip().rstrip('.,- ').title()
 
-        # comma fallback for district/thana ( P.S: path-)
+        # comma fallback for district/thana (শুধু P.S: path-এ)
         if has_ps and not district:
             parts = [p.strip() for p in re.split(r'[,،]', s) if len(p.strip()) > 2]
             parts = [re.sub(r'\b(BD|BANGLADESH|\d{4,})\b', '', p).strip() for p in parts]
@@ -6191,7 +6189,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
                      'Cumilla':'Comilla','Bogra Sadar South New':'Bogra'}
 
         if has_ps:
-            # ── PATH A: P.S: → Thana → District ─────────────────────
+            # ── PATH A: P.S: আছে → Thana → District ─────────────────────
             if thana:
                 for tk in [thana, thana.replace(' Sadar', '').strip()]:
                     if tk in THANA_GPS:
@@ -6209,8 +6207,8 @@ def build_movement_map(df, phone, operator, mv_data=None):
                         return (v[0], v[1], k, thana, 15000, 'text_district')
 
         else:
-            # ── PATH B: P.S: → Keyword scan → District fallback ──────
-            # Keyword scan — P.S: address- area name
+            # ── PATH B: P.S: নেই → Keyword scan → District fallback ──────
+            # Keyword scan — P.S: ছাড়া address-এ area name সরাসরি খোঁজো
             res = _keyword_scan_gps(s)
             if res:
                 return res
@@ -6233,8 +6231,8 @@ def build_movement_map(df, phone, operator, mv_data=None):
                         return (v[0], v[1], k, '', 15000, 'text_district')
 
         # ── LAST RESORT: Nominatim geocoding ─────────────────────────────
-        # path miss Nominatim call ।
-        # Rate limit req/sec — cache , repeat call ।
+        # উভয় path miss হলে শুধু তখনই Nominatim call হবে।
+        # Rate limit ১ req/sec — cache করা থাকে, repeat call নেই।
         res2 = _nominatim_geocode(str(addr_str))
         if res2:
             return res2
@@ -6308,7 +6306,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
                 lat,lon,district,thana,acc_m,gps_method=tg
 
         if lat is not None and 19<=lat<=27 and 87<=lon<=93:
-            # BTS display: valid CDR address → , cell_csv_label
+            # BTS display: valid CDR address → সেটা, নইলে cell_csv_label
             _raw_addr = str(row.get('address','')).strip()
             _csv_lbl_disp = str(row.get('cell_csv_label','') or '').strip() if has_csv_label else ''
             if _raw_addr in ('', 'nan', 'None', 'NaN') or not _is_valid_address(_raw_addr):
@@ -6326,20 +6324,20 @@ def build_movement_map(df, phone, operator, mv_data=None):
     gdf['km_raw']=0.0  # placeholder, will compute after home
 
     # ── HOME: CDR address frequency → GPS from CSV match ──
-    # CDR address → home
-    # GPS: address- csv_exact GPS ( ), text parse
+    # সবচেয়ে বেশি CDR address → সেটাই home
+    # GPS: সেই address-এর csv_exact GPS (যদি থাকে), নইলে text parse
     addr_freq = df['address'].value_counts()
-    addr_freq = addr_freq[addr_freq.index.str.len() > 5] # empty address
+    addr_freq = addr_freq[addr_freq.index.str.len() > 5]  # empty address বাদ
 
     home_lat = home_lon = None
     home_dist_val = ''; home_label = 'Home'
 
     def _best_home_label(top_addr, df_orig, src_rows):
-        """csv_thana → csv_district → address split order- home label ।"""
+        """csv_thana → csv_district → address split order-এ home label বানাও।"""
         # src_rows: gdf rows for this address (may have thana/district from text_gps)
         # df_orig: original df (has csv_thana, csv_district from enrichment)
         _thana = ''; _dist = ''
-        # CSV enrichment columns
+        # CSV enrichment columns থেকে নেওয়ার চেষ্টা
         if 'csv_thana' in df_orig.columns:
             _match = df_orig[df_orig['address'].str.upper().str[:50] == top_addr.upper()[:50]]
             _tv = _match['csv_thana'].dropna()
@@ -6460,10 +6458,10 @@ def build_movement_map(df, phone, operator, mv_data=None):
     # ── Suspicious filter ──
     # Rule 1: 1 record AND >35km from home → unconfirmed
     # Rule 2: suspect flag (CSV vs text GPS disagree >40km) → unconfirmed
-    # FIX: mv_data trips confirmed GPS inject — report- trips
-    # map- missing ।
+    # FIX: mv_data trips থেকে confirmed GPS inject করো — report-এ যে trips আছে
+    #       সেগুলো map-এ missing হওয়া ঠেকাতে।
 
-    # mv_data trips lookup : district → (lat, lon, is_exact)
+    # mv_data trips দিয়ে একটা lookup তৈরি করো: district → (lat, lon, is_exact)
     _mv_trip_gps = {}
     if mv_data and mv_data.get('trips'):
         for _t in mv_data['trips']:
@@ -6490,11 +6488,11 @@ def build_movement_map(df, phone, operator, mv_data=None):
             is_sus=True
 
         if is_sus:
-            # mv_data- district- confirmed GPS
+            # mv_data-তে এই district-এর confirmed GPS আছে কিনা দেখো
             _s_dist = str(s.get('district', '')).strip().lower()
             _mv_hit = _mv_trip_gps.get(_s_dist)
             if _mv_hit:
-                # Report- GPS replace — confirmed location
+                # Report-এর GPS দিয়ে replace করো — confirmed location
                 s = dict(s)
                 s['lat']     = _mv_hit['lat']
                 s['lon']     = _mv_hit['lon']
@@ -6504,7 +6502,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
             else:
                 suspicious.append(s)
         else:
-            # Normal step — mv_data- better GPS upgrade
+            # Normal step — তবু mv_data-তে better GPS থাকলে upgrade করো
             _s_dist = str(s.get('district', '')).strip().lower()
             _mv_hit = _mv_trip_gps.get(_s_dist)
             if _mv_hit and _mv_hit.get('is_exact') and s.get('method') != 'csv_exact':
@@ -6514,7 +6512,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
                 s['method'] = 'csv_exact'
             main_steps.append(s)
 
-    # mv_data trips- destinations steps- → directly add
+    # mv_data trips-এ যে destinations আছে কিন্তু steps-এ নেই → directly add করো
     if mv_data and mv_data.get('trips'):
         _existing_dists = set(str(s.get('district','')).strip().lower() for s in main_steps)
         for _t in mv_data['trips']:
@@ -6523,7 +6521,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
             if not _tlat or not _tlon:
                 continue
             if _dlabel not in _existing_dists:
-                # trip map- missing —
+                # এই trip map-এ missing — সরাসরি যোগ করো
                 main_steps.append({
                     'lat': float(_tlat), 'lon': float(_tlon),
                     'district': str(_t.get('district', '')),
@@ -6539,13 +6537,13 @@ def build_movement_map(df, phone, operator, mv_data=None):
                 })
                 _existing_dists.add(_dlabel)
 
-        # Chronological sort — start date
+        # Chronological sort — start date অনুযায়ী
         main_steps.sort(key=lambda s: s.get('start', ''))
 
     if not main_steps: return None
     steps=main_steps
 
-    # ── Step limit: MAX 60 steps — same-district consecutive merge ──
+    # ── Step limit: MAX 60 steps — বেশি হলে same-district consecutive merge ──
     while len(steps) > MAX_STEPS:
         # Find two consecutive steps with same district → merge
         merged=False
@@ -6662,7 +6660,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
     home_pop="<div style='font-family:Arial;padding:10px'><b style='font-size:14px'>&#127968; Home Location</b><br><br><b>Area:</b> {hl}<br><b>District:</b> {hd}<br><b>GPS:</b> {la}, {lo}<br><b>Source:</b> Most frequent BTS location</div>".format(hl=home_label,hd=home_dist_val,la=round(home_lat,6),lo=round(home_lon,6))
     js.append("L.marker([{la},{lo}],{{icon:L.divIcon({{html:\"<div style='font-size:30px;margin:-15px 0 0 -15px'>&#127968;</div>\",iconSize:[30,30],iconAnchor:[15,15],className:''}}),zIndexOffset:1000}}).addTo(map).bindPopup({pop}).bindTooltip('&#127968; Home: {hl}',{{sticky:true,permanent:true,direction:'right',offset:[15,0]}});".format(la=round(home_lat,6),lo=round(home_lon,6),pop=_json.dumps(home_pop),hl=home_label))
 
-    # ── Top 3 Frequent Locations — mv_data GPS map- ──────
+    # ── Top 3 Frequent Locations — mv_data থেকে GPS নিয়ে map-এ দেখাও ──────
     if mv_data and mv_data.get('top_locations'):
         _freq_icons  = ['&#127968;', '&#11088;', '&#11088;']  # 🏠 ⭐ ⭐
         _freq_colors = ['#16a34a', '#2563eb', '#7c3aed']
@@ -7064,7 +7062,7 @@ def _is_carrier_number(num: str) -> bool:
 
 def _build_first_last_dates(dfs):
     """
-     (subject, contact) pair- first last contact date ।
+    প্রতিটি (subject, contact) pair-এর first ও last contact date বের করে।
     Returns: dict { (subject, phone_b): {'first': date, 'last': date} }
     """
     result = {}
@@ -7108,16 +7106,16 @@ def _build_first_last_dates(dfs):
 
 def _build_suspicious_patterns(dfs, window_min=30):
     """
-     suspicious pattern detect :
+    দুই ধরনের suspicious pattern detect করে:
 
-    1. Mirror Call — Subject A → X call ±window_min
-                     Subject B → same X- call ( X → B-)।
-                     : A B number- ।
+    1. Mirror Call — Subject A → X call করার ±window_min মিনিটের মধ্যে
+                     Subject B → same X-কে call করে (বা একই X → B-কে)।
+                     মানে: A ও B একই number-এর সাথে প্রায় একই সময়ে যোগাযোগ করেছে।
 
-    2. Relay Pattern — A → X call, X → B call (±window_min ),
-                        A B subject। X intermediary ।
+    2. Relay Pattern — A → X call, তারপর X → B call (±window_min মিনিটের মধ্যে),
+                       যেখানে A ও B দুজনেই subject। X একটা intermediary হিসেবে কাজ করছে।
 
-    Returns: (mirror_rows, relay_rows) — list of dicts
+    Returns: (mirror_rows, relay_rows) — দুটো list of dicts
     """
     # Subject phone → DataFrame mapping
     subj_dfs = {}
@@ -7164,8 +7162,8 @@ def _build_suspicious_patterns(dfs, window_min=30):
                 times_b = dfb[dfb['_pb'] == num]['start'].sort_values().values
 
                 # Find pairs within window
-                # pd.Timestamp dtype-safe comparison-
-                # (pandas 2.x- datetime64[us/s] int() scale )
+                # pd.Timestamp ব্যবহার করা হচ্ছে dtype-safe comparison-এর জন্য
+                # (pandas 2.x-এ datetime64[us/s] হলে int() এর scale আলাদা হয়)
                 hits = []
                 bi = 0
                 window_sec = window_min * 60
@@ -7189,11 +7187,11 @@ def _build_suspicious_patterns(dfs, window_min=30):
                             break
 
                 if hits:
-                    # Deduplicate: same number- instance
+                    # Deduplicate: same number-এর অনেক instance থাকলে প্রথম ৩টা দেখাও
                     mirror_rows.extend(hits[:3])
 
     # ── Relay pattern: A → X → B ────────────────────────────────────────────
-    # subject- CDR- number , cross-check
+    # প্রতিটি subject-এর CDR-এ যেসব number আছে, সেগুলো দিয়ে cross-check
     for i in range(len(subjects)):
         for j in range(len(subjects)):
             if i == j: continue
@@ -7283,9 +7281,9 @@ def _build_connections(dfs, exclude_noise=True):
 
         # Usage type flags
         # ── Fix 2 (_ci false positive) ───────────────────────────────────────
-        # logic: _ut.str.contains('IN') — 'ROAMING_IN',
-        # 'LOGIN', 'VPN_IN' string- match → false positive call-in।
-        # logic: BD CDR- incoming call type- exact match।
+        # আগের logic: _ut.str.contains('IN') ব্যবহার করা হতো — এটি 'ROAMING_IN',
+        # 'LOGIN', 'VPN_IN' ইত্যাদি string-এও match করতো → false positive call-in।
+        # নতুন logic: শুধুমাত্র BD CDR-এ স্বীকৃত incoming call type-গুলো exact match।
         _ut = _tmp[ut_col].fillna('').str.upper().str.strip()
         _tmp['_co']  = ((_ut.str.contains('MOC') | _ut.str.contains('OUT'))
                         & ~_ut.str.contains('MTC')).astype(int)
@@ -7320,8 +7318,8 @@ def _build_connections(dfs, exclude_noise=True):
 
     # Filter: remove SMS-only entries PER SUBJECT
     # ── Fix 1 (per-subject SMS filter) ───────────────────────────────────────
-    # Subject-to-subject connection (call type detection )
-    # numbers: subject- call
+    # Subject-to-subject connection সবসময় রাখা হবে (call type detection ভিন্ন হতে পারে)
+    # অন্য numbers: প্রতিটি subject-এর জন্য অন্তত ১টি call থাকতে হবে
     subject_set = set()
     for df in dfs:
         if '_subject' in df.columns and not df.empty:
@@ -7354,9 +7352,9 @@ def _haversine_km(lat1, lon1, lat2, lon2):
 
 def _ensure_cell_tower_cache(operators=None):
     """
-    HuggingFace cell tower CSV download CELL_DIR- ।
-    CDR Analysis Link Analysis- GPS ।
-    operators: set of 'gp','bl','robi','teletalk' — None
+    HuggingFace থেকে cell tower CSV download করে CELL_DIR-এ রাখো।
+    CDR Analysis আগে না চালালেও Link Analysis-এ GPS পাওয়া যাবে।
+    operators: set of 'gp','bl','robi','teletalk' — None মানে সব
     """
     # Convert mutable set → frozenset so the cached helper can be called with a hashable key
     _ops_key = frozenset(operators) if operators else None
@@ -7367,7 +7365,7 @@ def _ensure_cell_tower_cache(operators=None):
 def _ensure_cell_tower_cache_inner(operators_frozen=None):
     """
     Actual download logic — cacheable because operators_frozen is a frozenset (hashable).
-    ttl=86400 → 24 re-check , re-download ।
+    ttl=86400 → 24 ঘণ্টা পর re-check করবে, তার আগে re-download হবে না।
     """
     import os as _osc, tempfile as _tfc  # shutil → _shutil_mod
     if _requests_mod is None:
@@ -7492,15 +7490,15 @@ def _load_cell_tower_gps(cell_dir=None):
 def _build_colocation(dfs, window_min=30, radius_km=3.0):
     """
     Common Location Analysis:
-    + subject (window_min ) (radius_km km) ।
+    ২+ subject একই সময়ে (window_min মিনিটের মধ্যে) একই এলাকায় (radius_km km) ছিল কিনা।
 
-    GPS resolution — CDR Analysis- build_movement_map- priority:
-      Priority 1: cell_lat/cell_lon (cell tower CSV , loc_method='cell_exact')
+    GPS resolution — CDR Analysis-এর build_movement_map-এর হুবহু priority:
+      Priority 1: cell_lat/cell_lon (cell tower CSV থেকে, loc_method='cell_exact')
       Priority 2: BTS address text parse → P.S: → thana → THANA_GPS (±3-8 km)
                                          → DIST: → district → DISTRICT_GPS (±10-20 km)
 
-     operator GPS haversine ।
-     operator GPS + same LAC+CID ।
+    ভিন্ন operator হলেও GPS haversine দিয়ে তুলনা করা হয়।
+    একই operator হলে GPS + same LAC+CID উভয়ই চেক করা হয়।
     """
     # math → _math_mod (module-level import)
 
@@ -7509,7 +7507,7 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
         return results
 
     # ── Thana/District GPS — module-level BD_THANA_GPS / BD_DISTRICT_GPS ──
-    # ( — movement map co-location GPS table )
+    # (এক জায়গায় রাখা হয়েছে — movement map ও co-location একই GPS table ব্যবহার করে)
     THANA_GPS    = BD_THANA_GPS
     DISTRICT_GPS = BD_DISTRICT_GPS
 
@@ -7528,9 +7526,9 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
         """
         Co-location GPS parse — same conditional logic as build_movement_map.
         Priority:
-          2a. P.S: → Thana → District
-          2b. P.S: → Keyword scan → District fallback
-          3. miss → Nominatim (last resort)
+          2a. P.S: আছে → Thana → District
+          2b. P.S: নেই → Keyword scan → District fallback
+          3.  শুধু miss হলে → Nominatim (last resort)
         """
         if not addr_str:
             return None
@@ -7552,7 +7550,7 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
             district = md.group(1).strip().rstrip('.,- ').title()
 
         if has_ps:
-            # ── PATH A: P.S: ─────────────────────────────────────────
+            # ── PATH A: P.S: আছে ─────────────────────────────────────────
             if not district:
                 parts = [p.strip() for p in re.split(r'[,،]', a) if len(p.strip()) > 2]
                 parts = [re.sub(r'\b(BD|BANGLADESH|\d{4,})\b', '', p).strip() for p in parts]
@@ -7582,7 +7580,7 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
                         return v[0], v[1], k, thana, 'text_district'
 
         else:
-            # ── PATH B: P.S: → Keyword scan → District fallback ──────
+            # ── PATH B: P.S: নেই → Keyword scan → District fallback ──────
             res = _keyword_scan_gps(a)
             if res:
                 return res[0], res[1], res[2], res[3], res[4]
@@ -7613,7 +7611,7 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
 
     def _resolve_gps(row):
         """
-         CDR row- GPS ।
+        একটি CDR row-এর GPS বের করো।
         Priority 1: cell_lat/cell_lon (CSV match)
         Priority 2: BTS address text parse
         Returns (lat, lon, district, thana, method) or None
@@ -7648,7 +7646,7 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
 
         return None
 
-    # ── subject- GPS-enriched rows ──
+    # ── প্রতিটি subject-এর GPS-enriched rows তৈরি ──
     prepared = []
     for df in dfs:
         sub = df['_subject'].iloc[0] if '_subject' in df.columns else 'Unknown'
@@ -7688,7 +7686,7 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
         sub_df['_method'] = methods; sub_df['_lk']     = lac_keys
         sub_df['_op']     = op;      sub_df['_subject'] = sub
 
-        # GPS rows
+        # GPS পাওয়া গেছে এমন rows রাখো
         sub_df = sub_df[sub_df['_lat'].notna()].copy()
         if not sub_df.empty:
             prepared.append(sub_df)
@@ -7697,11 +7695,11 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
         return results
 
     # ── Fix 4 (Subject label mismatch) ───────────────────────────────────────
-    # logic: subj_labels enumerate(dfs) — dfs
-    # `prepared` list (GPS- CDR )। CDR list-
-    # GPS- , index shift Subject 2 → "Subject 1" ।
-    # logic: label `dfs` parameter phone→label mapping ।
-    # `prepared` list- subject- , index label ।
+    # আগের logic: subj_labels enumerate(dfs) দিয়ে তৈরি হতো — কিন্তু dfs এখানে
+    # আসলে `prepared` list (GPS-সহ CDR মাত্র)। যদি মূল CDR list-এর মধ্যে একটি
+    # GPS-বিহীন হয়ে বাদ পড়ে, তাহলে index shift হয়ে Subject 2 → "Subject 1" দেখাতো।
+    # নতুন logic: label মূল `dfs` parameter থেকে phone→label mapping তৈরি।
+    # `prepared` list-এ যে subject-ই থাকুক, মূল index অনুযায়ী সঠিক label পাবে।
     _orig_subject_order = []
     for _df in dfs:
         if '_subject' in _df.columns and not _df.empty:
@@ -7716,7 +7714,7 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
         for phone in [_pdf['_subject'].iloc[0]]
     }
 
-    # ── subject pair ──
+    # ── প্রতিটি subject pair তুলনা ──
     for df_a, df_b in combinations(prepared, 2):
         if df_a.empty or df_b.empty:
             continue
@@ -7920,7 +7918,7 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
         _src_b_lbl = _src_b_raw.map(lambda v: _GPS_LABEL.get(v, v))
 
         # Accuracy mismatch flag:
-        # csv_exact, text_district → ⚠️ mark
+        # একজনের csv_exact, অন্যজনের text_district → ⚠️ mark করো
         _PREC_RANK = {
             'csv_exact':     0,
             'geocoded':      0,   # Nominatim ±1km ≈ csv_exact level
@@ -7961,9 +7959,9 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
 
     # Deduplicate
     # ── Fix 3 (dedup key minute-precision) ───────────────────────────────────
-    # key: Time A[:13] → hour । co-location
-    # (false duplicate)।
-    # key: Time A[:16] → minute । + GPS A[:9] (±0.001° ≈ 100m granularity)।
+    # আগের key: Time A[:13] → hour পর্যন্ত। একই ঘণ্টায় দুটো ভিন্ন co-location
+    # ঘটনা থাকলে দ্বিতীয়টি বাদ পড়তো (false duplicate)।
+    # নতুন key: Time A[:16] → minute পর্যন্ত। + GPS A[:9] (±0.001° ≈ 100m granularity)।
     seen, unique = set(), []
     for r in results:
         key = (r['Subject A'], r['Subject B'], r['Time A'][:16], r['GPS A'][:9])
@@ -7976,13 +7974,13 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
 
 
 def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_meta=None, contact_names=None):
-    """Network graph - clean labels, delete nodes, filter by connection count.
+    """Network graph — clean labels, delete nodes, filter by connection count.
 
-    contact_names : dict  {phone_str: name_str}  - optional display names for
+    contact_names : dict  {phone_str: name_str}  — optional display names for
                     contact nodes (non-subject). When provided, node labels show
                     "Name\nPhone" instead of phone only.
     """
-    # math -&gt; _math_mod (module-level import)
+    # math → _math_mod (module-level import)
     if contact_names is None:
         contact_names = {}
 
@@ -8020,7 +8018,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
     if subj_edge_count is None:
         subj_edge_count = {sub: 99 for sub in subjects}
 
-    # -- Subject nodes --
+    # ── Subject nodes ──
     for i, sub in enumerate(subjects):
         edge_cnt   = subj_edge_count.get(sub, 0)
         is_isolated = edge_cnt < 5
@@ -8029,7 +8027,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
         _sname = _meta.get("name", "").strip()
         _sphoto= _meta.get("photo")
 
-        # Label: show name (if given) and number - NO S1/S2 prefix
+        # Label: show name (if given) and number — NO S1/S2 prefix
         if _sname:
             lbl = f"{_sname}\n{sub}"
         else:
@@ -8071,7 +8069,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
 
     common = {pb for pb, sd in connections.items() if len(sd) >= 2}
 
-    # -- Contact nodes --
+    # ── Contact nodes ──
     # Pre-compute max total for importance-ring threshold (top 10%)
     all_totals = [sum(d['total'] for d in sd.values()) for pb, sd in connections.items() if pb not in subjects]
     _importance_thresh = sorted(all_totals, reverse=True)[max(0, len(all_totals)//10 - 1)] if all_totals else 9999
@@ -8082,7 +8080,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
         is_common = pb in common
         only_sub  = list(subj_dict.keys())[0] if len(subj_dict)==1 else None
         is_iso_c  = (only_sub and subj_edge_count.get(only_sub,99) < 5)
-        # -- Importance ring: top-10% by total interaction count --
+        # ── Importance ring: top-10% by total interaction count ──
         is_important = (total >= _importance_thresh and total >= 10)
 
         bg     = '#fca5a5' if is_common else ('#fef3c7' if is_iso_c else '#e2e8f0')
@@ -8091,7 +8089,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
         if is_important:
             border = '#f59e0b'
 
-        # -- Contact name label --
+        # ── Contact name label ──
         _cname = (contact_names or {}).get(pb, '').strip()
         if _cname:
             node_label = f"{_cname}\n{pb}"
@@ -8113,14 +8111,14 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             + (f"<br><b style='color:#1e3a8a'>\U0001f464 {_cname}</b>" if _cname else "") +
             f"<br><span style='color:#64748b;font-size:12px'>"
             f"Shared: {len(subj_dict)} | Total: {total}"
-            + (" | <b style='color:#f59e0b'>* High-frequency</b>" if is_important else "") +
+            + (" | <b style='color:#f59e0b'>⭐ High-frequency</b>" if is_important else "") +
             f"</span><br>"
             f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
             + "<br>".join(subj_lines) +
             f"<br><span style='color:#94a3b8;font-size:11px'>"
             f"Click = highlight &nbsp;|&nbsp; Delete btn = remove</span></div>"
         )
-        # Importance ring -&gt; thicker border + slightly larger
+        # Importance ring → thicker border + slightly larger
         _bw   = 5 if is_important else 1
         _size = min(10+total, 30) + (5 if is_important else 0)
         # Phone icon: common=red bg, normal=grey bg
@@ -8142,16 +8140,16 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             '_total': total,
             '_important': is_important,
             '_cname': _cname,
-            # per-subject total - JS slider- subject- top-N filter
+            # per-subject total — JS slider-এ প্রতিটি subject-এর জন্য আলাদা top-N filter করার জন্য
             '_subj_totals': {s: d['total'] for s, d in subj_dict.items()},
         }
 
-    # -- Edges - single combined edge per (subject, contact) pair --
-    # Call + SMS edge- , label-
+    # ── Edges — single combined edge per (subject, contact) pair ──
+    # Call + SMS একসাথে একটি edge-এ দেখানো হবে, label-এ মোট সংখ্যা
     edges = []
     eid = 0
     subject_set = set(subjects)
-    seen_subj_pairs = set() # subject-to-subject duplicate edge
+    seen_subj_pairs = set()  # subject-to-subject duplicate edge প্রতিরোধ
 
     for pb, subj_dict in connections.items():
         for sub, data in subj_dict.items():
@@ -8160,13 +8158,13 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             is_common = pb in common
             is_subj_to_subj = pb in subject_set
 
-            # Subject-to-subject: A-&gt;B B-&gt;A entry - edge
+            # Subject-to-subject: A→B এবং B→A দুটো entry আসে — একটাই edge বানাও
             if is_subj_to_subj:
                 pair = tuple(sorted([sub, pb]))
                 if pair in seen_subj_pairs:
                     continue
                 seen_subj_pairs.add(pair)
-                # data combined stats
+                # দুইদিকের data মিলিয়ে combined stats
                 rev = connections.get(sub, {}).get(pb, {})
                 call_total  = data['call_out'] + data['call_in'] + rev.get('call_out', 0) + rev.get('call_in', 0)
                 sms_total   = data['sms_out']  + data['sms_in']  + rev.get('sms_out', 0)  + rev.get('sms_in', 0)
@@ -8178,19 +8176,19 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
 
             grand_total = call_total + sms_total
 
-            #
+            # রং নির্ধারণ
             if is_subj_to_subj:
-                ec = '#7c3aed'  # purple - subject-to-subject
+                ec = '#7c3aed'  # purple — subject-to-subject
             elif is_common:
-                ec = '#dc2626'  # red - common contact
+                ec = '#dc2626'  # red — common contact
             else:
-                ec = '#2563eb'  # blue - regular contact
+                ec = '#2563eb'  # blue — regular contact
 
-            # -- Tooltip: call + sms breakdown --
+            # ── Tooltip: call + sms breakdown ──
             edge_title = (
                 f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
                 f"padding:10px 14px;line-height:1.8'>"
-                f"<b style='font-size:15px;color:{ec}'>\U0001f4de\U0001f4ac {sub} &lt;-&gt; {pb}</b><br>"
+                f"<b style='font-size:15px;color:{ec}'>\U0001f4de\U0001f4ac {sub} ↔ {pb}</b><br>"
                 f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
                 f"&nbsp;&nbsp;\U0001f4de MOC (outgoing): <b>{data['call_out']}</b><br>"
                 f"&nbsp;&nbsp;\U0001f4de MTC (incoming): <b>{data['call_in']}</b><br>"
@@ -8203,7 +8201,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
                 f"&nbsp;&nbsp;\u23f1 Duration: {dur} min</div>"
             )
 
-            # Width: subject-to-subject , common
+            # Width: subject-to-subject মোটা, common হলেও মোটা
             width = max(1, min(7, call_total // 5 + 1)) + (3 if is_subj_to_subj else (2 if is_common else 0))
 
             edges.append({
@@ -8229,23 +8227,9 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             })
             eid += 1
 
-    # Expandable data: Right-click Expand Node
-    expandable_data = {}
-    _subject_set_exp = set(subjects)
-    for _df_exp in dfs:
-        if '_pa' not in _df_exp.columns or '_pb' not in _df_exp.columns: continue
-        _subj_exp = _df_exp['_subject'].iloc[0] if '_subject' in _df_exp.columns else None
-        if not _subj_exp: continue
-        _grp_exp = _df_exp[_df_exp['_pb'].str.match(r'^0[0-9]{9,10}$', na=False)].groupby('_pb').size()
-        for _pb_exp, _cnt_exp in _grp_exp.items():
-            if _pb_exp in _subject_set_exp: continue
-            if _pb_exp not in expandable_data: expandable_data[_pb_exp] = {}
-            expandable_data[_pb_exp][_subj_exp] = int(_cnt_exp)
-
-    nodes_json      = json.dumps(list(nodes.values()), ensure_ascii=True)
-    edges_json      = json.dumps(edges, ensure_ascii=True)
-    subjects_json   = json.dumps(subjects, ensure_ascii=True)
-    expandable_json = json.dumps(expandable_data, ensure_ascii=True)
+    nodes_json = json.dumps(list(nodes.values()), ensure_ascii=True)
+    edges_json = json.dumps(edges, ensure_ascii=True)
+    subjects_json = json.dumps(subjects, ensure_ascii=True)
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -8285,7 +8269,7 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
 #panelX{{cursor:pointer;color:#94a3b8;font-size:20px;line-height:1}}
 #panelX:hover{{color:#dc2626}}
 #wrap{{position:relative}}
-/* -- Export modal -- */
+/* ── Export modal ── */
 #exportModal{{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);
   z-index:9999;align-items:center;justify-content:center}}
 #exportModal.show{{display:flex}}
@@ -8311,16 +8295,14 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <div class="li"><div class="dot" style="background:#1d4ed8"></div>Subject</div>
   <div class="li"><div class="dot" style="background:#dc2626"></div>Common Contact</div>
   <div class="li"><div class="dot" style="background:#64748b"></div>Single Contact</div>
-  <div class="li"><div class="dot" style="background:#e2e8f0;border:3px solid #f59e0b;width:13px;height:13px;"></div>High-freq *</div>
-  <div class="li"><div class="ln" style="background:#2563eb"></div>Connection ( = Call+SMS)</div>
+  <div class="li"><div class="dot" style="background:#e2e8f0;border:3px solid #f59e0b;width:13px;height:13px;"></div>High-freq ⭐</div>
+  <div class="li"><div class="ln" style="background:#2563eb"></div>Connection (সংখ্যা = Call+SMS)</div>
   <div class="li"><div class="ln" style="background:#dc2626"></div>Common Contact Edge</div>
-  <div class="li"><div class="ln" style="background:#7c3aed"></div>Subject &lt;-&gt; Subject</div>
+  <div class="li"><div class="ln" style="background:#7c3aed"></div>Subject ↔ Subject</div>
 </div>
 <div class="bar">
   <button class="btn" onclick="network.fit()">&#x229F; Fit</button>
   <button class="btn" id="physBtn" onclick="togglePhysics()">&#x23F8; Freeze</button>
-  <button class="btn" style="background:#0369a1;" onclick="unpinAll()">&#x1F513; Unpin All</button>
-  <button class="btn" style="background:#374151;" onclick="pinAll()">&#x1F512; Pin All</button>
   <button class="btn red" onclick="showOnlyCommon()">&#128308; Common</button>
   <button class="btn grn" onclick="showAll()">&#128065; All</button>
   <button class="btn del" id="delBtn" onclick="deleteSelected()">&#x1F5D1; Delete</button>
@@ -8332,12 +8314,12 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <!-- Search box -->
   <div class="sl" style="flex:1;min-width:180px;">
     <span style="font-weight:600;color:#1e3a8a;">&#x1F50D;</span>
-    <input type="text" id="searchBox" placeholder=" / ..."
+    <input type="text" id="searchBox" placeholder="নম্বর / নাম খুঁজুন…"
       oninput="searchNodes(this.value)"
       style="flex:1;font-size:11px;padding:3px 7px;border-radius:5px;
              border:1px solid #cbd5e1;background:#f8fafc;color:#0f172a;outline:none;">
     <button class="btn" style="background:#475569;padding:3px 8px;"
-      onclick="document.getElementById('searchBox').value='';searchNodes('')">x</button>
+      onclick="document.getElementById('searchBox').value='';searchNodes('')">✕</button>
   </div>
   <!-- Edge type filter removed: edges are now combined (Call+SMS) -->
   <div class="sl">
@@ -8346,8 +8328,8 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
       style="font-size:11px;padding:2px 6px;border-radius:5px;border:1px solid #cbd5e1;
              background:#f8fafc;color:#1e3a8a;cursor:pointer;">
       <option value="physics">&#x1F300; Physics (default)</option>
-      <option value="hierarchyLR">&#x27A1; Hierarchy L-&gt;R</option>
-      <option value="hierarchyUD">&#x2B07; Hierarchy U-&gt;D</option>
+      <option value="hierarchyLR">&#x27A1; Hierarchy L→R</option>
+      <option value="hierarchyUD">&#x2B07; Hierarchy U→D</option>
       <option value="bipartite">&#x21C4; Bipartite (Subj left/right)</option>
       <option value="circle">&#x25EF; Circle</option>
       <option value="grid">&#x22EE; Grid</option>
@@ -8355,7 +8337,7 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   </div>
   <button class="btn" id="impRingBtn" onclick="toggleImportanceRing()" title="High-frequency gold ring">&#11088; Ring: ON</button>
   <div class="sl">
-    <span>Top contacts (common ):</span>
+    <span>Top contacts (common বাদে):</span>
     <input type="range" id="minConn" min="1" max="20" value="20"
            oninput="filterByConnCount(this.value)">
     <span id="minConnVal">20</span>
@@ -8393,15 +8375,15 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   </div>
 </div>
 
-<!-- -- Capture overlay -- -->
+<!-- ── Capture overlay ── -->
 <div id="captureOverlay">
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1e3a8a" stroke-width="2.5">
     <circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/>
   </svg>
-  Capturing graph...
+  Capturing graph…
 </div>
 
-<!-- -- Export modal -- -->
+<!-- ── Export modal ── -->
 <div id="exportModal">
   <div id="exportBox">
     <button id="exportClose" onclick="closeExportModal()">&#xd7;</button>
@@ -8414,24 +8396,23 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
       <span id="exportStatus"></span>
     </div>
     <div style="font-size:11px;color:#94a3b8;margin-top:10px;">
-      &#x2139;&#xFE0F; PNG download -&gt; Word/PowerPoint- Insert -&gt; Pictures .
-       Copy Ctrl+V paste .
+      &#x2139;&#xFE0F; PNG download করুন → Word/PowerPoint-এ Insert → Pictures দিয়ে যোগ করুন।
+      অথবা Copy করে সরাসরি Ctrl+V দিয়ে paste করুন।
     </div>
   </div>
 </div>
 <script>
 var nodesData = {nodes_json};
 var edgesData = {edges_json};
-var subjectsData = {subjects_json};
-var expandableData = {expandable_json};
+var subjectsData = {subjects_json};  // subject phone list
 
-// vis.js tooltip: string title -&gt; HTML render , DOM element
+// vis.js tooltip: string title → HTML render হয় না, DOM element দিতে হয়
 function _makeTitleEl(html){{
   var d=document.createElement('div');
   d.innerHTML=html;
   return d;
 }}
-// Node edge- title convert
+// Node ও edge-এর title convert করা
 nodesData = nodesData.map(function(n){{
   if(n.title && typeof n.title==='string') n.title=_makeTitleEl(n.title);
   return n;
@@ -8466,8 +8447,8 @@ var network = new vis.Network(
                   nodeDistance:200,damping:.10}}
     }},
     interaction:{{hover:true,tooltipDelay:150,navigationButtons:true,
-                  hideEdgesOnDrag:false,keyboard:true,
-                  multiselect:true,dragNodes:true,dragView:true,zoomView:true}},
+                  hideEdgesOnDrag:true,keyboard:true,
+                  multiselect:true}},
     layout:{{improvedLayout:false}}
   }}
 );
@@ -8478,11 +8459,13 @@ network.once('stabilizationIterationsDone', function(){{
   network.setOptions({{physics:{{enabled:false}}}});
   physicsOn=false;
   document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
+  // Default: top-20 non-common contact দেখাও
+  filterByConnCount(20);
 }});
 
 setTimeout(function(){{if(network)network.fit();}}, 2500);
 
-// -- Shared: capture graph canvas to dataURL --
+// ── Shared: capture graph canvas to dataURL ──
 var _exportDataURL = null;
 
 function _captureGraph(callback){{
@@ -8505,7 +8488,7 @@ function _captureGraph(callback){{
     if(!canvas){{
       ov.classList.remove('show');
       panel.style.display = prevPanel;
-      alert('Canvas not found - try again after graph settles.');
+      alert('Canvas not found — try again after graph settles.');
       return;
     }}
 
@@ -8544,7 +8527,7 @@ function _captureGraph(callback){{
   }}, 350);
 }}
 
-// -- Export PNG -&gt; opens preview modal --
+// ── Export PNG → opens preview modal ──
 function exportGraphPNG(){{
   _captureGraph(function(dataURL){{
     document.getElementById('exportPreview').src = dataURL;
@@ -8553,7 +8536,7 @@ function exportGraphPNG(){{
   }});
 }}
 
-// -- Quick copy (no modal) --
+// ── Quick copy (no modal) ──
 function copyGraphToClipboard(){{
   _captureGraph(function(dataURL){{
     document.getElementById('exportPreview').src = dataURL;
@@ -8561,25 +8544,25 @@ function copyGraphToClipboard(){{
   }});
 }}
 
-// -- Download from modal --
+// ── Download from modal ──
 function downloadExportedPNG(){{
   if(!_exportDataURL)return;
   var a = document.createElement('a');
   a.href = _exportDataURL;
   a.download = 'CDR_Network_Graph_' + Date.now() + '.png';
   a.click();
-  document.getElementById('exportStatus').textContent = '[OK] Downloaded!';
+  document.getElementById('exportStatus').textContent = '✅ Downloaded!';
   setTimeout(function(){{document.getElementById('exportStatus').textContent='';}},2500);
 }}
 
-// -- Copy from modal --
+// ── Copy from modal ──
 function copyExportedToClipboard(){{
   if(!_exportDataURL)return;
   _doCopy(_exportDataURL, false);
 }}
 
 function _doCopy(dataURL, quick){{
-  // Convert dataURL -&gt; Blob -&gt; ClipboardItem
+  // Convert dataURL → Blob → ClipboardItem
   var b64 = dataURL.split(',')[1];
   var byteChars = atob(b64);
   var byteArr = new Uint8Array(byteChars.length);
@@ -8589,22 +8572,22 @@ function _doCopy(dataURL, quick){{
   if(navigator.clipboard && window.ClipboardItem){{
     navigator.clipboard.write([new ClipboardItem({{'image/png':blob}})])
       .then(function(){{
-        var msg = '[OK] Clipboard- copy ! Ctrl+V Word/PowerPoint- paste .';
+        var msg = '✅ Clipboard-এ copy হয়েছে! Ctrl+V দিয়ে Word/PowerPoint-এ paste করুন।';
         if(quick){{ alert(msg); }}
-        else{{ document.getElementById('exportStatus').textContent='[OK] Copied!';
+        else{{ document.getElementById('exportStatus').textContent='✅ Copied!';
                setTimeout(function(){{document.getElementById('exportStatus').textContent='';}},2500); }}
       }})
       .catch(function(){{
         // Fallback: open in new tab
         var w=window.open();
         w.document.write('<img src="'+dataURL+'" style="max-width:100%"><br>'
-          +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click -&gt; Copy Image Save Image As .</p>');
+          +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click → Copy Image অথবা Save Image As করুন।</p>');
       }});
   }} else {{
     // Old browser fallback
     var w=window.open();
     w.document.write('<img src="'+dataURL+'" style="max-width:100%"><br>'
-      +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click -&gt; Copy Image Save Image As .</p>');
+      +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click → Copy Image অথবা Save Image As করুন।</p>');
   }}
 }}
 
@@ -8617,84 +8600,26 @@ function togglePhysics(){{
   network.setOptions({{physics:{{enabled:physicsOn}}}});
   document.getElementById('physBtn').textContent=physicsOn?'\u23F8 Freeze':'\u25B6 Unfreeze';
 }}
-function unpinAll(){{
-  allNodes.update(allNodes.get().map(n=>({{id:n.id,fixed:{{x:false,y:false}}}})));
-  _tk('\uD83D\uDD13 All nodes unpinned');
-}}
-function pinAll(){{
-  var pos=network.getPositions();
-  allNodes.update(Object.keys(pos).map(function(id){{
-    return{{id:id,x:pos[id].x,y:pos[id].y,fixed:{{x:true,y:true}}}};
-  }}));
-  _tk('\uD83D\uDD12 Layout locked');
-}}
 
-// Expand Node: right-click to show secondary connections
-var _expandedNodes=new Set();
-function expandNode(nid){{
-  var numId=String(nid).replace(/[^0-9]/g,'');
-  if(_expandedNodes.has(numId)){{collapseNode(numId);return;}}
-  var contacts=expandableData[nid]||expandableData['0'+numId.slice(2)]||null;
-  if(!contacts||Object.keys(contacts).length===0){{_tk('\u274C No additional CDR data');return;}}
-  _expandedNodes.add(numId);
-  var pp=network.getPositions([nid]);
-  var px=(pp[nid]||{{x:0}}).x,py=(pp[nid]||{{y:0}}).y;
-  var newNodes=[],newEdges=[],keys=Object.keys(contacts),total=keys.length;
-  keys.forEach(function(subj,i){{
-    var cnt=contacts[subj];
-    var eid2='exp_'+numId+'_'+i;
-    var angle=(2*Math.PI*i/Math.max(total,1))-Math.PI/2;
-    newNodes.push({{id:eid2,label:subj,shape:'dot',size:10,
-      color:{{background:'#fef9c3',border:'#f59e0b'}},
-      font:{{size:11,color:'#374151',strokeWidth:2,strokeColor:'#fff'}},
-      x:Math.round(px+160*Math.cos(angle)),y:Math.round(py+160*Math.sin(angle)),
-      fixed:false,group:'expanded',_total:cnt,_expanded_from:numId}});
-    newEdges.push({{id:'exp_e_'+numId+'_'+i,from:nid,to:eid2,
-      label:String(cnt),color:{{color:'#f59e0b',opacity:.7}},
-      dashes:true,width:1,
-      font:{{size:10,color:'#374151',strokeWidth:1,strokeColor:'#fff',align:'middle'}},
-      smooth:{{type:'dynamic'}}}});
-  }});
-  if(newNodes.length){{allNodes.add(newNodes);allEdges.add(newEdges);_tk('\uD83C\uDF10 Expanded '+newNodes.length+' connections');}}
-}}
-function collapseNode(numId){{
-  _expandedNodes.delete(numId);
-  allNodes.remove(allNodes.get().filter(n=>n._expanded_from===numId).map(n=>n.id));
-  allEdges.remove(allEdges.get().filter(e=>String(e.id).startsWith('exp_e_'+numId)).map(e=>e.id));
-  _tk('\uD83D\uDDD8 Collapsed');
-}}
-
-network.on('dragStart',function(params){{
-  if(params.nodes.length>0){{
-    params.nodes.forEach(function(nid){{
-      allNodes.update({{id:nid,fixed:{{x:false,y:false}}}});
-    }});
-  }}
-}});
+// dragEnd: pin node
 network.on('dragEnd',function(params){{
   if(params.nodes.length>0){{
-    if(physicsOn){{
-      network.setOptions({{physics:{{enabled:false}}}});
-      physicsOn=false;
-      document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
-    }}
     params.nodes.forEach(function(nid){{
       var pos=network.getPositions([nid])[nid];
       allNodes.update({{id:nid,x:pos.x,y:pos.y,fixed:{{x:true,y:true}}}});
     }});
   }}
 }});
+// doubleClick: unpin all
 network.on('doubleClick',function(params){{
   if(params.nodes.length===0&&params.edges.length===0){{
     allNodes.update(allNodes.get().map(n=>({{id:n.id,fixed:{{x:false,y:false}}}})));
-    _tk('\uD83D\uDD13 All nodes unpinned');
   }}
 }});
 
-// -- Layout switcher (i2-style) --
+// ── Layout switcher (i2-style) ──
 function applyLayout(mode){{
   if(mode==='physics'){{
-    allNodes.update(allNodes.get().map(function(n){{ return{{id:n.id,fixed:{{x:false,y:false}}}}; }}));
     network.setOptions({{
       layout:{{improvedLayout:false,hierarchical:{{enabled:false}}}},
       physics:{{
@@ -8826,7 +8751,7 @@ function applyLayout(mode){{
   }}
 }}
 
-// -- Importance Ring toggle --
+// ── Importance Ring toggle ──
 var _impRingOn = true;
 function toggleImportanceRing(){{
   _impRingOn = !_impRingOn;
@@ -8848,12 +8773,15 @@ function toggleImportanceRing(){{
   allNodes.update(updates);
 }}
 
-// -- Filter by min connection count --
+// ── Filter by min connection count ──
 function filterByConnCount(val){{
   val=parseInt(val);
-  document.getElementById('minConnVal').textContent=val===0?'0':val;
+  document.getElementById('minConnVal').textContent=val===0?'০':val;
 
+  // val=0 → non-common কিছুই দেখাবে না (শুধু subject + common)
+  // val=1..20 → প্রতিটি subject-এর জন্য আলাদাভাবে top-N non-common দেখাবে
   var showSet=new Set();
+
   if(val>0){{
     subjectsData.forEach(function(subj){{
       var contactsForSubj=nodesData.filter(function(n){{
@@ -8866,12 +8794,6 @@ function filterByConnCount(val){{
       var limit=Math.min(val,contactsForSubj.length);
       for(var i=0;i<limit;i++) showSet.add(contactsForSubj[i].id);
     }});
-    // If no _subj_totals data, show all non-common
-    if(showSet.size===0){{
-      nodesData.forEach(function(n){{
-        if(n.group!=='subject'&&n.group!=='isolated_subject') showSet.add(n.id);
-      }});
-    }}
   }}
 
   var updates=[];
@@ -8882,7 +8804,7 @@ function filterByConnCount(val){{
     if(n.group==='common'){{
       updates.push({{id:n.id,hidden:false}});return;
     }}
-    updates.push({{id:n.id,hidden:val>0?!showSet.has(n.id):false}});
+    updates.push({{id:n.id,hidden:!showSet.has(n.id)}});
   }});
   allNodes.update(updates);
 
@@ -8893,7 +8815,7 @@ function filterByConnCount(val){{
   }}));
 }}
 
-// -- Delete selected node/edge --
+// ── Delete selected node/edge ──
 function deleteSelected(){{
   if(selectedNodeId!==null){{
     var node=allNodes.get(selectedNodeId);
@@ -8919,7 +8841,7 @@ function deleteSelected(){{
   }}
 }}
 
-// -- Undo last delete --
+// ── Undo last delete ──
 function undoDelete(){{
   if(deletedNodes.length>0){{
     var last=deletedNodes.pop();
@@ -8930,7 +8852,7 @@ function undoDelete(){{
   }}
 }}
 
-// -- Keyboard delete --
+// ── Keyboard delete ──
 document.addEventListener('keydown',function(e){{
   if(e.key==='Delete'||e.key==='Backspace'){{
     if(document.activeElement===document.body||
@@ -8952,7 +8874,7 @@ function showAll(){{
   network.fit();
 }}
 
-// -- Label / node size sliders --
+// ── Label / node size sliders ──
 function changeFontSize(val){{
   val=parseInt(val);
   document.getElementById('fontVal').textContent=val===0?'off':val;
@@ -8974,7 +8896,7 @@ function changeNodeSize(val){{
   }}));
 }}
 
-// -- Search nodes by number or name --
+// ── Search nodes by number or name ──
 function searchNodes(q){{
   q = q.trim().toLowerCase();
   if(!q){{
@@ -9004,14 +8926,14 @@ function searchNodes(q){{
   }}
 }}
 
-// -- Edge type filter (simplified - edges now combined) --
+// ── Edge type filter (simplified — edges now combined) ──
 var _activeEtype = 'all';
 function filterEdgeType(etype){{
-  // edges combined, function legacy compatibility-
+  // edges এখন combined, এই function টি legacy compatibility-র জন্য রাখা হয়েছে
   _activeEtype = etype;
 }}
 
-// -- Info panel --
+// ── Info panel ──
 function closePanel(){{document.getElementById('panel').style.display='none';}}
 function showPanel(tag,html){{
   document.getElementById('panelTag').textContent=tag;
@@ -9019,7 +8941,7 @@ function showPanel(tag,html){{
   document.getElementById('panel').style.display='block';
 }}
 
-// -- Click handler --
+// ── Click handler ──
 network.on('click',function(params){{
   if(params.nodes.length>0){{
     selectedNodeId=params.nodes[0];
@@ -9045,7 +8967,7 @@ network.on('click',function(params){{
 __EXTRA_JS__
 </script>
 </body>
-</html>""".replace("__EXTRA_JS__", "\n// -- Search ---------------------------------------------------------------\nvar _sm=[],_si=-1,_ha=false,_ocs=false;\nfunction searchNodes(q){\n  q=q.trim().toLowerCase();\n  var ce=document.getElementById('searchCount');\n  if(!q){\n    _sm=[];_si=-1;\n    if(!_ha){\n      allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined})));\n      allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:false,opacity:1.0})));\n    }\n    if(ce)ce.textContent='';return;\n  }\n  var mt=new Set();\n  allNodes.get().forEach(function(n){\n    if((n.label||'').toLowerCase().includes(q)||String(n.id||'').toLowerCase().includes(q))mt.add(n.id);\n  });\n  _sm=[...mt];_si=_sm.length>0?0:-1;\n  allNodes.update(allNodes.get().map(function(n){\n    if(mt.has(n.id))return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    return{id:n.id,opacity:0.08,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:!(mt.has(e.from)&&mt.has(e.to))})));\n  if(ce)ce.textContent=mt.size>0?mt.size+' found':'No match';\n  if(_sm.length>0){network.focus(_sm[0],{scale:1.6,animation:{duration:400}});network.selectNodes([_sm[0]]);}\n}\nfunction handleSearchKey(e){\n  if(e.key!=='Enter'||_sm.length===0)return;\n  _si=(_si+1)%_sm.length;\n  network.focus(_sm[_si],{scale:1.6,animation:{duration:300}});\n  network.selectNodes([_sm[_si]]);\n}\n// -- Hover dim ------------------------------------------------------------\nfunction _soc(){\n  if(_ocs)return;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,_oc:n.color||null,_bg:n.color&&n.color.background?n.color.background:null,_bw:n.borderWidth||2};\n  }));\n  _ocs=true;\n}\nnetwork.on('hoverNode',function(p){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _soc();_ha=true;\n  var h=p.node,cn=new Set(network.getConnectedNodes(h));cn.add(h);\n  allNodes.update(allNodes.get().map(function(n){\n    if(n.id===h)return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    if(cn.has(n.id))return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n    return{id:n.id,opacity:0.07,borderWidth:1,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:e.from===h||e.to===h?1.0:0.05};\n  }));\n});\nnetwork.on('blurNode',function(){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _ha=false;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:1.0};\n  }));\n});\n// -- Context menu ---------------------------------------------------------\nvar _cm=(function(){\n  var el=document.createElement('div');\n  el.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px 0;min-width:185px;font-family:Segoe UI,Arial,sans-serif;font-size:13px;display:none';\n  document.body.appendChild(el);\n  function it(ic,lb,fn,dg){\n    var d=document.createElement('div');\n    d.style.cssText='padding:7px 14px;cursor:pointer;display:flex;gap:8px;align-items:center;'+(dg?'color:#dc2626':'color:#0f172a');\n    d.innerHTML='<span>'+ic+'</span><span>'+lb+'</span>';\n    d.onmouseenter=function(){d.style.background='#f1f5f9';};d.onmouseleave=function(){d.style.background='';};\n    d.onclick=function(){hide();fn();};return d;\n  }\n  function sp(){var h=document.createElement('hr');h.style.cssText='margin:3px 0;border:none;border-top:1px solid #f1f5f9';return h;}\n  function show(x,y,items){\n    el.innerHTML='';\n    items.forEach(function(i){if(i==='sep')el.appendChild(sp());else el.appendChild(i);});\n    el.style.display='block';\n    var vw=window.innerWidth,vh=window.innerHeight,r=el.getBoundingClientRect();\n    el.style.left=(x+r.width>vw?vw-r.width-8:x)+'px';el.style.top=(y+r.height>vh?vh-r.height-8:y)+'px';\n  }\n  function hide(){el.style.display='none';}\n  document.addEventListener('click',hide);\n  document.addEventListener('keydown',function(e){if(e.key==='Escape')hide();});\n  return{show:show,hide:hide,it:it};\n})();\nfunction _cp(t){\n  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(function(){_tk('Copied: '+t);}).catch(function(){_cf(t);});\n  else _cf(t);\n}\nfunction _cf(t){var a=document.createElement('textarea');a.value=t;a.style.cssText='position:fixed;opacity:0';document.body.appendChild(a);a.select();try{document.execCommand('copy');_tk('Copied: '+t);}catch(e){}document.body.removeChild(a);}\nfunction _tk(m){var t=document.createElement('div');t.textContent=m;t.style.cssText='position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:8px 18px;border-radius:20px;font-size:13px;z-index:99999;pointer-events:none;opacity:0;transition:opacity .2s';document.body.appendChild(t);requestAnimationFrame(function(){t.style.opacity='1';});setTimeout(function(){t.style.opacity='0';setTimeout(function(){document.body.removeChild(t);},300);},2000);}\nnetwork.on('oncontext',function(params){\n  params.event.preventDefault();\n  var x=params.event.clientX,y=params.event.clientY;\n  if(params.nodes.length>0){\n    var nid=params.nodes[0];selectedNodeId=nid;\n    var obj=allNodes.get(nid);var lbl=obj?(obj.label||nid):nid;\n    var num=String(nid).replace(/[^0-9+]/g,'');\n    _cm.show(x,y,[\n      _cm.it('&#128203;','Copy Number',function(){_cp(num||String(nid));}),\n      _cm.it('&#128221;','Copy Full Label',function(){_cp(lbl);}),\n      'sep',\n      _cm.it('&#128294;','Highlight',function(){var cn=new Set(network.getConnectedNodes(nid));cn.add(nid);allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:cn.has(n.id)?1.0:0.08})));},false),\n      _cm.it('&#128065;','Show Info',function(){if(obj&&obj.title)showPanel('NODE INFO',obj.title);}),\n      _cm.it('&#127760;','Expand Node',function(){expandNode(String(nid));}),\n      'sep',\n      _cm.it('&#128465;','Remove',function(){deleteSelected();},true),\n    ]);\n  }else if(params.edges.length>0){\n    var eid=params.edges[0];selectedEdgeId=eid;var eo=allEdges.get(eid);\n    _cm.show(x,y,[\n      _cm.it('&#128203;','Copy: '+(eo?String(eo.from).slice(-8):''),function(){_cp(eo?String(eo.from):'');}),\n      _cm.it('&#128203;','Copy: '+(eo?String(eo.to).slice(-8):''),function(){_cp(eo?String(eo.to):'');}),\n      'sep',\n      _cm.it('&#8505;','Edge Info',function(){if(eo&&eo.title)showPanel('LINK INFO',eo.title);}),\n      'sep',\n      _cm.it('&#128465;','Remove',function(){deleteSelected();},true),\n    ]);\n  }else{\n    _cm.show(x,y,[\n      _cm.it('&#128306;','Fit All',function(){network.fit();}),\n      _cm.it('&#128065;','Show All',function(){showAll();}),\n      _cm.it('&#128308;','Common Only',function(){showOnlyCommon();}),\n    ]);\n  }\n});\n")
+</html>""".replace("__EXTRA_JS__", "\n// ── Search ───────────────────────────────────────────────────────────────\nvar _sm=[],_si=-1,_ha=false,_ocs=false;\nfunction searchNodes(q){\n  q=q.trim().toLowerCase();\n  var ce=document.getElementById('searchCount');\n  if(!q){\n    _sm=[];_si=-1;\n    if(!_ha){\n      allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined})));\n      allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:false,opacity:1.0})));\n    }\n    if(ce)ce.textContent='';return;\n  }\n  var mt=new Set();\n  allNodes.get().forEach(function(n){\n    if((n.label||'').toLowerCase().includes(q)||String(n.id||'').toLowerCase().includes(q))mt.add(n.id);\n  });\n  _sm=[...mt];_si=_sm.length>0?0:-1;\n  allNodes.update(allNodes.get().map(function(n){\n    if(mt.has(n.id))return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    return{id:n.id,opacity:0.08,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:!(mt.has(e.from)&&mt.has(e.to))})));\n  if(ce)ce.textContent=mt.size>0?mt.size+' found':'No match';\n  if(_sm.length>0){network.focus(_sm[0],{scale:1.6,animation:{duration:400}});network.selectNodes([_sm[0]]);}\n}\nfunction handleSearchKey(e){\n  if(e.key!=='Enter'||_sm.length===0)return;\n  _si=(_si+1)%_sm.length;\n  network.focus(_sm[_si],{scale:1.6,animation:{duration:300}});\n  network.selectNodes([_sm[_si]]);\n}\n// ── Hover dim ────────────────────────────────────────────────────────────\nfunction _soc(){\n  if(_ocs)return;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,_oc:n.color||null,_bg:n.color&&n.color.background?n.color.background:null,_bw:n.borderWidth||2};\n  }));\n  _ocs=true;\n}\nnetwork.on('hoverNode',function(p){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _soc();_ha=true;\n  var h=p.node,cn=new Set(network.getConnectedNodes(h));cn.add(h);\n  allNodes.update(allNodes.get().map(function(n){\n    if(n.id===h)return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    if(cn.has(n.id))return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n    return{id:n.id,opacity:0.07,borderWidth:1,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:e.from===h||e.to===h?1.0:0.05};\n  }));\n});\nnetwork.on('blurNode',function(){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _ha=false;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:1.0};\n  }));\n});\n// ── Context menu ─────────────────────────────────────────────────────────\nvar _cm=(function(){\n  var el=document.createElement('div');\n  el.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px 0;min-width:185px;font-family:Segoe UI,Arial,sans-serif;font-size:13px;display:none';\n  document.body.appendChild(el);\n  function it(ic,lb,fn,dg){\n    var d=document.createElement('div');\n    d.style.cssText='padding:7px 14px;cursor:pointer;display:flex;gap:8px;align-items:center;'+(dg?'color:#dc2626':'color:#0f172a');\n    d.innerHTML='<span>'+ic+'</span><span>'+lb+'</span>';\n    d.onmouseenter=function(){d.style.background='#f1f5f9';};d.onmouseleave=function(){d.style.background='';};\n    d.onclick=function(){hide();fn();};return d;\n  }\n  function sp(){var h=document.createElement('hr');h.style.cssText='margin:3px 0;border:none;border-top:1px solid #f1f5f9';return h;}\n  function show(x,y,items){\n    el.innerHTML='';\n    items.forEach(function(i){if(i==='sep')el.appendChild(sp());else el.appendChild(i);});\n    el.style.display='block';\n    var vw=window.innerWidth,vh=window.innerHeight,r=el.getBoundingClientRect();\n    el.style.left=(x+r.width>vw?vw-r.width-8:x)+'px';el.style.top=(y+r.height>vh?vh-r.height-8:y)+'px';\n  }\n  function hide(){el.style.display='none';}\n  document.addEventListener('click',hide);\n  document.addEventListener('keydown',function(e){if(e.key==='Escape')hide();});\n  return{show:show,hide:hide,it:it};\n})();\nfunction _cp(t){\n  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(function(){_tk('Copied: '+t);}).catch(function(){_cf(t);});\n  else _cf(t);\n}\nfunction _cf(t){var a=document.createElement('textarea');a.value=t;a.style.cssText='position:fixed;opacity:0';document.body.appendChild(a);a.select();try{document.execCommand('copy');_tk('Copied: '+t);}catch(e){}document.body.removeChild(a);}\nfunction _tk(m){var t=document.createElement('div');t.textContent=m;t.style.cssText='position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:8px 18px;border-radius:20px;font-size:13px;z-index:99999;pointer-events:none;opacity:0;transition:opacity .2s';document.body.appendChild(t);requestAnimationFrame(function(){t.style.opacity='1';});setTimeout(function(){t.style.opacity='0';setTimeout(function(){document.body.removeChild(t);},300);},2000);}\nnetwork.on('oncontext',function(params){\n  params.event.preventDefault();\n  var x=params.event.clientX,y=params.event.clientY;\n  if(params.nodes.length>0){\n    var nid=params.nodes[0];selectedNodeId=nid;\n    var obj=allNodes.get(nid);var lbl=obj?(obj.label||nid):nid;\n    var num=String(nid).replace(/[^0-9+]/g,'');\n    _cm.show(x,y,[\n      _cm.it('📋','Copy Number',function(){_cp(num||String(nid));}),\n      _cm.it('📝','Copy Full Label',function(){_cp(lbl);}),\n      'sep',\n      _cm.it('🔦','Highlight',function(){var cn=new Set(network.getConnectedNodes(nid));cn.add(nid);allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:cn.has(n.id)?1.0:0.08})));},false),\n      _cm.it('👁','Show Info',function(){if(obj&&obj.title)showPanel('NODE INFO',obj.title);}),\n      'sep',\n      _cm.it('🗑','Remove',function(){deleteSelected();},true),\n    ]);\n  }else if(params.edges.length>0){\n    var eid=params.edges[0];selectedEdgeId=eid;var eo=allEdges.get(eid);\n    _cm.show(x,y,[\n      _cm.it('📋','Copy: '+(eo?String(eo.from).slice(-8):''),function(){_cp(eo?String(eo.from):'');}),\n      _cm.it('📋','Copy: '+(eo?String(eo.to).slice(-8):''),function(){_cp(eo?String(eo.to):'');}),\n      'sep',\n      _cm.it('ℹ️','Edge Info',function(){if(eo&&eo.title)showPanel('LINK INFO',eo.title);}),\n      'sep',\n      _cm.it('🗑','Remove',function(){deleteSelected();},true),\n    ]);\n  }else{\n    _cm.show(x,y,[\n      _cm.it('🔲','Fit All',function(){network.fit();}),\n      _cm.it('👁','Show All',function(){showAll();}),\n      _cm.it('🔴','Common Only',function(){showOnlyCommon();}),\n    ]);\n  }\n});\n")
     return html
 
 
@@ -9091,7 +9013,7 @@ def link_analysis_page():
             coloc_window = st.slider("Co-location time window (minutes)", 5, 120, 30)
         with c3:
             radius_km = st.slider("Co-location radius (km)", 1, 20, 5)
-        exclude_noise = True # Carrier/service numbers filter
+        exclude_noise = True  # Carrier/service numbers সবসময় filter হবে
 
     # ── Subject Name & Photo ──
     with st.expander("👤 Subject Names & Photos (optional)", expanded=False):
@@ -9115,11 +9037,11 @@ def link_analysis_page():
     # ── Contact Names (optional) ──
     with st.expander("📇 Contact Names (optional)", expanded=False):
         st.caption(
-            " । Graph- । "
-            "Format: `880XXXXXXXXXX = `"
+            "পরিচিত নম্বরের নাম দিন। Graph-এ নম্বরের পাশে নাম দেখাবে। "
+            "Format: একটি করে লাইনে `880XXXXXXXXXX = নাম`"
         )
         _contact_names_raw = st.text_area(
-            "Number = Name ( )",
+            "Number = Name (একটি লাইনে একটি)",
             placeholder="8801XXXXXXXXX = Rahim Uddin\n8801YYYYYYYYY = Karim Vai",
             height=140,
             key="contact_names_input"
@@ -9135,7 +9057,7 @@ def link_analysis_page():
                 if _num and _nm:
                     _contact_names_dict[_num] = _nm
         if _contact_names_dict:
-            st.success(f"✅ {len(_contact_names_dict)} ।")
+            st.success(f"✅ {len(_contact_names_dict)}টি নাম লোড হয়েছে।")
 
     if st.button("🔗 Run Link Analysis", type="primary", use_container_width=False,
                  key="run_link_analysis"):
@@ -9252,15 +9174,15 @@ def link_analysis_page():
         with st.spinner("Building network graph..."):
             # ── Graph connections: Fair per-subject top_n + shared bonus ──
             #
-            # Option A: subject exactly top_n contacts ।
-            # subject top_n ।
-            # Option B: top_n slider graph- apply ।
-            # Shared bonus: subject- common
-            # graph- (top_n limit- )।
+            # Option A: প্রতি subject থেকে exactly top_n contacts নেওয়া হয়।
+            #           ফলে ৪টা subject থাকলে প্রত্যেকের top_n সমান।
+            # Option B: top_n slider এখন graph-এও apply হয়।
+            # Shared bonus: একাধিক subject-এর সাথে common হলে সে সবসময়
+            #               graph-এ থাকবে (top_n limit-এর বাইরেও)।
 
             top_connections = defaultdict(dict)
 
-            # Step 0 — Subject-to-subject connections (top_n limit )
+            # Step 0 — Subject-to-subject connections সবসময় রাখা হবে (top_n limit নেই)
             for pb in subjects:
                 if pb in connections:
                     for sub, data in connections[pb].items():
@@ -9268,7 +9190,7 @@ def link_analysis_page():
                             top_connections[pb] = {}
                         top_connections[pb][sub] = data
 
-            # Step 1 — subject top_n contacts (call+sms total sort)
+            # Step 1 — প্রতি subject থেকে top_n contacts নাও (call+sms total দিয়ে sort)
             for df_s in dfs:
                 sub = df_s['_subject'].iloc[0]
                 sub_contacts = sorted(
@@ -9280,9 +9202,9 @@ def link_analysis_page():
                         top_connections[pb] = {}
                     top_connections[pb][sub] = data
 
-            # Step 2 — Shared bonus: number + subject- common
-            # Step 1- top_n cut-off ,
-            # subject- entry ।
+            # Step 2 — Shared bonus: যেসব number ২+ subject-এর সাথে common
+            #           কিন্তু Step 1-এ top_n cut-off এর কারণে বাদ পড়েছে,
+            #           তাদের সব subject-এর entry সহ যোগ করো।
             for pb, subj_dict in connections.items():
                 if len(subj_dict) >= 2:          # common contact
                     if pb not in top_connections:
@@ -9291,7 +9213,7 @@ def link_analysis_page():
                         if sub not in top_connections[pb]:
                             top_connections[pb][sub] = data
 
-            # Step 3 — edge count per subject (graph stats- )
+            # Step 3 — edge count per subject (graph stats-এর জন্য)
             subj_edge_count = {
                 sub: sum(1 for sd in top_connections.values() if sub in sd)
                 for sub in subjects
@@ -9305,6 +9227,8 @@ def link_analysis_page():
                 _subj_meta_by_phone[sub] = meta
 
             graph_html = _build_network_html(dfs, top_connections, subjects, subj_edge_count, _subj_meta_by_phone, _contact_names_dict)
+            # Encode any remaining non-ASCII in the HTML template to HTML entities
+            graph_html = graph_html.encode('ascii', errors='xmlcharrefreplace').decode('ascii')
 
         st.components.v1.html(graph_html, height=780, scrolling=False)
 
@@ -9364,8 +9288,8 @@ def link_analysis_page():
 | ⚡ Med | One: Cell Tower, One: Thana-level (±5 km) | max(user, 8 km) |
 | ⚠️ Low | Large gap — e.g. Cell Tower vs District (±15 km) | max(user, 20 km) |
 
-**Recommendation:** ⚠️ Low accuracy events- co-location ।
-Cell Tower CSV accuracy ।
+**Recommendation:** ⚠️ Low accuracy events-এ co-location নিশ্চিত নয়।
+Cell Tower CSV আপলোড করলে accuracy উন্নত হবে।
                     """)
                     if low_acc > 0:
                         low_df = coloc_df[coloc_df['Accuracy'] == '⚠️ Low'][
@@ -9401,14 +9325,14 @@ Cell Tower CSV accuracy ।
         # ── Section: First / Last Contact Date ──
         # ══════════════════════════════════════════════════════════════════
         st.markdown("### 📅 First & Last Contact Date")
-        st.caption(" subject common contact- ।")
+        st.caption("প্রতিটি subject এবং common contact-এর মধ্যে কখন প্রথম ও শেষবার যোগাযোগ হয়েছে।")
 
         with st.spinner("Calculating contact dates..."):
             fl_dates = _build_first_last_dates(dfs)
 
         if fl_dates and common_contacts:
             fl_rows = []
-            # common contacts- (most investigative value)
+            # শুধু common contacts-এর জন্য দেখাও (most investigative value)
             for pb, subj_dict in common_contacts:
                 if _is_carrier_number(pb) or _is_promotional(pb): continue
                 for sub in subjects:
@@ -9427,11 +9351,11 @@ Cell Tower CSV accuracy ।
             if fl_rows:
                 fl_df = pd.DataFrame(fl_rows).sort_values(['Contact', 'Subject'])
 
-                # Highlight: same contact- subjects- first contact date
+                # Highlight: same contact-এর জন্য subjects-এর first contact date কতটা কাছাকাছি
                 st.dataframe(fl_df, use_container_width=True, hide_index=True, height=350)
 
                 # ── Date alignment insight ──
-                # contact- subject- first contact date gap
+                # একই contact-এ দুই subject-এর first contact date gap বের করো
                 align_rows = []
                 contact_groups = fl_df.groupby('Contact')
                 for contact, grp in contact_groups:
@@ -9457,7 +9381,7 @@ Cell Tower CSV accuracy ।
                 if align_rows:
                     align_df = pd.DataFrame(align_rows).sort_values('Date Gap (days)')
                     st.markdown("""<div style="font-weight:700;color:#1e3a8a;margin-top:1rem;margin-bottom:0.4rem;">
-                        📊 Contact Date Alignment — common contact- subjects ?
+                        📊 Contact Date Alignment — কোন common contact-এর সাথে subjects একই সময়ে যোগাযোগ শুরু করেছে?
                     </div>""", unsafe_allow_html=True)
                     st.dataframe(align_df, use_container_width=True, hide_index=True)
                     st.caption("🔴 Same Week = highly suspicious alignment · 🟡 Same Month = moderate · 🟢 Different Period = likely coincidental")
@@ -9476,7 +9400,7 @@ Cell Tower CSV accuracy ।
         _sp_window = st.slider(
             "Pattern detection window (minutes)", 5, 120, 30,
             key="sp_window",
-            help=" / call suspicious pattern flag ।"
+            help="এই সময়ের মধ্যে একই নম্বরে/থেকে call হলে suspicious pattern হিসেবে flag করা হবে।"
         )
 
         with st.spinner("Detecting suspicious patterns..."):
@@ -9488,9 +9412,9 @@ Cell Tower CSV accuracy ।
             st.markdown("""
             <div style="background:#fef2f2;border-left:4px solid #dc2626;border-radius:8px;
                         padding:0.75rem 1rem;font-size:0.83rem;color:#7f1d1d;margin-bottom:0.75rem">
-            <b>🪞 Mirror Call Pattern ?</b><br>
-            Subject A Subject B (<b>±window </b>) call ।
-             indicate <b>coordinated</b> ।
+            <b>🪞 Mirror Call Pattern কী?</b><br>
+            Subject A এবং Subject B প্রায় একই সময়ে (<b>±window মিনিট</b>) একই নম্বরে call করেছে।
+            এটা indicate করে যে তারা হয় <b>coordinated</b> অথবা একই নির্দেশনা পাচ্ছে।
             </div>
             """, unsafe_allow_html=True)
 
@@ -9499,7 +9423,7 @@ Cell Tower CSV accuracy ।
                 st.error(f"🚨 {len(mirror_rows)} mirror call instance(s) detected")
                 st.dataframe(m_df, use_container_width=True, hide_index=True)
 
-                # Summary: numbers mirrored
+                # Summary: কোন numbers সবচেয়ে বেশি mirrored
                 top_mirror = pd.DataFrame(mirror_rows)['Common Number'].value_counts().head(10)
                 if len(top_mirror) > 0:
                     st.markdown("**Top mirrored numbers:**")
@@ -9514,10 +9438,10 @@ Cell Tower CSV accuracy ।
             st.markdown("""
             <div style="background:#fff7ed;border-left:4px solid #f59e0b;border-radius:8px;
                         padding:0.75rem 1rem;font-size:0.83rem;color:#78350f;margin-bottom:0.75rem">
-            <b>🔗 Relay Pattern ?</b><br>
-            Subject A → X call , X → Subject B call (±window )।
-            X <b>intermediary ()</b> message instruction relay ।
-            Direct communication indirect coordination- indicator।
+            <b>🔗 Relay Pattern কী?</b><br>
+            Subject A → X call করে, তারপর X → Subject B call করে (±window মিনিটের মধ্যে)।
+            X একটা <b>intermediary (মধ্যবর্তী)</b> হিসেবে message বা instruction relay করছে।
+            Direct communication এড়িয়ে indirect coordination-এর indicator।
             </div>
             """, unsafe_allow_html=True)
 
@@ -9540,8 +9464,8 @@ Cell Tower CSV accuracy ।
 
 def _parse_profile_docs(doc_files):
     """
-    NTMC PDF / Image robust line-based + regex parsing।
-    Source tracking: value document ।
+    NTMC PDF / Image থেকে robust line-based + regex parsing।
+    Source tracking: প্রতিটি value কোন document থেকে এসেছে।
     """
     import io as _io, base64 as _b64, re as _re
 
@@ -9565,8 +9489,8 @@ def _parse_profile_docs(doc_files):
     def _add(field, val, doc_label=None):
         if not val: return
         v = str(val).strip().rstrip('.,;')
-        # ── OCR cleanup (image scans garbage strip ) ──────────
-        # 1) Leading curly/smart quotes junk characters — OCR- common
+        # ── OCR cleanup (image scans থেকে আসা garbage strip করো) ──────────
+        # 1) Leading curly/smart quotes এবং junk characters — OCR-এ common
         v = _re.sub(r'^[\'\u2018\u2019\u201C\u201D"`*,;:\-\s]+', '', v).strip()
         v = _re.sub(r'[\u2018\u2019]', "'", v)  # normalize curly to straight
         # 2) Leading label-prefix strip (e.g. "Permanent Address: ASMA")
@@ -9591,10 +9515,10 @@ def _parse_profile_docs(doc_files):
         if v.upper() in ('N/A','NA','NONE','880','','N'): return
         if len(v) < 2: return
         # ── Reject obvious label-leak for name fields ──────────────────────
-        # PDF column-layout label
+        # PDF column-layout এ ভুলে label ধরা পড়লে এখানে আটকাবে
         if field in ('name','father','mother','spouse'):
             _vu = v.upper().strip()
-            # Reject Bengali (NID profile- )
+            # Reject Bengali (NID থেকে বাংলা নাম profile-এ আসবে না)
             if _re.search(r'[\u0980-\u09FF]', v): return
             _NAME_LABEL_BLACKLIST = {
                 'PASSPORT STATUS','PASSPORT NUMBER','PASSPORT TYPE',
@@ -9647,8 +9571,8 @@ def _parse_profile_docs(doc_files):
             v = _re.sub(r'^Ot$', 'O+', v)
             v = _re.sub(r'^Bt$', 'B+', v)
         # ── Profession field — reject person-name-like values ─────────────
-        # DL OCR profession- + signature noise
-        # ('MD. FARHAD HOSSAIN Seem pete' )
+        # DL OCR সময় profession-এ ব্যক্তির নিজের নাম + signature noise আসতে পারে
+        # ('MD. FARHAD HOSSAIN Seem pete' টাইপ)
         if field == 'profession':
             _vu = v.upper().strip()
             # Strip OCR signature noise (single random word at end)
@@ -9671,8 +9595,8 @@ def _parse_profile_docs(doc_files):
                     not any(t in _ROLE_WORDS for t in _toks)):
                 return  # Looks like a person name, not a profession
         # ── Vehicle Type — strip leading nationality leak ────────────────
-        # OCR "Nationality\nBangladesh\nVehicle Classes\nLightVehicle..."
-        # "Bangladesh LightVehicle" —
+        # OCR "Nationality\nBangladesh\nVehicle Classes\nLightVehicle..." এর জন্য
+        # "Bangladesh LightVehicle" আসত — সেটা ঠিক করি
         if field == 'vehicle_type':
             v = _re.sub(r'^(Bangladesh[i]?|Bangladeshi)\s+', '', v, flags=_re.I).strip()
             v = _re.sub(r'^(Nationality|License\s*Type)\s*[:\-]?\s*',
@@ -9701,7 +9625,7 @@ def _parse_profile_docs(doc_files):
                 for pt in parts:
                     pt = pt.strip()
                     if not pt: continue
-                    # '-' placeholder ( RAFIQPUR, -, JOMIDAR HAT) —
+                    # '-' placeholder (যেমন RAFIQPUR, -, JOMIDAR HAT) — সবসময় রাখো
                     if pt == '-':
                         good_parts.append(pt)
                         continue
@@ -9752,7 +9676,7 @@ def _parse_profile_docs(doc_files):
         all_words = []
         _ext_photo = None
 
-        # ── pdftotext fallback: Bengali font (SolaimanLipi) ──
+        # ── pdftotext fallback: Bengali font (SolaimanLipi) সঠিকভাবে পড়তে পারে ──
         _pdftotext_txt = ''
         try:
             import subprocess as _sp
@@ -9768,7 +9692,7 @@ def _parse_profile_docs(doc_files):
             with _pdfplumber_mod.open(_io.BytesIO(raw_bytes)) as pdf:
                 for _pi, page in enumerate(pdf.pages):
                     pt = page.extract_text() or ''
-                    # pdftotext better text
+                    # pdftotext দিয়ে better text পাওয়া গেলে সেটা ব্যবহার করো
                     if _pdftotext_txt.strip():
                         full_text = _pdftotext_txt
                     else:
@@ -9855,12 +9779,12 @@ def _parse_profile_docs(doc_files):
     # ── PARSER: NID ──────────────────────────────────────────────────────
     def _parse_nid(txt, lines):
         """
-        NID :
+        NID থেকে শুধু নিচের তথ্য নেওয়া হবে:
           - NID Number (17-digit)
           - Smart ID / New NID Number
           - Blood Group
-         (, , /, DOB ) NID ।
-         Passport / DL / TIN / Vehicle Reg ।
+        বাকি সব (নাম, ঠিকানা, পিতা/মাতা, DOB ইত্যাদি) NID থেকে নেওয়া হবে না।
+        সেগুলো Passport / DL / TIN / Vehicle Reg থেকে আসবে।
         """
         # ── NID Number ──────────────────────────────────────────────────
         for l in lines:
@@ -10097,7 +10021,7 @@ def _parse_profile_docs(doc_files):
 
             # Addresses
             # ── DL Addresses (scanned OCR — NTMC 3-column layout) ─────────
-            # OCR :
+            # OCR দিচ্ছে:
             #   'Permanent Address: ASMA KHATOON'  ← label + spouse mixed
             #   'Thana Diviston Post Code ...'     ← header (skip)
             #   'Satkhira'                          ← Thana
@@ -10110,8 +10034,8 @@ def _parse_profile_docs(doc_files):
 
             def _dl_addr_from_thana_block(start_idx, max_lines=8):
                 """
-                'Permanent/Present Address' label Thana/Division block
-                address । Format:
+                'Permanent/Present Address' label পরে Thana/Division block থেকে
+                address তৈরি করে। Format:
                   header line (Thana Division Post Code) → skip
                   thana line  (1-2 words, location name)
                   division line (division_name + postcode noise)
@@ -10470,9 +10394,9 @@ def _parse_profile_docs(doc_files):
                     break
     def _parse_passport(txt, lines):
         # ── Column-aware extraction (handles 3-column passport layout) ────
-        # pdftotext -layout output Father's Name/Mother's Name/Spouse Name
-        # column- ; line-based parser ।
-        # helper character-column position match value ।
+        # pdftotext -layout output এ Father's Name/Mother's Name/Spouse Name
+        # মাঝ ও ডান column-এ থাকে; line-based parser তা ভুল ধরে। নিচের
+        # helper character-column position match করে সঠিক value আনে।
         _PASSPORT_STOP_LABELS = {
             "Father's Name", "Mother's Name", "Spouse Name", "Passport Status",
             "Permanent Address", "Present Address", "Profession",
@@ -10540,37 +10464,37 @@ def _parse_profile_docs(doc_files):
         if _stv: _add('passport_status', _stv)
 
         # ── Unified Passport Address Parser (PDF + Image OCR) ────────────────
-        # NTMC passport- address layout (PDF image OCR ):
-        # "Present Address" "Present Address <garbage>" ← label line
+        # NTMC passport-এ address layout (PDF বা image OCR দুই ক্ষেত্রেই):
+        #   "Present Address"  বা  "Present Address <garbage>"      ← label line
         #   "<spouse name>"                                          ← skip (right column leak)
         #   "HOUSE-30, ...DHAKA   <other label/garbage>"            ← address (left col)
         #   "Permanent Address   MD ABUL KALAM"                     ← next label + father
         #   "RAFIQPUR, ...NOAKHALI  <garbage>"                       ← address (left col)
         #
-        # : address line- COMMA (>=12 char)।
-        # Spouse name (FARZANA SHAHID), father name comma → ।
-        # Right column- label/value OCR garbage strip ।
+        # মূল নিয়ম: address line-এ COMMA থাকে ও যথেষ্ট লম্বা (>=12 char)।
+        # Spouse name (FARZANA SHAHID), father name ইত্যাদিতে comma থাকে না → বাদ যায়।
+        # Right column-এর label/value এবং OCR garbage strip করা হয়।
 
         def _addr_looks_valid(s):
-            """Real BD address: comma ।
-            Spouse/Father name (comma ) ।"""
+            """Real BD address: comma আছে এবং যথেষ্ট লম্বা।
+            Spouse/Father name (comma নেই) এতে আটকে যায়।"""
             return (',' in s) and (len(s.strip()) >= 12)
 
         def _addr_clean(s):
-            """Address line trailing label/OCR-garbage strip ।"""
-            # Right column label OCR- glue —
+            """Address line থেকে trailing label/OCR-garbage strip করো।"""
+            # Right column label OCR-এ glue হয়ে আসে — কেটে দাও
             s = _re.sub(
                 r"\s+(etinad|Naa|Father|Mother|Spouse|Passport|Profession|"
                 r"Status|Name|Religion|Marital|Citizen|Emergency|DMiayihar|"
                 r"'s\s+\w+).*$",
                 '', s, flags=_re.I)
-            # PDF: 3+ space right-column
+            # PDF: 3+ space দিয়ে আলাদা right-column অংশ কেটে দাও
             s = _re.split(r'\s{3,}', s)[0]
-            # comma-part garbage tail
+            # comma-part ধরে ধরে garbage tail কাটো
             parts = [p.strip() for p in s.split(',')]
             good = []
             for p in parts:
-                # garbage part: (≤2 char, '-' ) mixed-case junk quote/!
+                # garbage part: ছোট (≤2 char, '-' ছাড়া) বা mixed-case junk বা quote/!
                 if p and p != '-' and (len(p) <= 2 or _re.search(r"[a-z]{2}[A-Z]|['\"!]", p)):
                     if good:
                         break
@@ -10578,8 +10502,8 @@ def _parse_profile_docs(doc_files):
             return ', '.join(good).strip().rstrip(',').strip()
 
         def _parse_addr_unified(label_str, field_key):
-            """PDF + Image OCR passport address parse।
-            Multi-line address support: OCR- address ।
+            """PDF + Image OCR উভয় passport থেকে address parse।
+            Multi-line address support: OCR-এ address দুই লাইনে থাকতে পারে।
             """
             _STOP = {'Profession', 'Father', 'Mother', 'Spouse', 'Religion',
                      'Marital', 'Citizen', 'Emergency',
@@ -10588,12 +10512,12 @@ def _parse_profile_docs(doc_files):
                 if label_str not in _ln:
                     continue
                 _parts = []
-                # label line- same-line- address (left col)
+                # label line-এর পরে যদি same-line-এ address থাকে (left col)
                 _rest = _ln.split(label_str, 1)[1].strip()
                 _rest = _re.split(r'\s{3,}', _rest)[0].strip() if _rest else ''
                 if _addr_looks_valid(_rest):
                     _parts.append(_rest)
-                # line scan — multi-line address collect
+                # পরের কয়েকটা line scan করো — multi-line address collect করো
                 for _j in range(_i + 1, min(_i + 7, len(lines))):
                     _row = lines[_j]
                     if not _row.strip():
@@ -10605,54 +10529,54 @@ def _parse_profile_docs(doc_files):
                     _left = _re.split(r'\s{3,}', _row.strip())[0].strip()
                     if not _left:
                         continue
-                    # label
+                    # নতুন label এলে থামো
                     if any(_left == s or _left.startswith(s + ' ') or _left.startswith(s) for s in _STOP):
                         break
                     if _addr_looks_valid(_left):
                         _parts.append(_left)
-                        # continuation check: line- address
-                        # (OCR- multi-line address — e.g. PABLA COLLEGE CROSS / ROAD 2, ...)
-                        # collect , break
+                        # continuation check: পরের line-ও address হতে পারে
+                        # (OCR-এ multi-line address — e.g. PABLA COLLEGE CROSS / ROAD 2, ...)
+                        # শুধু collect করো, break করো না
                     elif _parts and _left and not _left[0].isdigit():
-                        # address , line- comma
-                        # continuation : e.g. "ROAD 2, DAULATPUR, DAULATPUR, KHULNA"
+                        # আগে address পাওয়া গেছে, এই line-এ comma নেই কিন্তু
+                        # continuation হতে পারে: e.g. "ROAD 2, DAULATPUR, DAULATPUR, KHULNA"
                         # Check: valid content (uppercase, no label keyword)
                         _is_addr_continuation = (
-                            _re.search(r'[A-Z]{3}', _left) and # uppercase word
+                            _re.search(r'[A-Z]{3}', _left) and  # uppercase word আছে
                             len(_left) >= 5 and
                             not any(_left.startswith(s) for s in _STOP)
                         )
                         if _is_addr_continuation:
                             _parts.append(_left)
                 if _parts:
-                    # parts , trailing comma
+                    # সব parts জোড়া দাও, trailing comma ঠিক করো
                     _combined = ', '.join(_parts)
-                    # first part trailing comma- part- merge
+                    # যদি first part trailing comma-তে শেষ হয় দ্বিতীয় part-এর সাথে merge
                     # e.g. "NSI OFFICE, -, BANGLA BAZAR, DHAMRAL," + "DHAKA"
                     _combined = _re.sub(r',\s*,', ',', _combined)  # double comma fix
                     _combined = _re.sub(r',\s+([A-Z])', r', \1', _combined)  # spacing normalize
                     _cleaned = _addr_clean(_combined)
                     if len(_cleaned) > 8:
                         _add(field_key, _cleaned)
-                return # label — duplicate exit
+                return  # label পাওয়া গেছে — duplicate এড়াতে exit
 
         _parse_addr_unified('Present Address', 'address_present')
         _parse_addr_unified('Permanent Address', 'address_permanent')
 
-        # Profession: LEFT column (right col- mother name leak )
+        # Profession: LEFT column থেকে নাও (right col-এ mother name leak হতে পারে)
         for _i, _ln in enumerate(lines):
             _ls = _ln.strip()
             if not (_ls == 'Profession' or _ls.startswith('Profession')):
                 continue
             _pf_cands = []
-            # same line- label- value (left col, indent < 30)
+            # same line-এ label-এর ঠিক পরে value (left col, indent < 30)
             _after = _ln.split('Profession', 1)[1] if 'Profession' in _ln else ''
             _after_strip = _after.lstrip()
             _after_indent = len(_after) - len(_after_strip)
             if _after_indent < 30 and _after_strip:
                 _sv = _re.split(r'\s{3,}', _after_strip)[0].strip()
                 if _sv: _pf_cands.append(_sv)
-            # non-empty left-column lines — multi-line profession support
+            # পরের non-empty left-column lines — multi-line profession support
             # e.g. "PERMANENT OFFICER/ STAFF OF AUTONOMOUS" + "ORGANIZATION"
             _PF_STOP = {'Father', 'Mother', 'Spouse', 'Address', 'Passport',
                         'Name', 'Religion', 'Marital', 'Present', 'Permanent',
@@ -10664,13 +10588,13 @@ def _parse_profile_docs(doc_files):
                 if _ind >= 60: continue  # right col only — skip
                 _lf = _re.split(r'\s{3,}', _row.strip())[0].strip()
                 if not _lf: continue
-                # label
+                # নতুন label এলে থামো
                 if any(_lf == s or _lf.startswith(s) for s in _PF_STOP): break
                 _pf_cands.append(_lf)
-                # continuation: line- sentence-ending
-                # e.g. "AUTONOMOUS" punctuation → line continuation
+                # continuation: শুধু যদি line-এ কোনো sentence-ending না থাকে
+                # e.g. "AUTONOMOUS" কোনো punctuation ছাড়া → পরের line continuation
                 if _lf.endswith(('.', ';', ':')): break
-            # name/label candidates join
+            # name/label নয় এমন candidates একসাথে join করো
             _PF_BAD = ('Father', 'Mother', 'Spouse', 'Address', 'Passport',
                        'Name', 'Religion', 'Marital', 'KHATUN', 'BEGUM')
             _pf_good = []
@@ -10679,7 +10603,7 @@ def _parse_profile_docs(doc_files):
                         and not any(_b in _c for _b in _PF_BAD)):
                     _pf_good.append(_c)
                 else:
-                    break # bad candidate
+                    break  # bad candidate এলে থামো
             if _pf_good:
                 _add('profession', ' '.join(_pf_good))
             break
@@ -10956,9 +10880,9 @@ def _parse_profile_docs(doc_files):
                     if m: _add('passport', m.group(1)); break
 
         # Issue Date
-        # TIN PDF- "Passport Issue Date" label value = "01/01/1970" (dummy/N/A)
-        # dummy date reject । Rule: 1970 date + "01/01/YYYY" pattern = dummy
-        # Extra guard: TIN doc "Passport Issue Date" label- value
+        # TIN PDF-এ "Passport Issue Date" label থাকে কিন্তু value = "01/01/1970" (dummy/N/A)
+        # ঐ dummy date reject করতে হবে। Rule: 1970 সালের যেকোনো date + "01/01/YYYY" pattern = dummy
+        # Extra guard: TIN doc হলে "Passport Issue Date" label-এর পরে value নেওয়া হবে না
         _DUMMY_ISSUE_DATES = {'01/01/1970', '1/1/1970', '01-01-1970'}
         _is_tin_doc = ('ASSESSEE NAME' in txt.upper() or 'OLD TIN' in txt.upper())
         for i, l in enumerate(lines):
@@ -10999,7 +10923,7 @@ def _parse_profile_docs(doc_files):
                 r"^['\"]?(?:[A-Z]+\s+){1,5}(?=Document|REVOKED|ACTIVE|revoked|active)",
                 '', raw.strip(), flags=_re.I).strip()
             ls = ls.lstrip("'\"").strip()
-            # If "Reissue" completion word missing, scan ahead 1-4 lines
+            # If "Reissue" বা completion word missing, scan ahead 1-4 lines
             if ls and 'reissue' not in ls.lower():
                 for _k in range(idx+1, min(idx+5, len(lines))):
                     _nxt = lines[_k].strip()
@@ -11028,7 +10952,7 @@ def _parse_profile_docs(doc_files):
                     for j in range(i+1, min(i+5, len(lines))):
                         nxt = lines[j].strip()
                         if not nxt: continue
-                        # Stop new label
+                        # Stop যদি new label আসে
                         if _re.match(r'^(Father|Mother|Spouse|Permanent|Present|'
                                      r'Profession|NID|Date)\b', nxt):
                             break
@@ -11209,8 +11133,8 @@ def _parse_profile_docs(doc_files):
     # ── NID Address Image Crop ──────────────────────────────────────────────
     def _crop_nid_address_images(raw_bytes, is_pdf=True):
         """
-        NID PDF/Image Permanent Present Address section crop ।
-        Coordinate-based: word positions boundary ।
+        NID PDF/Image থেকে Permanent ও Present Address section crop করো।
+        Coordinate-based: word positions দিয়ে সঠিক boundary বের করো।
         Returns: (perm_b64, pres_b64)
         """
         try:
@@ -11332,7 +11256,7 @@ def _parse_profile_docs(doc_files):
 
     # ── Image OCR parser (for BRTA DL / Passport / NID images) ──────────────
     def _parse_image_ocr(raw_bytes, fname):
-        """OCR image text parse ।"""
+        """OCR করে image থেকে text বের করে parse করো।"""
         _ocr_txt = ''
         try:
             # PIL → _PILImage (module-level import)
@@ -11351,10 +11275,10 @@ def _parse_profile_docs(doc_files):
         fname = f.name.lower()
         raw   = f.read(); f.seek(0)
 
-        # ── Image files — OCR parse ──
+        # ── Image files — OCR করে parse করো ──
         if any(fname.endswith(x) for x in ['.jpg','.jpeg','.png']):
 
-            # OCR document type detect (photo assign- )
+            # OCR করে document type detect করো (photo assign-এর আগে)
             _ocr_txt = _parse_image_ocr(raw, fname)
             _is_doc_img = False
 
@@ -11369,7 +11293,7 @@ def _parse_profile_docs(doc_files):
                     _parse_driving_license(_ocr_txt, _lines_img)
                     if 'Driving License' not in docs_found:
                         docs_found.append('Driving License')
-                    # DL image photo crop (left ~28%)
+                    # DL image থেকে photo crop (left ~28%)
                     if not photo_b64:
                         try:
                             # PIL → _PILImage (module-level import)
@@ -11393,7 +11317,7 @@ def _parse_profile_docs(doc_files):
                     _parse_passport(_ocr_txt, _lines_img)
                     if 'Passport' not in docs_found:
                         docs_found.append('Passport')
-                    # Passport image photo crop (left panel ~30%)
+                    # Passport image থেকে photo crop (left panel ~30%)
                     if not photo_b64:
                         try:
                             # PIL → _PILImage (module-level import)
@@ -11411,7 +11335,7 @@ def _parse_profile_docs(doc_files):
                     _parse_nid(_ocr_txt, _lines_img)
                     if 'NID' not in docs_found:
                         docs_found.append('NID')
-                    # NID Image address section crop
+                    # NID Image থেকে address section crop করো
                     # Full NID image = the uploaded image itself
                     if not _nid_page_img:
                         try:
@@ -11449,7 +11373,7 @@ def _parse_profile_docs(doc_files):
                     if 'TIN' not in docs_found:
                         docs_found.append('TIN')
 
-            # Document image → subject photo
+            # Document image নয় → subject photo হিসেবে রাখো
             if not _is_doc_img and not photo_b64:
                 mime = 'image/jpeg' if fname.endswith(('.jpg','.jpeg')) else 'image/png'
                 photo_b64 = "data:" + mime + ";base64," + _b64.b64encode(raw).decode()
@@ -11519,8 +11443,8 @@ def _parse_profile_docs(doc_files):
             _parse_nid(txt, lines)
             if 'NID' not in docs_found: docs_found.append('NID')
             # NID PDF → full page image + face photo crop
-            # Strategy: PyMuPDF embedded image extract
-            # (pdfplumber page render- crop coordinate )
+            # Strategy: PyMuPDF দিয়ে embedded image সরাসরি extract করা
+            # (pdfplumber page render-এ crop coordinate ভুল হওয়ার সম্ভাবনা থাকে)
             try:
                 import fitz as _fitz_nid
                 _nid_doc = _fitz_nid.open(stream=_io.BytesIO(raw), filetype="pdf")
@@ -11533,8 +11457,8 @@ def _parse_profile_docs(doc_files):
                                 + _b64.b64encode(_nid_buf.getvalue()).decode())
 
                 # ── Face photo: best portrait image from embedded images ──────
-                # NID PDF- person- photo embedded portrait orientation-
-                # portrait image- face
+                # NID PDF-এ person-এর photo embedded থাকে portrait orientation-এ
+                # সবচেয়ে বড় portrait image-টাই face
                 if not photo_b64:
                     _best_face = None
                     _best_area = 0
@@ -11560,7 +11484,7 @@ def _parse_profile_docs(doc_files):
                                      + _b64.b64encode(_fb.getvalue()).decode())
                 _nid_doc.close()
             except Exception:
-                # PyMuPDF pdfplumber fallback
+                # PyMuPDF না থাকলে pdfplumber fallback
                 try:
                     with _pdfplumber_mod.open(_io.BytesIO(raw)) as _pdf2:
                         _nid_pg2  = _pdf2.pages[0]
@@ -11653,8 +11577,8 @@ def _parse_profile_docs(doc_files):
         ) for v, lbl in store['mother'] if v]
 
     # ── Post-process passport_status: drop dangling "due to" ──────────
-    # OCR- "Document revoked due to Reissue" multi-line source-
-    # "Document revoked due to" । Reissue trim ।
+    # OCR-এ "Document revoked due to Reissue" multi-line হলে কিছু source-এ
+    # শুধু "Document revoked due to" আসে। Reissue লাগানো বা trim করি।
     if _store_has('passport_status'):
         _ps_new = []
         for _v, _lbl in store['passport_status']:
@@ -11672,12 +11596,12 @@ def _parse_profile_docs(doc_files):
         store['passport_status'] = _ps_new
 
     # ── Post-process name fields: "Late X" / "X" dedup ─────────────────
-    # NBR TIN- - "Late" prefix । doc-
-    # । mismatch , "Late" version-
-    # parent value display- (a/b)। fuzzy
-    # match- "Late" + base form — mismatch detection-
-    # । dedup base form same
-    # source same (clean repeated extraction)।
+    # NBR TIN-এ ব্যক্তির বাবা-মা মৃত থাকলে "Late" prefix থাকে। অন্য doc-এ
+    # সেটা নেই। দুজনকে আলাদা mismatch হিসেবে না দেখিয়ে, "Late" version-কে
+    # parent value হিসেবেই রাখি কিন্তু দুটো display-এ আসবে (a/b)। তবে fuzzy
+    # match-এ "Late" + base form এক হিসেবে গণ্য হবে — এটা mismatch detection-এ
+    # হ্যান্ডল করা যাবে। এখানে আমরা শুধু dedup করি যদি base form same হয় ও
+    # source same হয় (clean repeated extraction)।
     for _nf in ('father','mother','spouse'):
         if not _store_has(_nf): continue
         _seen_base = {}
@@ -11717,8 +11641,8 @@ def _parse_profile_docs(doc_files):
         if not result.get('nid_new_src'):
             result['nid_new_src'] = result.get('smart_id_src', [])
 
-    # ── Address primary selection — informative value ─────
-    # : address (comma , character )
+    # ── Address primary selection — সবচেয়ে informative value বেছে নাও ─────
+    # ক্রাইটেরিয়া: সম্পূর্ণ address (comma বেশি, character বেশি)
     def _best_addr(field_key):
         candidates = [(v, lbl) for v, lbl in store.get(field_key, [])
                       if v and len(v) >= 8 and 'N/A' not in v.upper()]
@@ -11813,9 +11737,9 @@ def _parse_profile_docs(doc_files):
                 return ''
             if not _re.search(r'[A-Z]{2,}', v): return ''
             # Reject if contains Bengali characters (OCR garbage)
-            if _re.search(r'[-]', v): return ''
+            if _re.search(r'[ঀ-৿]', v): return ''
             # Reject if looks like address (contains comma+digits or road keywords)
-            if _re.search(r'[-]|ROAD-\d|BLOCK-\w|WARD|KHILGAON|RAMPURA', v): return ''
+            if _re.search(r'[ঀ-৿]|ROAD-\d|BLOCK-\w|WARD|KHILGAON|RAMPURA', v): return ''
             # Max reasonable name length
             if len(v) > 60: return ''
         if 'nid' in field:
@@ -11823,7 +11747,7 @@ def _parse_profile_docs(doc_files):
             if len(v) < 10: return ''
         if 'address' in field:
             if len(v) < 10: return ''
-            if _re.search(r'[-]', v): return ''
+            if _re.search(r'[ঀ-৿]', v): return ''
             # Reject passport status, revocation notices etc
             _BAD_ADDR = ('DOCUMENT REVOKED','REISSUE','PASSPORT STATUS',
                          'REVOKED DUE','CANCELLED','ACTIVE','OFFICIAL',
@@ -12377,8 +12301,8 @@ def main():
     # ── Profile & Documents Upload (Optional) ──
     with st.expander("👤 Profile & Documents (Optional — NID, Passport, DL, TIN, Vehicle)", expanded=False):
         st.caption(
-            " (NID, Passport, Driving License, TIN, Vehicle Registration) "
-            "PDF । CDR Profile Analysis ।"
+            "পরিচয়পত্র (NID, Passport, Driving License, TIN, Vehicle Registration) "
+            "PDF বা ছবি আকারে আপলোড করুন। CDR রিপোর্টের উপরে Profile Analysis অংশে যুক্ত হবে।"
         )
 
         _prof_col1, _prof_col2 = st.columns([1, 2])
@@ -12431,9 +12355,9 @@ def main():
             # No new docs — keep existing parsed data
             pass
 
-    # Store profile_data — expander- session_state
-    # manual_name (doc ) empty dict
-    # photo/name render
+    # Store profile_data — expander-এর বাইরে session_state থেকে পড়ো
+    # manual_name শুধু দেওয়া থাকলে (doc ছাড়া) empty dict তৈরি করে রাখো
+    # যাতে photo/name নিচে সঠিকভাবে render হয়
     _mn_val = st.session_state.get('_manual_name_val', '')
     if _mn_val and not st.session_state.get('_profile_data'):
         st.session_state['_profile_data'] = {'manual_name': _mn_val}
@@ -12535,19 +12459,19 @@ def main():
         return
 
     # ── Process ──
-    # ── Session State Cache: file re-analysis ──
+    # ── Session State Cache: একই file দিলে re-analysis বন্ধ ──
     # hashlib → _hashlib_mod (module-level import)
     _file_bytes_raw = uploaded.read()
     _file_hash = _hashlib_mod.md5(_file_bytes_raw).hexdigest()
 
     # ── Run Analysis Button ──
-    # File upload analysis , button click
+    # File upload হলেই analysis শুরু না করে, button click করলে শুরু হবে
     _run_key = f"run_analysis_{_file_hash}"
     if _run_key not in st.session_state:
         st.session_state[_run_key] = False
 
-    # Link Analysis _run_key=True cache
-    # "Re-run Analysis" button
+    # Link Analysis থেকে ফিরলে _run_key=True কিন্তু cache নাও থাকতে পারে
+    # সেক্ষেত্রে "Re-run Analysis" button দেখাও
     _prof_hash_check = ''
     _pdata_check = st.session_state.get('_profile_data', None)
     if _pdata_check:
@@ -12559,7 +12483,7 @@ def main():
     _cache_exists = _cache_key_check in st.session_state
 
     # ── Parse profile docs BEFORE Run button check ──
-    # profile hash Re-run loop
+    # যাতে profile hash সঠিক থাকে এবং Re-run loop না হয়
     _doc_bytes_pre = st.session_state.get('_profile_doc_bytes', [])
     if _doc_bytes_pre:
         _docs_hash = str(hash(str([(d['name'], len(d['data'])) for d in _doc_bytes_pre])))
@@ -12592,8 +12516,8 @@ def main():
     _cache_exists = _cache_key_check in st.session_state
 
     # ── Run / Re-run button logic ──
-    # button analysis (run_key=False)
-    # run_key=True cache → analysis (button )
+    # শুধু তখনই button দেখাও যখন analysis একদমই হয়নি (run_key=False)
+    # run_key=True কিন্তু cache নেই → analysis চলুক (button দেখাবে না)
     if not st.session_state[_run_key]:
         st.markdown(f"""
         <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:12px;
@@ -12613,42 +12537,25 @@ def main():
                 value=st.session_state.get('_nominatim_enabled', False),
                 key=f"nom_toggle_{_file_hash}",
                 help=(
-                    "P.S: area keyword GPS "
-                    "Nominatim API address geocode ।\n\n"
-                    "⚠️ Rate limit: req/sec — CDR- (+ row) "
-                    " ।\n"
-                    "Cell Tower CSV on ।"
+                    "P.S: এবং area keyword উভয়ই GPS দিতে ব্যর্থ হলে "
+                    "Nominatim API দিয়ে address geocode করবে।\n\n"
+                    "⚠️ Rate limit: ১ req/sec — বড় CDR-এ (৫০০০+ row) "
+                    "কয়েক মিনিট বেশি সময় লাগতে পারে।\n"
+                    "Cell Tower CSV থাকলে এটা on করার দরকার নেই।"
                 )
             )
             st.session_state['_nominatim_enabled'] = _nom_enabled
             if _nom_enabled:
                 st.info(
-                    "🌐 Geocoding — P.S: keyword scan "
-                    " fail Nominatim call । "
-                    "Cache , address query ।"
+                    "🌐 Geocoding চালু — শুধু P.S: এবং keyword scan "
+                    "উভয়ই fail করলে Nominatim call হবে। "
+                    "Cache করা থাকে, একই address দ্বিতীয়বার query হবে না।"
                 )
             else:
-                st.caption("Geocoding — Cell Tower CSV text parse GPS ।")
+                st.caption("Geocoding বন্ধ — Cell Tower CSV ও text parse দিয়ে GPS নেওয়া হবে।")
 
-        # Nominatim global enable/disable — _nominatim_geocode() flag check
+        # Nominatim global enable/disable — _nominatim_geocode() এই flag check করে
         _NOMINATIM_CACHE['__enabled__'] = st.session_state.get('_nominatim_enabled', False)
-
-        # Report Settings
-        with st.expander("📊 Report Settings", expanded=False):
-            _rs_c1, _rs_c2 = st.columns(2)
-            with _rs_c1:
-                st.slider("📞 Top Contacts (Section 5 & 7)",
-                    min_value=5, max_value=50, value=10, step=5,
-                    key=f"top_n_contact_{_file_hash}",
-                    help="Top N contacts in HTML & Word report")
-            with _rs_c2:
-                st.slider("📍 Top Locations (Section 6)",
-                    min_value=5, max_value=30, value=10, step=5,
-                    key=f"top_n_location_{_file_hash}",
-                    help="Top N locations in HTML & Word report")
-            _tc=st.session_state.get(f"top_n_contact_{_file_hash}",10)
-            _tl=st.session_state.get(f"top_n_location_{_file_hash}",10)
-            st.caption(f"Contact: top **{_tc}** · Location: top **{_tl}**")
 
         if st.button("▶️ Run Analysis", type="primary", use_container_width=False,
                      key=f"run_btn_{_file_hash}"):
@@ -12656,8 +12563,8 @@ def main():
             st.rerun()
         return  # Analysis will not start without clicking the button
 
-    # run_key=True cache → profile/target → Re-run option
-    # analysis — return
+    # run_key=True কিন্তু cache নেই → profile/target পরিবর্তন হয়েছে → Re-run option দেখাও
+    # কিন্তু analysis চলতে দাও — return করো না
     if not _cache_exists:
         _rerun_col1, _rerun_col2 = st.columns([3, 1])
         with _rerun_col2:
@@ -12681,17 +12588,17 @@ def main():
     _cache_key = f"cdr_result_{_file_hash}_{_prof_hash}"
 
     # ── Apply Nominatim toggle state ──────────────────────────────────────
-    # Analysis user- choice geocoding on/off
+    # Analysis শুরুর আগে user-এর choice অনুযায়ী geocoding on/off করো
     _NOMINATIM_CACHE['__enabled__'] = st.session_state.get('_nominatim_enabled', False)
 
-    # target_number target_location session_state-
+    # target_number এবং target_location আলাদা session_state-এ রাখি
     if "target_number_val" not in st.session_state:
         st.session_state["target_number_val"] = ""
     if "target_location_val" not in st.session_state:
         st.session_state["target_location_val"] = ""
 
     _from_cache = False
-    # cache- inputs same → cached result
+    # যদি cache-এ আছে এবং inputs same → cached result দেখাও
     if (_cache_key in st.session_state
             and st.session_state.get(_run_key, False)):
         _cached = st.session_state[_cache_key]
@@ -12768,8 +12675,8 @@ def main():
         progress.progress(15, text="🔍 Analyzing data structure...")
 
         # ── Cell Tower GPS Enrichment ─────────────────────────────────────
-        # operator- CSV LAC+CID → exact GPS
-        # LAC mismatch CID+address token smart fallback
+        # সব operator-এর CSV থেকে LAC+CID → exact GPS
+        # LAC mismatch থাকলে CID+address token দিয়ে smart fallback
         cell_match_count = 0
         if not _from_cache:
           try:
@@ -12782,8 +12689,8 @@ def main():
 
 
 
-            # ── Local file fallback: HF_FILES_CFG hf uploads ──
-            # user uploads Banglalink_4G.csv CELL_DIR- copy
+            # ── Local file fallback: HF_FILES_CFG hf নাম অনুযায়ী uploads ফোল্ডারে খোঁজো ──
+            # যদি user uploads ফোল্ডারে Banglalink_4G.csv থাকে সেটা সরাসরি CELL_DIR-এ copy করো
             _UPLOADS_DIR = "/mnt/user-data/uploads"
             _LOCAL_FILE_MAP = {
                 "Banglalink_4G.csv":    "Banglalink_4G.csv",
@@ -12815,7 +12722,7 @@ def main():
                 "GP_4G.csv":  {"hf": "GP_4G.csv",  "enc": "latin-1", "lac": "lac", "cid": "cell_id",      "lat": "latitude", "lon": "longitude", "addr": "address",      "thana": "thana", "district": "district"},
                 # ── Robi ──────────────────────────────────────────────────
                 "Robi_2G.csv": {"hf": "Robi_2G.csv", "enc": "latin-1", "lac": "lac", "cid": "cell_id",   "lat": "latitude", "lon": "longitude", "addr": "address",      "thana": "thana", "district": "district"},
-                # Robi_3G.csv HF- → Robi_2G.csv fallback
+                # Robi_3G.csv নেই HF-এ → Robi_2G.csv fallback
                 "Robi_4G.csv": {"hf": "Robi_4G.csv", "enc": "latin-1", "lac": "enodebid", "cid": "cell_id", "lat": "latitude", "lon": "longitude", "addr": "address", "thana": "thana", "district": "district", "lac_alt": "tac"},
                 # ── Banglalink ────────────────────────────────────────────
                 "Banglalink_2G3G.csv": {"hf": "Banglalink_2G3G.csv", "enc": "latin-1", "lac": "lac", "cid": "ci",           "lat": "latitude", "lon": "longitude", "addr": "site address", "thana": "thana", "district": "district"},
@@ -13184,8 +13091,8 @@ def main():
                                 d = str(rd.get(dist_key, rd.get(dist_col, ""))).strip()
                                 if d and d != 'nan': parts.append(d)
                             addr_str = ", ".join(parts)
-                            # ── token: address + thana + district ──
-                            # Thana/District token matching CDR address- tower
+                            # ── token: address + thana + district সব মিলিয়ে ──
+                            # Thana/District token matching CDR address-এ থানার নাম থাকলে সঠিক tower বাছাই করতে সাহায্য করে
                             toks = _addr_tokens(addr_str)
                             k = (lv, cv)
                             # district value for trip filtering
@@ -13197,9 +13104,9 @@ def main():
                             cid_multi[cv].append((lat, lon, toks, addr_str))  # addr_str for token matching
                             # ── Robi 4G special: ENODEBID//100 = CDR LAC_ID ──────────
                             # CDR LAC_ID = ENODEBID ÷ 100 (integer division)
-                            # CDR Cell ID digit = CSV CELL_ID
-                            # Ambiguity: (derived_lac, sector) tower — address token best
-                            # cell_exact- first-wins robi4g_multi-
+                            # CDR Cell ID শেষ ২ digit = CSV CELL_ID
+                            # Ambiguity: একই (derived_lac, sector) অনেক tower — address token দিয়ে best নাও
+                            # তাই cell_exact-এ first-wins না রেখে robi4g_multi-তে সব রাখো
                             if fname == "Robi_4G.csv":
                                 try:
                                     _enb_int = int(float(str(rd[lc_key])))
@@ -13227,7 +13134,7 @@ def main():
                             continue
                     # ── Teletalk: CGI/ECGI index (post-loop) ─────────────────
                     # itertuples() renames 'CGI/ECGI' → '_8' (slash/space not allowed).
-                    # Fix: loop- pandas iterrows() CGI/ECGI column ।
+                    # Fix: loop-এর পরে pandas iterrows() দিয়ে CGI/ECGI column পড়ো।
                     if fname == 'Teletalk.csv':
                         try:
                             _cgi_c = next((c for c in cdf2.columns
@@ -13284,7 +13191,7 @@ def main():
                 ("gp",       "3g"): "GP_3G.csv",
                 ("gp",       "4g"): "GP_4G.csv",
                 ("robi",     "2g"): "Robi_2G.csv",
-                ("robi", "3g"): "Robi_2G.csv", # Robi_3G.csv HF-
+                ("robi",     "3g"): "Robi_2G.csv",       # Robi_3G.csv নেই HF-এ
                 ("robi",     "4g"): "Robi_4G.csv",
                 ("bl",       "2g"): "Banglalink_2G3G.csv",
                 ("bl",       "3g"): "Banglalink_2G3G.csv",
@@ -13325,10 +13232,10 @@ def main():
                 ex, mu, r4g_multi = _load_cell_file(fn, cfg)
                 loaded_files[fn] = {"exact": ex, "multi": mu, "addr_list": [], "robi4g_multi": r4g_multi}
 
-            # ── CSV CDR: HF download re-enrich ───────────────────────────
-            # load_and_clean() CSV path- _apply_bts_enrichment() early call
-            # HuggingFace Teletalk.csv download ।
-            # download — Teletalk CDR cell_lat empty rows re-enrich ।
+            # ── CSV CDR: HF download পরে re-enrich ───────────────────────────
+            # load_and_clean() CSV path-এ _apply_bts_enrichment() early call হয়েছিল
+            # কিন্তু তখন HuggingFace থেকে Teletalk.csv download হয়নি।
+            # এখন download শেষ — Teletalk CDR হলে cell_lat empty rows re-enrich করো।
             try:
                 _is_csv_teletalk = (
                     'operator' in df.columns and
@@ -13348,7 +13255,7 @@ def main():
             except Exception:
                 logger.debug('Suppressed exception', exc_info=True)
 
-            # ── Robi 4G: addr_list address token matching- ──
+            # ── Robi 4G: addr_list তৈরি করো address token matching-এর জন্য ──
             for fn in list(loaded_files.keys()) if loaded_files else []:
                 if fn == "Robi_4G.csv":
                     _r4g_cfg = HF_FILES_CFG.get(fn, {})
@@ -13405,8 +13312,8 @@ def main():
                 for _fn, _fd in loaded_files.items():
                     _ex_cnt = len(_fd["exact"]); _mu_cnt = len(_fd["multi"])
                     if _ex_cnt == 0 and _mu_cnt == 0:
-                        # Teletalk CSV- CGI/ECGI-based index — ('0',cgi) keys
-                        # normal (lac,cid) count = 0 Teletalk
+                        # Teletalk CSV-এ CGI/ECGI-based index থাকে — ('0',cgi) keys
+                        # তাই normal (lac,cid) count = 0 হলেও Teletalk কাজ করে
                         if "teletalk" not in _fn.lower():
                             st.warning(f"⚠️ {_fn}: Loaded but 0 towers found — check CSV column names")
 
@@ -13428,8 +13335,8 @@ def main():
                     op_k  = _op_key(row.get("operator", "")) if "operator" in df.columns else None
                     gen_k = _gen_from_cell_type(row.get("cell_type", "")) if "cell_type" in df.columns else None
 
-                    # Operator+Network strict: CDR- operator 2G/3G/4G
-                    # CSV- LAC+CID match — operator generation-
+                    # Operator+Network strict: CDR-এর operator ও 2G/3G/4G অনুযায়ী
+                    # শুধু সেই CSV-এ LAC+CID match করো — অন্য operator বা অন্য generation-এ যাবে না
                     fnames_to_try = []
                     if op_k and gen_k:
                         # Priority 1: exact operator+generation match
@@ -13443,12 +13350,12 @@ def main():
                                 if fb and fb in loaded_files and fb not in fnames_to_try:
                                     fnames_to_try.append(fb)
                     elif op_k and not gen_k:
-                        # Cell Type NaN/unknown → same operator- generation CSV try
+                        # Cell Type NaN/unknown → same operator-এর সব generation CSV try
                         for g in ["4g", "3g", "2g"]:
                             fb = OP_GEN_FILE.get((op_k, g))
                             if fb and fb in loaded_files and fb not in fnames_to_try:
                                 fnames_to_try.append(fb)
-                    # operator- CSV
+                    # অন্য operator-এর CSV দেখবে না
                     if not fnames_to_try:
                         fnames_to_try = list(loaded_files.keys())
 
@@ -13461,10 +13368,10 @@ def main():
                             found_lat, found_lon, _, found_addr = exact[k]
                             found_dist_val = found_addr.split(",")[-1].strip() if "," in found_addr else found_addr[:20]
                             break
-                        # CID+Address fallback: LAC mismatch CID same
-                        # GP 4G- tower LAC- (TAC reassignment)
-                        # CDR BTS address vs CSV address token similarity — score >= 2 accept
-                        # score=1 (Chandpur-style false positive )
+                        # CID+Address fallback: LAC mismatch কিন্তু CID same থাকলে
+                        # GP 4G-তে একই tower একাধিক LAC-এ থাকতে পারে (TAC reassignment)
+                        # CDR BTS address vs CSV address token similarity — score >= 2 হলেই accept
+                        # score=1 হলে না নেওয়াই ভালো (Chandpur-style false positive এড়াতে)
                         elif cv in multi and cdr_addr_toks:
                             _best_m = None; _best_sc = 0; _best_addr = ""; _best_dv = ""
                             for _lt, _ln, _ctoks, _caddr in multi[cv]:
@@ -13476,18 +13383,18 @@ def main():
                                 found_lat, found_lon = _best_m; found_addr = _best_addr; found_dist_val = _best_dv
                                 break
                         # ── Robi 2G: cell_id-only fallback (LAC mismatch) ────────────
-                        # Robi 2G CDR- records- LAC mismatch —
-                        # cell_id LAC- store ।
-                        # Fallback: cell_id match, address/district disambiguate।
+                        # Robi 2G CDR-এ কিছু records-এ LAC mismatch হয় —
+                        # একই cell_id ভিন্ন LAC-এ store হয়।
+                        # Fallback: cell_id দিয়ে match, address/district দিয়ে disambiguate।
                         elif cv in multi and not cdr_addr_toks and op_k == "robi" and gen_k in ("2g", "3g"):
-                            # Address token — first candidate
+                            # Address token নেই — শুধু first candidate নাও
                             _cands = multi[cv]
                             if len(_cands) == 1:
                                 found_lat, found_lon, _, found_addr = _cands[0]
                                 found_dist_val = found_addr.split(",")[-1].strip() if "," in found_addr else found_addr[:20]
                                 break
                         elif cv in multi and op_k == "robi" and gen_k in ("2g", "3g"):
-                            # Address score < 2 — district match try
+                            # Address আছে কিন্তু score < 2 — district match দিয়ে try করি
                             _cdr_addr_lo_r2 = str(row.get("address","")).lower()
                             _cands_r2 = multi[cv]
                             _pick_r2 = None
@@ -13504,9 +13411,9 @@ def main():
                                 break
 
                     # ── Teletalk special: CGI/ECGI direct match ──────────────────
-                    # Teletalk CDR- Cell ID = full CGI/ECGI (e.g. 470040122737532)
-                    # LAC/CID , normal (lv,cv) match ।
-                    # Fix: cell_id- CGI/ECGI ('0', cgi_val) key lookup ।
+                    # Teletalk CDR-এ Cell ID = full CGI/ECGI (e.g. 470040122737532)
+                    # LAC/CID আলাদা নেই, তাই normal (lv,cv) match ব্যর্থ হয়।
+                    # Fix: cell_id-কে CGI/ECGI হিসেবে ('0', cgi_val) key দিয়ে lookup করো।
                     if found_lat is None and op_k == "teletalk":
                         _tel_fname = "Teletalk.csv"
                         if _tel_fname in loaded_files:
@@ -13518,8 +13425,8 @@ def main():
                                 found_dist_val = found_addr.split(",")[-1].strip() if "," in found_addr else found_addr[:20]
 
                     # ── Robi 4G special: ENODEBID//100 = CDR LAC_ID ──────────────
-                    # CDR LAC_ID = ENODEBID ÷ 100, CDR Cell ID digit = CSV CELL_ID
-                    # Ambiguity: (derived_lac, sector) tower → address token best
+                    # CDR LAC_ID = ENODEBID ÷ 100, CDR Cell ID শেষ ২ digit = CSV CELL_ID
+                    # Ambiguity: একই (derived_lac, sector) অনেক tower → address token দিয়ে best নাও
                     if found_lat is None and op_k == "robi" and gen_k == "4g":
                         robi_4g_fname = OP_GEN_FILE.get(("robi","4g"))
                         if robi_4g_fname and robi_4g_fname in loaded_files:
@@ -13527,7 +13434,7 @@ def main():
                             try:
                                 _cv_str = cv.lstrip("0") or "0"
                                 if len(_cv_str) >= 2:
-                                    _sector_cv = _cv_str[-2:] # digit
+                                    _sector_cv = _cv_str[-2:]   # শেষ ২ digit
                                     _k_r4g = (lv, _sector_cv)
                                     _r4g_cands = _r4g_multi.get(_k_r4g, [])
                                     if _r4g_cands:
@@ -13535,7 +13442,7 @@ def main():
                                             found_lat, found_lon, _, found_addr = _r4g_cands[0]
                                             found_dist_val = found_addr.split(",")[-1].strip() if "," in found_addr else found_addr[:20]
                                         elif cdr_addr_toks:
-                                            # address token matching — best score
+                                            # address token matching — best score জিতবে
                                             _best_r4g = None; _best_sc_r4g = -1
                                             for _lt, _ln, _ctoks, _caddr in _r4g_cands:
                                                 _sc = len(cdr_addr_toks & _ctoks) if cdr_addr_toks and _ctoks else 0
@@ -13545,14 +13452,14 @@ def main():
                                                 found_lat, found_lon, found_addr = _best_r4g
                                                 found_dist_val = found_addr.split(",")[-1].strip() if "," in found_addr else found_addr[:20]
                                         else:
-                                            # address → first entry
+                                            # address নেই → first entry
                                             found_lat, found_lon, _, found_addr = _r4g_cands[0]
                                             found_dist_val = found_addr.split(",")[-1].strip() if "," in found_addr else found_addr[:20]
                             except Exception:
                                 logger.debug('Suppressed exception', exc_info=True)
 
                     # ── Robi 4G address token fallback (if still not found) ──
-                    # CDR BTS address ↔ CSV address token similarity GPS
+                    # CDR BTS address ↔ CSV address token similarity দিয়ে GPS নেওয়া হয়
                     if found_lat is None and op_k == "robi" and gen_k == "4g" and cdr_addr_toks:
                         robi_4g_fname = OP_GEN_FILE.get(("robi","4g"))
                         if robi_4g_fname and robi_4g_fname in loaded_files:
@@ -13612,7 +13519,7 @@ def main():
                         neighbor_rows  = neighbor_gps,
                     )
 
-                    # CID-only matches
+                    # CID-only matches পেলে থ্রেশহোল্ড বাড়াই
                     effective_threshold = GPS_CONFIDENCE_THRESHOLD
                     if clat is not None and k4 not in loaded_files.get(fnames_to_try[0] if fnames_to_try else "", {}).get("exact", {}):
                         # This was a CID-only match — stricter threshold
@@ -13725,9 +13632,7 @@ def main():
 
 
 
-        html_content = build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number, target_location, profile_data=profile_data,
-                                  top_n_contact=st.session_state.get(f"top_n_contact_{_file_hash}", 10),
-                                  top_n_location=st.session_state.get(f"top_n_location_{_file_hash}", 10))
+        html_content = build_html(df, phone, operator, date_range, total_raw, anomaly_count, target_number, target_location, profile_data=profile_data)
         # Inject Profile Analysis section after <h1>
         if profile_data and any(profile_data.get(k) for k in ['name','nid','passport','docs_found']):
             _prof_html = _profile_html_section(profile_data)
@@ -13739,9 +13644,7 @@ def main():
         html_bytes = html_content.encode('utf-8')
 
         progress.progress(80, text="📝 Generating Word report...")
-        docx_bytes = build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number, target_location, profile_data=profile_data,
-                                top_n_contact=st.session_state.get(f"top_n_contact_{_file_hash}", 10),
-                                top_n_location=st.session_state.get(f"top_n_location_{_file_hash}", 10))
+        docx_bytes = build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target_number, target_location, profile_data=profile_data)
 
         # ── Movement Map ──
         progress.progress(90, text="🗺️ Generating movement map...")
@@ -13819,7 +13722,7 @@ def main():
         </div>
         """, unsafe_allow_html=True)
 
-        # ── Profile Analysis (Dashboard- docs badge) ──
+        # ── Profile Analysis (Dashboard-এ শুধু docs badge) ──
         _dash_profile = st.session_state.get('_profile_data', None)
         if _dash_profile and _dash_profile.get('docs_found'):
             _docs = _dash_profile.get('docs_found', [])
@@ -14193,7 +14096,7 @@ def main():
                 st.markdown("""<div style="background:#eff6ff; border-left:4px solid #2563eb;
                     border-radius:8px; padding:0.6rem 1rem; margin-bottom:0.75rem;
                     font-size:0.85rem; color:#1e40af;">
-                    ℹ️ SMS — Voice Call (MOC/MTC)। Raw E.164 format ।
+                    ℹ️ SMS বাদ — শুধুমাত্র Voice Call (MOC/MTC)। Raw E.164 format সাপোর্ট।
                 </div>""", unsafe_allow_html=True)
                 st.dataframe(intl_ui['table'], use_container_width=True, hide_index=True)
             else:
