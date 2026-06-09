@@ -1764,6 +1764,132 @@ def _apply_bts_enrichment(df):
     except Exception:
         logger.debug('Teletalk enrichment (shared) failed', exc_info=True)
 
+    # ── Robi BTS CSV Enrichment ─────────────────────────────────────────────
+    # Robi 4G: ENODEBID//100 = CDR LAC_ID, Cell_ID শেষ ২ digit = CSV CELL_ID
+    # Robi 2G: CSV LAC = CDR LAC_ID, CSV CELL_ID = CDR Cell_ID (direct match)
+    try:
+        _is_robi_e = False
+        if 'operator' in df.columns:
+            _is_robi_e = any('robi' in str(v).lower()
+                             for v in df['operator'].dropna().unique())
+
+        if _is_robi_e and 'cell_id' in df.columns and 'lac' in df.columns:
+            import glob as _glob_re
+
+            def _find_robi_csv_e(tech_key):
+                for _d in [_UPLOADS_DIR_E, _CELL_DIR_E]:
+                    hits = _glob_re.glob(_os_e.path.join(_d, f'Robi_{tech_key}*.csv'))
+                    hits += _glob_re.glob(_os_e.path.join(_d, f'robi_{tech_key.lower()}*.csv'))
+                    hits = [h for h in hits if _os_e.path.getsize(h) > 1000]
+                    if hits: return hits[0]
+                return None
+
+            _robi_map_e = {}
+            _robi_2g_cell_only_e = {}
+
+            # 4G CSV
+            _r4g_path_e = _find_robi_csv_e('4G')
+            if _r4g_path_e:
+                try:
+                    _r4g_e = pd.read_csv(_r4g_path_e, engine='python', encoding='latin-1',
+                                         low_memory=False, on_bad_lines='skip')
+                    _r4g_e.columns = [c.strip().lower() for c in _r4g_e.columns]
+                    if all(c in _r4g_e.columns for c in ['enodebid','cell_id','latitude','longitude']):
+                        _cols_e = ['enodebid','cell_id','latitude','longitude'] +                                   [c for c in ['address','district','thana'] if c in _r4g_e.columns]
+                        _r4g_ev = _r4g_e[_cols_e].copy()
+                        for _nc in ['enodebid','cell_id','latitude','longitude']:
+                            _r4g_ev[_nc] = pd.to_numeric(_r4g_ev[_nc], errors='coerce')
+                        _r4g_ev = _r4g_ev.dropna(subset=['enodebid','cell_id','latitude','longitude'])
+                        _r4g_ev = _r4g_ev[_r4g_ev['latitude'].between(19,27) & _r4g_ev['longitude'].between(87,93)]
+                        _r4g_ev['_dlac'] = (_r4g_ev['enodebid'] // 100).astype(int)
+                        _r4g_ev['_cid']  = _r4g_ev['cell_id'].astype(int)
+                        _r4g_ev = _r4g_ev.drop_duplicates(subset=['_dlac','_cid'])
+                        for _, _rr in _r4g_ev.iterrows():
+                            _k = (int(_rr['_dlac']), int(_rr['_cid']))
+                            if _k not in _robi_map_e:
+                                _robi_map_e[_k] = (float(_rr['latitude']), float(_rr['longitude']),
+                                    str(_rr.get('address','')), str(_rr.get('district','')), str(_rr.get('thana','')))
+                except Exception:
+                    logger.debug('Robi 4G enrichment in _apply_bts failed', exc_info=True)
+
+            # 2G CSV
+            _r2g_path_e = _find_robi_csv_e('2G')
+            if _r2g_path_e:
+                try:
+                    _r2g_e = pd.read_csv(_r2g_path_e, engine='python', encoding='latin-1',
+                                         low_memory=False, on_bad_lines='skip')
+                    _r2g_e.columns = [c.strip().lower() for c in _r2g_e.columns]
+                    if all(c in _r2g_e.columns for c in ['lac','cell_id','latitude','longitude']):
+                        _cols2_e = ['lac','cell_id','latitude','longitude'] +                                    [c for c in ['address','district','thana'] if c in _r2g_e.columns]
+                        _r2g_ev = _r2g_e[_cols2_e].copy()
+                        for _nc in ['lac','cell_id','latitude','longitude']:
+                            _r2g_ev[_nc] = pd.to_numeric(_r2g_ev[_nc], errors='coerce')
+                        _r2g_ev = _r2g_ev.dropna(subset=['lac','cell_id','latitude','longitude'])
+                        _r2g_ev = _r2g_ev[_r2g_ev['latitude'].between(19,27) & _r2g_ev['longitude'].between(87,93)]
+                        for _, _rr in _r2g_ev.iterrows():
+                            try:
+                                _lac2_e = int(_rr['lac']); _cid2_e = int(_rr['cell_id'])
+                                _lat2_e = float(_rr['latitude']); _lon2_e = float(_rr['longitude'])
+                                _addr2_e = str(_rr.get('address','')); _dist2_e = str(_rr.get('district',''))
+                                _thana2_e = str(_rr.get('thana',''))
+                                _k2 = (_lac2_e, _cid2_e)
+                                if _k2 not in _robi_map_e:
+                                    _robi_map_e[_k2] = (_lat2_e, _lon2_e, _addr2_e, _dist2_e, _thana2_e)
+                                if _cid2_e not in _robi_2g_cell_only_e:
+                                    _robi_2g_cell_only_e[_cid2_e] = []
+                                _robi_2g_cell_only_e[_cid2_e].append(
+                                    (_lac2_e, _lat2_e, _lon2_e, _addr2_e, _dist2_e.lower(), _thana2_e))
+                            except Exception: continue
+                except Exception:
+                    logger.debug('Robi 2G enrichment in _apply_bts failed', exc_info=True)
+
+            # ── GPS inject ──
+            if _robi_map_e:
+                _cid_se = df['cell_id'].astype(str).str.strip()
+                _cid_se = _cid_se.where(
+                    ~(_cid_se.str.endswith('.0') & _cid_se.str[:-2].str.isdigit()),
+                    _cid_se.str[:-2])
+                _cid_int_se = pd.to_numeric(_cid_se, errors='coerce').astype('Int64')
+                _lac_se = pd.to_numeric(df.get('lac', pd.Series(dtype=str)), errors='coerce').astype('Int64')
+                _ctype_se = df['cell_type'].astype(str).str.upper() if 'cell_type' in df.columns                             else pd.Series(['2G']*len(df))
+                _sector_se = _cid_se.apply(
+                    lambda s: int(s[-2:]) if len(s) >= 2 and s.isdigit() else None)
+                _keys_e = pd.Series([
+                    (_lac_se.iloc[i], _sector_se.iloc[i]) if _ctype_se.iloc[i] == '4G'
+                    else (_lac_se.iloc[i], _cid_int_se.iloc[i])
+                    for i in range(len(df))], index=df.index)
+                _gps_m_e = _keys_e.map(
+                    lambda k: _robi_map_e.get(k) if pd.notna(k[0]) and pd.notna(k[1]) else None)
+                _mask_re = _gps_m_e.notna()
+                # 2G fallback
+                for _idx in df.index[~_mask_re & (_ctype_se != '4G')]:
+                    try:
+                        _ci_e = int(_cid_int_se.at[_idx])
+                        if _ci_e not in _robi_2g_cell_only_e: continue
+                        _cands_e = _robi_2g_cell_only_e[_ci_e]
+                        _addr_lo_e = str(df.at[_idx,'address'] or '').lower() if 'address' in df.columns else ''
+                        _best_e = _cands_e[0] if len(_cands_e) == 1 else                                   next((c for c in _cands_e if c[4] and c[4] in _addr_lo_e), None) or                                   next((c for c in _cands_e if 'dhaka' in c[4]), None) or _cands_e[0]
+                        if _best_e:
+                            _gps_m_e.at[_idx] = (_best_e[1],_best_e[2],_best_e[3],_best_e[4],_best_e[5])
+                            _mask_re.at[_idx] = True
+                    except Exception: continue
+                if _mask_re.any():
+                    _gdf_e = pd.DataFrame(_gps_m_e[_mask_re].tolist(),
+                                          index=_gps_m_e[_mask_re].index,
+                                          columns=['_lat','_lon','_addr','_dist','_thana'])
+                    if 'address' not in df.columns: df['address'] = ''
+                    _blnk_e = df['address'].astype(str).str.strip().isin(['','nan','None','NaN'])
+                    df.loc[_mask_re & _blnk_e, 'address'] = _gdf_e.loc[_blnk_e[_mask_re], '_addr'].values
+                    df.loc[_mask_re, 'cell_lat']       = pd.to_numeric(_gdf_e['_lat'], errors='coerce')
+                    df.loc[_mask_re, 'cell_lon']       = pd.to_numeric(_gdf_e['_lon'], errors='coerce')
+                    df.loc[_mask_re, 'loc_method']     = 'cell_exact'
+                    df.loc[_mask_re, 'csv_district']   = _gdf_e['_dist'].values
+                    df.loc[_mask_re, 'csv_thana']      = _gdf_e['_thana'].values
+                    df.loc[_mask_re, 'cell_csv_label'] = _gdf_e['_addr'].values
+    except Exception:
+        logger.debug('Robi enrichment in _apply_bts_enrichment failed', exc_info=True)
+    # ── End Robi BTS Enrichment ──────────────────────────────────────────────
+
     return df
 
 
@@ -6971,10 +7097,13 @@ def _load_cdr_bytes(file_bytes, label):
         df = df.reset_index(drop=True)
         after = len(df)
 
-        # ── GPS Enrichment from cell tower CSV ──
-        # Step 1: detect operator(s) from this CDR
-        # Step 2: ensure CSV downloaded (from HF if needed)
-        # Step 3: enrich df rows with cell_lat/cell_lon/loc_method
+        # ── GPS Enrichment — CDR Analysis-এর সম্পূর্ণ logic ব্যবহার করা হচ্ছে ──
+        # _apply_bts_enrichment():
+        #   • Teletalk → CGI/ECGI exact match (Teletalk.csv)
+        #   • Robi 4G  → ENODEBID//100 + sector (শেষ ২ digit) match (Robi_4G.csv)
+        #   • Robi 2G  → LAC + CID direct match + cell_only fallback (Robi_2G.csv)
+        #   → cell_lat, cell_lon, loc_method='cell_exact', csv_district, csv_thana, cell_csv_label
+        # GP / Banglalink → _ensure_cell_tower_cache + _load_cell_tower_gps (lac_n/cid_n merge)
         try:
             import os as _os2, tempfile as _tf2
             _cell_dir = _os2.path.join(_tf2.gettempdir(), "celltower_cache")
@@ -6984,36 +7113,46 @@ def _load_cdr_bytes(file_bytes, label):
             if 'operator' in df.columns:
                 for _ov in df['operator'].dropna().astype(str).unique():
                     _ol = _ov.lower()
-                    if 'grameen' in _ol or 'gp' in _ol:     _ops_set.add('gp')
-                    elif 'banglalink' in _ol or 'bl' in _ol: _ops_set.add('bl')
-                    elif 'robi' in _ol or 'airtel' in _ol:  _ops_set.add('robi')
-                    elif 'teletalk' in _ol:                  _ops_set.add('teletalk')
+                    if 'grameen' in _ol or 'gp' in _ol:      _ops_set.add('gp')
+                    elif 'banglalink' in _ol or 'bl' in _ol:  _ops_set.add('bl')
+                    elif 'robi' in _ol or 'airtel' in _ol:   _ops_set.add('robi')
+                    elif 'teletalk' in _ol:                   _ops_set.add('teletalk')
 
             # Download CSVs if not already cached
             _ensure_cell_tower_cache(_ops_set if _ops_set else None)
 
-            # Load GPS map and enrich
+            # Step A: Teletalk + Robi full enrichment (CDR Analysis-এর same logic)
+            df = _apply_bts_enrichment(df)
+
+            # Step B: GP / Banglalink → lac_n/cid_n merge (যেসব row এখনো unmatched)
+            _already_matched = (
+                'loc_method' in df.columns and
+                df['loc_method'].eq('cell_exact').any()
+            )
             _gps_map = _load_cell_tower_gps(_cell_dir)
             if _gps_map and 'lac_n' in df.columns and 'cid_n' in df.columns:
-                # Vectorized: build lookup DataFrame and merge
                 import pandas as _pd_gps
                 _keys = list(_gps_map.keys())
                 _vals = list(_gps_map.values())
-                _gps_df = _pd_gps.DataFrame({
+                _gps_df2 = _pd_gps.DataFrame({
                     'lac_n': [k[0] for k in _keys],
                     'cid_n': [k[1] for k in _keys],
                     '_glat': [v[0] for v in _vals],
                     '_glon': [v[1] for v in _vals],
                 })
-                _orig_idx = df.index
-                _tmp = df[['lac_n','cid_n']].astype(str).reset_index(drop=True)
-                _tmp = _tmp.merge(_gps_df, on=['lac_n','cid_n'], how='left')
-                df = df.reset_index(drop=True)
-                df['cell_lat']     = _tmp['_glat']
-                df['cell_lon']     = _tmp['_glon']
-                df['loc_method']   = _tmp['_glat'].apply(
-                    lambda v: 'cell_exact' if _pd_gps.notna(v) else 'none')
-                df['csv_district'] = ''
+                # শুধু এখনো unmatched rows-এ apply করো (Teletalk/Robi-কে overwrite করবে না)
+                _unmatched_mask = ~df.get('loc_method', _pd_gps.Series('none', index=df.index)).eq('cell_exact')
+                if _unmatched_mask.any():
+                    _tmp2 = df.loc[_unmatched_mask, ['lac_n','cid_n']].astype(str).reset_index(drop=True)
+                    _tmp2 = _tmp2.merge(_gps_df2, on=['lac_n','cid_n'], how='left')
+                    _idxs = df.index[_unmatched_mask]
+                    df.loc[_idxs, 'cell_lat'] = _tmp2['_glat'].values
+                    df.loc[_idxs, 'cell_lon'] = _tmp2['_glon'].values
+                    _new_methods = _tmp2['_glat'].apply(
+                        lambda v: 'cell_exact' if _pd_gps.notna(v) else 'none').values
+                    df.loc[_idxs, 'loc_method'] = _new_methods
+                    if 'csv_district' not in df.columns:
+                        df['csv_district'] = ''
         except Exception:
             logger.debug('suppressed exception', exc_info=True)
 
@@ -7448,14 +7587,15 @@ def _load_cell_tower_gps(cell_dir=None):
     if cell_dir: search_dirs.insert(0, cell_dir)
 
     csv_configs = [
-        ('GP_2G.csv',  'lac', 'cellid',      'latitude', 'longitude'),
-        ('GP_4G.csv',  'lac', 'cell_id',      'latitude', 'longitude'),
-        ('2G.csv',     'lac', 'cellid',        'latitude', 'longitude'),
-        ('4G.csv',     'lac', 'cell_id',       'latitude', 'longitude'),
-        ('Robi_4G.csv','enodebid','cell_id',   'latitude', 'longitude'),
-        ('Robi_2G.csv','lac', 'cell_id',       'latitude', 'longitude'),
-        ('Banglalink_4G.csv','tac','eutrancellid','latitude','longitude'),
-        ('Banglalink_2G3G.csv','lac','ci',     'lat',      'lon'),
+        ('GP_2G.csv',  'lac', 'cellid',         'latitude', 'longitude'),
+        ('GP_3G.csv',  'lac', 'cellid',         'latitude', 'longitude'),
+        ('GP_4G.csv',  'lac', 'cell_id',         'latitude', 'longitude'),
+        ('2G.csv',     'lac', 'cellid',           'latitude', 'longitude'),
+        ('4G.csv',     'lac', 'cell_id',          'latitude', 'longitude'),
+        ('Robi_4G.csv','enodebid','cell_id',      'latitude', 'longitude'),
+        ('Robi_2G.csv','lac', 'cell_id',          'latitude', 'longitude'),
+        ('Banglalink_4G.csv','tac','eutrancellid','latitude', 'longitude'),
+        ('Banglalink_2G3G.csv','lac','ci',        'lat',      'lon'),
     ]
 
     for d in search_dirs:
