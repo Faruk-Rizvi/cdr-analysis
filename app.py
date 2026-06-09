@@ -8242,10 +8242,10 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             if _pb_exp not in expandable_data: expandable_data[_pb_exp] = {}
             expandable_data[_pb_exp][_subj_exp] = int(_cnt_exp)
 
-    nodes_json      = json.dumps(list(nodes.values()), ensure_ascii=False)
-    edges_json      = json.dumps(edges, ensure_ascii=False)
-    subjects_json   = json.dumps(subjects, ensure_ascii=False)
-    expandable_json = json.dumps(expandable_data, ensure_ascii=False)
+    nodes_json      = json.dumps(list(nodes.values()), ensure_ascii=True)
+    edges_json      = json.dumps(edges, ensure_ascii=True)
+    subjects_json   = json.dumps(subjects, ensure_ascii=True)
+    expandable_json = json.dumps(expandable_data, ensure_ascii=True)
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -8478,8 +8478,6 @@ network.once('stabilizationIterationsDone', function(){{
   network.setOptions({{physics:{{enabled:false}}}});
   physicsOn=false;
   document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
-  // Default: top-20 non-common contact
-  filterByConnCount(20);
 }});
 
 setTimeout(function(){{if(network)network.fit();}}, 2500);
@@ -9307,11 +9305,6 @@ def link_analysis_page():
                 _subj_meta_by_phone[sub] = meta
 
             graph_html = _build_network_html(dfs, top_connections, subjects, subj_edge_count, _subj_meta_by_phone, _contact_names_dict)
-            # Python 3.14: srcdoc must be ASCII — encode non-ASCII chars to HTML entities
-            graph_html = ''.join(
-                c if ord(c) < 128 else f'&#{ord(c)};'
-                for c in graph_html
-            )
 
         st.components.v1.html(graph_html, height=780, scrolling=False)
 
