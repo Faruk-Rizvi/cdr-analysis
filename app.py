@@ -7976,13 +7976,13 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
 
 
 def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_meta=None, contact_names=None):
-    """Network graph — clean labels, delete nodes, filter by connection count.
+    """Network graph - clean labels, delete nodes, filter by connection count.
 
-    contact_names : dict  {phone_str: name_str}  — optional display names for
+    contact_names : dict  {phone_str: name_str}  - optional display names for
                     contact nodes (non-subject). When provided, node labels show
                     "Name\nPhone" instead of phone only.
     """
-    # math → _math_mod (module-level import)
+    # math -&gt; _math_mod (module-level import)
     if contact_names is None:
         contact_names = {}
 
@@ -8020,7 +8020,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
     if subj_edge_count is None:
         subj_edge_count = {sub: 99 for sub in subjects}
 
-    # ── Subject nodes ──
+    # -- Subject nodes --
     for i, sub in enumerate(subjects):
         edge_cnt   = subj_edge_count.get(sub, 0)
         is_isolated = edge_cnt < 5
@@ -8029,7 +8029,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
         _sname = _meta.get("name", "").strip()
         _sphoto= _meta.get("photo")
 
-        # Label: show name (if given) and number — NO S1/S2 prefix
+        # Label: show name (if given) and number - NO S1/S2 prefix
         if _sname:
             lbl = f"{_sname}\n{sub}"
         else:
@@ -8071,7 +8071,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
 
     common = {pb for pb, sd in connections.items() if len(sd) >= 2}
 
-    # ── Contact nodes ──
+    # -- Contact nodes --
     # Pre-compute max total for importance-ring threshold (top 10%)
     all_totals = [sum(d['total'] for d in sd.values()) for pb, sd in connections.items() if pb not in subjects]
     _importance_thresh = sorted(all_totals, reverse=True)[max(0, len(all_totals)//10 - 1)] if all_totals else 9999
@@ -8082,7 +8082,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
         is_common = pb in common
         only_sub  = list(subj_dict.keys())[0] if len(subj_dict)==1 else None
         is_iso_c  = (only_sub and subj_edge_count.get(only_sub,99) < 5)
-        # ── Importance ring: top-10% by total interaction count ──
+        # -- Importance ring: top-10% by total interaction count --
         is_important = (total >= _importance_thresh and total >= 10)
 
         bg     = '#fca5a5' if is_common else ('#fef3c7' if is_iso_c else '#e2e8f0')
@@ -8091,7 +8091,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
         if is_important:
             border = '#f59e0b'
 
-        # ── Contact name label ──
+        # -- Contact name label --
         _cname = (contact_names or {}).get(pb, '').strip()
         if _cname:
             node_label = f"{_cname}\n{pb}"
@@ -8113,14 +8113,14 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             + (f"<br><b style='color:#1e3a8a'>\U0001f464 {_cname}</b>" if _cname else "") +
             f"<br><span style='color:#64748b;font-size:12px'>"
             f"Shared: {len(subj_dict)} | Total: {total}"
-            + (" | <b style='color:#f59e0b'>⭐ High-frequency</b>" if is_important else "") +
+            + (" | <b style='color:#f59e0b'>* High-frequency</b>" if is_important else "") +
             f"</span><br>"
             f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
             + "<br>".join(subj_lines) +
             f"<br><span style='color:#94a3b8;font-size:11px'>"
             f"Click = highlight &nbsp;|&nbsp; Delete btn = remove</span></div>"
         )
-        # Importance ring → thicker border + slightly larger
+        # Importance ring -&gt; thicker border + slightly larger
         _bw   = 5 if is_important else 1
         _size = min(10+total, 30) + (5 if is_important else 0)
         # Phone icon: common=red bg, normal=grey bg
@@ -8142,11 +8142,11 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             '_total': total,
             '_important': is_important,
             '_cname': _cname,
-            # per-subject total — JS slider- subject- top-N filter
+            # per-subject total - JS slider- subject- top-N filter
             '_subj_totals': {s: d['total'] for s, d in subj_dict.items()},
         }
 
-    # ── Edges — single combined edge per (subject, contact) pair ──
+    # -- Edges - single combined edge per (subject, contact) pair --
     # Call + SMS edge- , label-
     edges = []
     eid = 0
@@ -8160,7 +8160,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             is_common = pb in common
             is_subj_to_subj = pb in subject_set
 
-            # Subject-to-subject: A→B B→A entry — edge
+            # Subject-to-subject: A-&gt;B B-&gt;A entry - edge
             if is_subj_to_subj:
                 pair = tuple(sorted([sub, pb]))
                 if pair in seen_subj_pairs:
@@ -8180,17 +8180,17 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
 
             #
             if is_subj_to_subj:
-                ec = '#7c3aed'  # purple — subject-to-subject
+                ec = '#7c3aed'  # purple - subject-to-subject
             elif is_common:
-                ec = '#dc2626'  # red — common contact
+                ec = '#dc2626'  # red - common contact
             else:
-                ec = '#2563eb'  # blue — regular contact
+                ec = '#2563eb'  # blue - regular contact
 
-            # ── Tooltip: call + sms breakdown ──
+            # -- Tooltip: call + sms breakdown --
             edge_title = (
                 f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
                 f"padding:10px 14px;line-height:1.8'>"
-                f"<b style='font-size:15px;color:{ec}'>\U0001f4de\U0001f4ac {sub} ↔ {pb}</b><br>"
+                f"<b style='font-size:15px;color:{ec}'>\U0001f4de\U0001f4ac {sub} &lt;-&gt; {pb}</b><br>"
                 f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
                 f"&nbsp;&nbsp;\U0001f4de MOC (outgoing): <b>{data['call_out']}</b><br>"
                 f"&nbsp;&nbsp;\U0001f4de MTC (incoming): <b>{data['call_in']}</b><br>"
@@ -8285,7 +8285,7 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
 #panelX{{cursor:pointer;color:#94a3b8;font-size:20px;line-height:1}}
 #panelX:hover{{color:#dc2626}}
 #wrap{{position:relative}}
-/* ── Export modal ── */
+/* -- Export modal -- */
 #exportModal{{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);
   z-index:9999;align-items:center;justify-content:center}}
 #exportModal.show{{display:flex}}
@@ -8311,10 +8311,10 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <div class="li"><div class="dot" style="background:#1d4ed8"></div>Subject</div>
   <div class="li"><div class="dot" style="background:#dc2626"></div>Common Contact</div>
   <div class="li"><div class="dot" style="background:#64748b"></div>Single Contact</div>
-  <div class="li"><div class="dot" style="background:#e2e8f0;border:3px solid #f59e0b;width:13px;height:13px;"></div>High-freq ⭐</div>
+  <div class="li"><div class="dot" style="background:#e2e8f0;border:3px solid #f59e0b;width:13px;height:13px;"></div>High-freq *</div>
   <div class="li"><div class="ln" style="background:#2563eb"></div>Connection ( = Call+SMS)</div>
   <div class="li"><div class="ln" style="background:#dc2626"></div>Common Contact Edge</div>
-  <div class="li"><div class="ln" style="background:#7c3aed"></div>Subject ↔ Subject</div>
+  <div class="li"><div class="ln" style="background:#7c3aed"></div>Subject &lt;-&gt; Subject</div>
 </div>
 <div class="bar">
   <button class="btn" onclick="network.fit()">&#x229F; Fit</button>
@@ -8332,12 +8332,12 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <!-- Search box -->
   <div class="sl" style="flex:1;min-width:180px;">
     <span style="font-weight:600;color:#1e3a8a;">&#x1F50D;</span>
-    <input type="text" id="searchBox" placeholder=" / …"
+    <input type="text" id="searchBox" placeholder=" / ..."
       oninput="searchNodes(this.value)"
       style="flex:1;font-size:11px;padding:3px 7px;border-radius:5px;
              border:1px solid #cbd5e1;background:#f8fafc;color:#0f172a;outline:none;">
     <button class="btn" style="background:#475569;padding:3px 8px;"
-      onclick="document.getElementById('searchBox').value='';searchNodes('')">✕</button>
+      onclick="document.getElementById('searchBox').value='';searchNodes('')">x</button>
   </div>
   <!-- Edge type filter removed: edges are now combined (Call+SMS) -->
   <div class="sl">
@@ -8346,8 +8346,8 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
       style="font-size:11px;padding:2px 6px;border-radius:5px;border:1px solid #cbd5e1;
              background:#f8fafc;color:#1e3a8a;cursor:pointer;">
       <option value="physics">&#x1F300; Physics (default)</option>
-      <option value="hierarchyLR">&#x27A1; Hierarchy L→R</option>
-      <option value="hierarchyUD">&#x2B07; Hierarchy U→D</option>
+      <option value="hierarchyLR">&#x27A1; Hierarchy L-&gt;R</option>
+      <option value="hierarchyUD">&#x2B07; Hierarchy U-&gt;D</option>
       <option value="bipartite">&#x21C4; Bipartite (Subj left/right)</option>
       <option value="circle">&#x25EF; Circle</option>
       <option value="grid">&#x22EE; Grid</option>
@@ -8393,15 +8393,15 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   </div>
 </div>
 
-<!-- ── Capture overlay ── -->
+<!-- -- Capture overlay -- -->
 <div id="captureOverlay">
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1e3a8a" stroke-width="2.5">
     <circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/>
   </svg>
-  Capturing graph…
+  Capturing graph...
 </div>
 
-<!-- ── Export modal ── -->
+<!-- -- Export modal -- -->
 <div id="exportModal">
   <div id="exportBox">
     <button id="exportClose" onclick="closeExportModal()">&#xd7;</button>
@@ -8414,8 +8414,8 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
       <span id="exportStatus"></span>
     </div>
     <div style="font-size:11px;color:#94a3b8;margin-top:10px;">
-      &#x2139;&#xFE0F; PNG download → Word/PowerPoint- Insert → Pictures ।
-       Copy Ctrl+V paste ।
+      &#x2139;&#xFE0F; PNG download -&gt; Word/PowerPoint- Insert -&gt; Pictures .
+       Copy Ctrl+V paste .
     </div>
   </div>
 </div>
@@ -8425,7 +8425,7 @@ var edgesData = {edges_json};
 var subjectsData = {subjects_json};
 var expandableData = {expandable_json};
 
-// vis.js tooltip: string title → HTML render , DOM element
+// vis.js tooltip: string title -&gt; HTML render , DOM element
 function _makeTitleEl(html){{
   var d=document.createElement('div');
   d.innerHTML=html;
@@ -8484,7 +8484,7 @@ network.once('stabilizationIterationsDone', function(){{
 
 setTimeout(function(){{if(network)network.fit();}}, 2500);
 
-// ── Shared: capture graph canvas to dataURL ──
+// -- Shared: capture graph canvas to dataURL --
 var _exportDataURL = null;
 
 function _captureGraph(callback){{
@@ -8507,7 +8507,7 @@ function _captureGraph(callback){{
     if(!canvas){{
       ov.classList.remove('show');
       panel.style.display = prevPanel;
-      alert('Canvas not found — try again after graph settles.');
+      alert('Canvas not found - try again after graph settles.');
       return;
     }}
 
@@ -8546,7 +8546,7 @@ function _captureGraph(callback){{
   }}, 350);
 }}
 
-// ── Export PNG → opens preview modal ──
+// -- Export PNG -&gt; opens preview modal --
 function exportGraphPNG(){{
   _captureGraph(function(dataURL){{
     document.getElementById('exportPreview').src = dataURL;
@@ -8555,7 +8555,7 @@ function exportGraphPNG(){{
   }});
 }}
 
-// ── Quick copy (no modal) ──
+// -- Quick copy (no modal) --
 function copyGraphToClipboard(){{
   _captureGraph(function(dataURL){{
     document.getElementById('exportPreview').src = dataURL;
@@ -8563,25 +8563,25 @@ function copyGraphToClipboard(){{
   }});
 }}
 
-// ── Download from modal ──
+// -- Download from modal --
 function downloadExportedPNG(){{
   if(!_exportDataURL)return;
   var a = document.createElement('a');
   a.href = _exportDataURL;
   a.download = 'CDR_Network_Graph_' + Date.now() + '.png';
   a.click();
-  document.getElementById('exportStatus').textContent = '✅ Downloaded!';
+  document.getElementById('exportStatus').textContent = '[OK] Downloaded!';
   setTimeout(function(){{document.getElementById('exportStatus').textContent='';}},2500);
 }}
 
-// ── Copy from modal ──
+// -- Copy from modal --
 function copyExportedToClipboard(){{
   if(!_exportDataURL)return;
   _doCopy(_exportDataURL, false);
 }}
 
 function _doCopy(dataURL, quick){{
-  // Convert dataURL → Blob → ClipboardItem
+  // Convert dataURL -&gt; Blob -&gt; ClipboardItem
   var b64 = dataURL.split(',')[1];
   var byteChars = atob(b64);
   var byteArr = new Uint8Array(byteChars.length);
@@ -8591,22 +8591,22 @@ function _doCopy(dataURL, quick){{
   if(navigator.clipboard && window.ClipboardItem){{
     navigator.clipboard.write([new ClipboardItem({{'image/png':blob}})])
       .then(function(){{
-        var msg = '✅ Clipboard- copy ! Ctrl+V Word/PowerPoint- paste ।';
+        var msg = '[OK] Clipboard- copy ! Ctrl+V Word/PowerPoint- paste .';
         if(quick){{ alert(msg); }}
-        else{{ document.getElementById('exportStatus').textContent='✅ Copied!';
+        else{{ document.getElementById('exportStatus').textContent='[OK] Copied!';
                setTimeout(function(){{document.getElementById('exportStatus').textContent='';}},2500); }}
       }})
       .catch(function(){{
         // Fallback: open in new tab
         var w=window.open();
         w.document.write('<img src="'+dataURL+'" style="max-width:100%"><br>'
-          +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click → Copy Image Save Image As ।</p>');
+          +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click -&gt; Copy Image Save Image As .</p>');
       }});
   }} else {{
     // Old browser fallback
     var w=window.open();
     w.document.write('<img src="'+dataURL+'" style="max-width:100%"><br>'
-      +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click → Copy Image Save Image As ।</p>');
+      +'<p style="font-family:sans-serif;color:#1e3a8a">Right-click -&gt; Copy Image Save Image As .</p>');
   }}
 }}
 
@@ -8693,7 +8693,7 @@ network.on('doubleClick',function(params){{
   }}
 }});
 
-// ── Layout switcher (i2-style) ──
+// -- Layout switcher (i2-style) --
 function applyLayout(mode){{
   if(mode==='physics'){{
     allNodes.update(allNodes.get().map(function(n){{ return{{id:n.id,fixed:{{x:false,y:false}}}}; }}));
@@ -8828,7 +8828,7 @@ function applyLayout(mode){{
   }}
 }}
 
-// ── Importance Ring toggle ──
+// -- Importance Ring toggle --
 var _impRingOn = true;
 function toggleImportanceRing(){{
   _impRingOn = !_impRingOn;
@@ -8850,15 +8850,12 @@ function toggleImportanceRing(){{
   allNodes.update(updates);
 }}
 
-// ── Filter by min connection count ──
+// -- Filter by min connection count --
 function filterByConnCount(val){{
   val=parseInt(val);
-  document.getElementById('minConnVal').textContent=val===0?'':val;
+  document.getElementById('minConnVal').textContent=val===0?'0':val;
 
-  // val=0 → non-common ( subject + common)
-  // val=1..20 → subject- top-N non-common
   var showSet=new Set();
-
   if(val>0){{
     subjectsData.forEach(function(subj){{
       var contactsForSubj=nodesData.filter(function(n){{
@@ -8871,6 +8868,12 @@ function filterByConnCount(val){{
       var limit=Math.min(val,contactsForSubj.length);
       for(var i=0;i<limit;i++) showSet.add(contactsForSubj[i].id);
     }});
+    // If no _subj_totals data, show all non-common
+    if(showSet.size===0){{
+      nodesData.forEach(function(n){{
+        if(n.group!=='subject'&&n.group!=='isolated_subject') showSet.add(n.id);
+      }});
+    }}
   }}
 
   var updates=[];
@@ -8881,7 +8884,7 @@ function filterByConnCount(val){{
     if(n.group==='common'){{
       updates.push({{id:n.id,hidden:false}});return;
     }}
-    updates.push({{id:n.id,hidden:!showSet.has(n.id)}});
+    updates.push({{id:n.id,hidden:val>0?!showSet.has(n.id):false}});
   }});
   allNodes.update(updates);
 
@@ -8892,7 +8895,7 @@ function filterByConnCount(val){{
   }}));
 }}
 
-// ── Delete selected node/edge ──
+// -- Delete selected node/edge --
 function deleteSelected(){{
   if(selectedNodeId!==null){{
     var node=allNodes.get(selectedNodeId);
@@ -8918,7 +8921,7 @@ function deleteSelected(){{
   }}
 }}
 
-// ── Undo last delete ──
+// -- Undo last delete --
 function undoDelete(){{
   if(deletedNodes.length>0){{
     var last=deletedNodes.pop();
@@ -8929,7 +8932,7 @@ function undoDelete(){{
   }}
 }}
 
-// ── Keyboard delete ──
+// -- Keyboard delete --
 document.addEventListener('keydown',function(e){{
   if(e.key==='Delete'||e.key==='Backspace'){{
     if(document.activeElement===document.body||
@@ -8951,7 +8954,7 @@ function showAll(){{
   network.fit();
 }}
 
-// ── Label / node size sliders ──
+// -- Label / node size sliders --
 function changeFontSize(val){{
   val=parseInt(val);
   document.getElementById('fontVal').textContent=val===0?'off':val;
@@ -8973,7 +8976,7 @@ function changeNodeSize(val){{
   }}));
 }}
 
-// ── Search nodes by number or name ──
+// -- Search nodes by number or name --
 function searchNodes(q){{
   q = q.trim().toLowerCase();
   if(!q){{
@@ -9003,14 +9006,14 @@ function searchNodes(q){{
   }}
 }}
 
-// ── Edge type filter (simplified — edges now combined) ──
+// -- Edge type filter (simplified - edges now combined) --
 var _activeEtype = 'all';
 function filterEdgeType(etype){{
   // edges combined, function legacy compatibility-
   _activeEtype = etype;
 }}
 
-// ── Info panel ──
+// -- Info panel --
 function closePanel(){{document.getElementById('panel').style.display='none';}}
 function showPanel(tag,html){{
   document.getElementById('panelTag').textContent=tag;
@@ -9018,7 +9021,7 @@ function showPanel(tag,html){{
   document.getElementById('panel').style.display='block';
 }}
 
-// ── Click handler ──
+// -- Click handler --
 network.on('click',function(params){{
   if(params.nodes.length>0){{
     selectedNodeId=params.nodes[0];
@@ -9044,7 +9047,7 @@ network.on('click',function(params){{
 __EXTRA_JS__
 </script>
 </body>
-</html>""".replace("__EXTRA_JS__", "\n// ── Search ───────────────────────────────────────────────────────────────\nvar _sm=[],_si=-1,_ha=false,_ocs=false;\nfunction searchNodes(q){\n  q=q.trim().toLowerCase();\n  var ce=document.getElementById('searchCount');\n  if(!q){\n    _sm=[];_si=-1;\n    if(!_ha){\n      allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined})));\n      allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:false,opacity:1.0})));\n    }\n    if(ce)ce.textContent='';return;\n  }\n  var mt=new Set();\n  allNodes.get().forEach(function(n){\n    if((n.label||'').toLowerCase().includes(q)||String(n.id||'').toLowerCase().includes(q))mt.add(n.id);\n  });\n  _sm=[...mt];_si=_sm.length>0?0:-1;\n  allNodes.update(allNodes.get().map(function(n){\n    if(mt.has(n.id))return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    return{id:n.id,opacity:0.08,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:!(mt.has(e.from)&&mt.has(e.to))})));\n  if(ce)ce.textContent=mt.size>0?mt.size+' found':'No match';\n  if(_sm.length>0){network.focus(_sm[0],{scale:1.6,animation:{duration:400}});network.selectNodes([_sm[0]]);}\n}\nfunction handleSearchKey(e){\n  if(e.key!=='Enter'||_sm.length===0)return;\n  _si=(_si+1)%_sm.length;\n  network.focus(_sm[_si],{scale:1.6,animation:{duration:300}});\n  network.selectNodes([_sm[_si]]);\n}\n// ── Hover dim ────────────────────────────────────────────────────────────\nfunction _soc(){\n  if(_ocs)return;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,_oc:n.color||null,_bg:n.color&&n.color.background?n.color.background:null,_bw:n.borderWidth||2};\n  }));\n  _ocs=true;\n}\nnetwork.on('hoverNode',function(p){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _soc();_ha=true;\n  var h=p.node,cn=new Set(network.getConnectedNodes(h));cn.add(h);\n  allNodes.update(allNodes.get().map(function(n){\n    if(n.id===h)return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    if(cn.has(n.id))return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n    return{id:n.id,opacity:0.07,borderWidth:1,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:e.from===h||e.to===h?1.0:0.05};\n  }));\n});\nnetwork.on('blurNode',function(){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _ha=false;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:1.0};\n  }));\n});\n// ── Context menu ─────────────────────────────────────────────────────────\nvar _cm=(function(){\n  var el=document.createElement('div');\n  el.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px 0;min-width:185px;font-family:Segoe UI,Arial,sans-serif;font-size:13px;display:none';\n  document.body.appendChild(el);\n  function it(ic,lb,fn,dg){\n    var d=document.createElement('div');\n    d.style.cssText='padding:7px 14px;cursor:pointer;display:flex;gap:8px;align-items:center;'+(dg?'color:#dc2626':'color:#0f172a');\n    d.innerHTML='<span>'+ic+'</span><span>'+lb+'</span>';\n    d.onmouseenter=function(){d.style.background='#f1f5f9';};d.onmouseleave=function(){d.style.background='';};\n    d.onclick=function(){hide();fn();};return d;\n  }\n  function sp(){var h=document.createElement('hr');h.style.cssText='margin:3px 0;border:none;border-top:1px solid #f1f5f9';return h;}\n  function show(x,y,items){\n    el.innerHTML='';\n    items.forEach(function(i){if(i==='sep')el.appendChild(sp());else el.appendChild(i);});\n    el.style.display='block';\n    var vw=window.innerWidth,vh=window.innerHeight,r=el.getBoundingClientRect();\n    el.style.left=(x+r.width>vw?vw-r.width-8:x)+'px';el.style.top=(y+r.height>vh?vh-r.height-8:y)+'px';\n  }\n  function hide(){el.style.display='none';}\n  document.addEventListener('click',hide);\n  document.addEventListener('keydown',function(e){if(e.key==='Escape')hide();});\n  return{show:show,hide:hide,it:it};\n})();\nfunction _cp(t){\n  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(function(){_tk('Copied: '+t);}).catch(function(){_cf(t);});\n  else _cf(t);\n}\nfunction _cf(t){var a=document.createElement('textarea');a.value=t;a.style.cssText='position:fixed;opacity:0';document.body.appendChild(a);a.select();try{document.execCommand('copy');_tk('Copied: '+t);}catch(e){}document.body.removeChild(a);}\nfunction _tk(m){var t=document.createElement('div');t.textContent=m;t.style.cssText='position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:8px 18px;border-radius:20px;font-size:13px;z-index:99999;pointer-events:none;opacity:0;transition:opacity .2s';document.body.appendChild(t);requestAnimationFrame(function(){t.style.opacity='1';});setTimeout(function(){t.style.opacity='0';setTimeout(function(){document.body.removeChild(t);},300);},2000);}\nnetwork.on('oncontext',function(params){\n  params.event.preventDefault();\n  var x=params.event.clientX,y=params.event.clientY;\n  if(params.nodes.length>0){\n    var nid=params.nodes[0];selectedNodeId=nid;\n    var obj=allNodes.get(nid);var lbl=obj?(obj.label||nid):nid;\n    var num=String(nid).replace(/[^0-9+]/g,'');\n    _cm.show(x,y,[\n      _cm.it('📋','Copy Number',function(){_cp(num||String(nid));}),\n      _cm.it('📝','Copy Full Label',function(){_cp(lbl);}),\n      'sep',\n      _cm.it('🔦','Highlight',function(){var cn=new Set(network.getConnectedNodes(nid));cn.add(nid);allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:cn.has(n.id)?1.0:0.08})));},false),\n      _cm.it('👁','Show Info',function(){if(obj&&obj.title)showPanel('NODE INFO',obj.title);}),\n      _cm.it('🌐','Expand Node',function(){expandNode(String(nid));}),\n      'sep',\n      _cm.it('🗑','Remove',function(){deleteSelected();},true),\n    ]);\n  }else if(params.edges.length>0){\n    var eid=params.edges[0];selectedEdgeId=eid;var eo=allEdges.get(eid);\n    _cm.show(x,y,[\n      _cm.it('📋','Copy: '+(eo?String(eo.from).slice(-8):''),function(){_cp(eo?String(eo.from):'');}),\n      _cm.it('📋','Copy: '+(eo?String(eo.to).slice(-8):''),function(){_cp(eo?String(eo.to):'');}),\n      'sep',\n      _cm.it('ℹ️','Edge Info',function(){if(eo&&eo.title)showPanel('LINK INFO',eo.title);}),\n      'sep',\n      _cm.it('🗑','Remove',function(){deleteSelected();},true),\n    ]);\n  }else{\n    _cm.show(x,y,[\n      _cm.it('🔲','Fit All',function(){network.fit();}),\n      _cm.it('👁','Show All',function(){showAll();}),\n      _cm.it('🔴','Common Only',function(){showOnlyCommon();}),\n    ]);\n  }\n});\n")
+</html>""".replace("__EXTRA_JS__", "\n// -- Search ---------------------------------------------------------------\nvar _sm=[],_si=-1,_ha=false,_ocs=false;\nfunction searchNodes(q){\n  q=q.trim().toLowerCase();\n  var ce=document.getElementById('searchCount');\n  if(!q){\n    _sm=[];_si=-1;\n    if(!_ha){\n      allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined})));\n      allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:false,opacity:1.0})));\n    }\n    if(ce)ce.textContent='';return;\n  }\n  var mt=new Set();\n  allNodes.get().forEach(function(n){\n    if((n.label||'').toLowerCase().includes(q)||String(n.id||'').toLowerCase().includes(q))mt.add(n.id);\n  });\n  _sm=[...mt];_si=_sm.length>0?0:-1;\n  allNodes.update(allNodes.get().map(function(n){\n    if(mt.has(n.id))return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    return{id:n.id,opacity:0.08,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:!(mt.has(e.from)&&mt.has(e.to))})));\n  if(ce)ce.textContent=mt.size>0?mt.size+' found':'No match';\n  if(_sm.length>0){network.focus(_sm[0],{scale:1.6,animation:{duration:400}});network.selectNodes([_sm[0]]);}\n}\nfunction handleSearchKey(e){\n  if(e.key!=='Enter'||_sm.length===0)return;\n  _si=(_si+1)%_sm.length;\n  network.focus(_sm[_si],{scale:1.6,animation:{duration:300}});\n  network.selectNodes([_sm[_si]]);\n}\n// -- Hover dim ------------------------------------------------------------\nfunction _soc(){\n  if(_ocs)return;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,_oc:n.color||null,_bg:n.color&&n.color.background?n.color.background:null,_bw:n.borderWidth||2};\n  }));\n  _ocs=true;\n}\nnetwork.on('hoverNode',function(p){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _soc();_ha=true;\n  var h=p.node,cn=new Set(network.getConnectedNodes(h));cn.add(h);\n  allNodes.update(allNodes.get().map(function(n){\n    if(n.id===h)return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    if(cn.has(n.id))return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n    return{id:n.id,opacity:0.07,borderWidth:1,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:e.from===h||e.to===h?1.0:0.05};\n  }));\n});\nnetwork.on('blurNode',function(){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _ha=false;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:1.0};\n  }));\n});\n// -- Context menu ---------------------------------------------------------\nvar _cm=(function(){\n  var el=document.createElement('div');\n  el.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px 0;min-width:185px;font-family:Segoe UI,Arial,sans-serif;font-size:13px;display:none';\n  document.body.appendChild(el);\n  function it(ic,lb,fn,dg){\n    var d=document.createElement('div');\n    d.style.cssText='padding:7px 14px;cursor:pointer;display:flex;gap:8px;align-items:center;'+(dg?'color:#dc2626':'color:#0f172a');\n    d.innerHTML='<span>'+ic+'</span><span>'+lb+'</span>';\n    d.onmouseenter=function(){d.style.background='#f1f5f9';};d.onmouseleave=function(){d.style.background='';};\n    d.onclick=function(){hide();fn();};return d;\n  }\n  function sp(){var h=document.createElement('hr');h.style.cssText='margin:3px 0;border:none;border-top:1px solid #f1f5f9';return h;}\n  function show(x,y,items){\n    el.innerHTML='';\n    items.forEach(function(i){if(i==='sep')el.appendChild(sp());else el.appendChild(i);});\n    el.style.display='block';\n    var vw=window.innerWidth,vh=window.innerHeight,r=el.getBoundingClientRect();\n    el.style.left=(x+r.width>vw?vw-r.width-8:x)+'px';el.style.top=(y+r.height>vh?vh-r.height-8:y)+'px';\n  }\n  function hide(){el.style.display='none';}\n  document.addEventListener('click',hide);\n  document.addEventListener('keydown',function(e){if(e.key==='Escape')hide();});\n  return{show:show,hide:hide,it:it};\n})();\nfunction _cp(t){\n  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(function(){_tk('Copied: '+t);}).catch(function(){_cf(t);});\n  else _cf(t);\n}\nfunction _cf(t){var a=document.createElement('textarea');a.value=t;a.style.cssText='position:fixed;opacity:0';document.body.appendChild(a);a.select();try{document.execCommand('copy');_tk('Copied: '+t);}catch(e){}document.body.removeChild(a);}\nfunction _tk(m){var t=document.createElement('div');t.textContent=m;t.style.cssText='position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:8px 18px;border-radius:20px;font-size:13px;z-index:99999;pointer-events:none;opacity:0;transition:opacity .2s';document.body.appendChild(t);requestAnimationFrame(function(){t.style.opacity='1';});setTimeout(function(){t.style.opacity='0';setTimeout(function(){document.body.removeChild(t);},300);},2000);}\nnetwork.on('oncontext',function(params){\n  params.event.preventDefault();\n  var x=params.event.clientX,y=params.event.clientY;\n  if(params.nodes.length>0){\n    var nid=params.nodes[0];selectedNodeId=nid;\n    var obj=allNodes.get(nid);var lbl=obj?(obj.label||nid):nid;\n    var num=String(nid).replace(/[^0-9+]/g,'');\n    _cm.show(x,y,[\n      _cm.it('&#128203;','Copy Number',function(){_cp(num||String(nid));}),\n      _cm.it('&#128221;','Copy Full Label',function(){_cp(lbl);}),\n      'sep',\n      _cm.it('&#128294;','Highlight',function(){var cn=new Set(network.getConnectedNodes(nid));cn.add(nid);allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:cn.has(n.id)?1.0:0.08})));},false),\n      _cm.it('&#128065;','Show Info',function(){if(obj&&obj.title)showPanel('NODE INFO',obj.title);}),\n      _cm.it('&#127760;','Expand Node',function(){expandNode(String(nid));}),\n      'sep',\n      _cm.it('&#128465;','Remove',function(){deleteSelected();},true),\n    ]);\n  }else if(params.edges.length>0){\n    var eid=params.edges[0];selectedEdgeId=eid;var eo=allEdges.get(eid);\n    _cm.show(x,y,[\n      _cm.it('&#128203;','Copy: '+(eo?String(eo.from).slice(-8):''),function(){_cp(eo?String(eo.from):'');}),\n      _cm.it('&#128203;','Copy: '+(eo?String(eo.to).slice(-8):''),function(){_cp(eo?String(eo.to):'');}),\n      'sep',\n      _cm.it('&#8505;','Edge Info',function(){if(eo&&eo.title)showPanel('LINK INFO',eo.title);}),\n      'sep',\n      _cm.it('&#128465;','Remove',function(){deleteSelected();},true),\n    ]);\n  }else{\n    _cm.show(x,y,[\n      _cm.it('&#128306;','Fit All',function(){network.fit();}),\n      _cm.it('&#128065;','Show All',function(){showAll();}),\n      _cm.it('&#128308;','Common Only',function(){showOnlyCommon();}),\n    ]);\n  }\n});\n")
     return html
 
 
@@ -9304,8 +9307,6 @@ def link_analysis_page():
                 _subj_meta_by_phone[sub] = meta
 
             graph_html = _build_network_html(dfs, top_connections, subjects, subj_edge_count, _subj_meta_by_phone, _contact_names_dict)
-            # Encode all non-ASCII (emoji etc) to HTML entities for Streamlit srcdoc
-            graph_html = graph_html.encode('ascii', errors='xmlcharrefreplace').decode('ascii')
 
         st.components.v1.html(graph_html, height=780, scrolling=False)
 
