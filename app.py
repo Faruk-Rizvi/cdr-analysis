@@ -9307,6 +9307,11 @@ def link_analysis_page():
                 _subj_meta_by_phone[sub] = meta
 
             graph_html = _build_network_html(dfs, top_connections, subjects, subj_edge_count, _subj_meta_by_phone, _contact_names_dict)
+            # Python 3.14: srcdoc must be ASCII — encode non-ASCII chars to HTML entities
+            graph_html = ''.join(
+                c if ord(c) < 128 else f'&#{ord(c)};'
+                for c in graph_html
+            )
 
         st.components.v1.html(graph_html, height=780, scrolling=False)
 
