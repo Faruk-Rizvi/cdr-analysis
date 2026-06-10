@@ -8224,31 +8224,34 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
         """call count অনুযায়ী HSL gradient — কম=ঠান্ডা নীল, বেশি=উষ্ণ লাল"""
         if max_total <= 0:
             return '#e2e8f0', '#94a3b8'
-        ratio = min(total / max_total, 1.0)
-        # Hue: 220 (blue) → 0 (red) through green (120)
-        # low: hsl(220,50%,88%)  high: hsl(0,85%,70%)
+        ratio = min(max(total / max_total, 0.0), 1.0)
+        # Hue: 220 (blue) → 120 (green) → 30 (orange) → 0 (red)
+        # সব value clamp করা হচ্ছে negative/overflow থেকে বাঁচাতে
         if ratio < 0.33:
-            # Blue zone
-            h = int(220 - ratio * 3 * 60)   # 220→160
-            s = int(45 + ratio * 3 * 20)
-            l = int(90 - ratio * 3 * 8)
+            r1 = ratio / 0.33
+            h = int(220 - r1 * 60)   # 220→160
+            s = int(45  + r1 * 20)   # 45→65
+            l = int(90  - r1 * 8)    # 90→82
         elif ratio < 0.66:
-            # Green zone
-            r2 = (ratio - 0.33) * 3
+            r2 = (ratio - 0.33) / 0.33
             h = int(160 - r2 * 100)  # 160→60
-            s = int(55 + r2 * 20)
-            l = int(82 - r2 * 10)
+            s = int(65  + r2 * 15)   # 65→80
+            l = int(82  - r2 * 10)   # 82→72
         else:
-            # Orange/Red zone
-            r3 = (ratio - 0.66) * 3
-            h = int(60 - r3 * 60)  # 60→0
-            s = int(75 + r3 * 15)
-            l = int(72 - r3 * 12)
+            r3 = (ratio - 0.66) / 0.34
+            h = int(60  - r3 * 55)   # 60→5 (never 0 to avoid wrap)
+            s = int(80  + r3 * 10)   # 80→90
+            l = int(72  - r3 * 12)   # 72→60
+        # Clamp all values to valid CSS ranges
+        h = max(0, min(360, h))
+        s = max(10, min(100, s))
+        l = max(20, min(95, l))
         bg  = f'hsl({h},{s}%,{l}%)'
-        bdr = f'hsl({h},{min(s+20,100)}%,{max(l-20,20)}%)'
+        bdr_s = min(s + 15, 100)
+        bdr_l = max(l - 18, 20)
+        bdr = f'hsl({h},{bdr_s}%,{bdr_l}%)'
         if is_common:
-            # common contact = always red-tinted but still gradient-shifted
-            bg  = f'hsl({max(h-10,0)},{min(s+15,100)}%,{l}%)'
+            bg  = f'hsl({h},{s}%,{l}%)'
             bdr = '#dc2626'
         return bg, bdr
 
@@ -8292,7 +8295,9 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             f"<br><span style='color:#64748b;font-size:12px'>"
             f"Shared: {len(subj_dict)} | Total: {total}"
             + (" | <b style='color:#f59e0b'>⭐ High-frequency</b>" if is_important else "") +
-            f"<br><div style='margin:3px 0;background:#f1f5f9;border-radius:4px;height:6px;overflow:hidden'>"            f"<div style='width:{min(int(total/_max_total*100),100)}%;height:100%;background:linear-gradient(90deg,#3b82f6,#ef4444);border-radius:4px'></div></div>"            f"<span style='font-size:10px;color:#94a3b8'>Frequency: {total} / {_max_total}</span>" +
+            f"<br><div style='margin:3px 0;background:#f1f5f9;border-radius:4px;height:6px;overflow:hidden'>"
+            f"<div style='width:{min(int(total/_max_total*100),100)}%;height:100%;background:linear-gradient(90deg,#3b82f6,#ef4444);border-radius:4px'></div></div>"
+            f"<span style='font-size:10px;color:#94a3b8'>Frequency: {total} / {_max_total}</span>" +
             f"</span><br>"
             f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
             + "<br>".join(subj_lines) +
