@@ -8393,8 +8393,17 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
            oninput="changeNodeSize(this.value)">
     <span id="nodeVal">14</span>
   </div>
+  <div class="sl">
+    <span>Edge Width:</span>
+    <input type="range" id="edgeWidthSz" min="1" max="15" value="7"
+           oninput="changeEdgeWidth(this.value)">
+    <span id="edgeWidthVal">7</span>
+  </div>
+  <button class="btn" id="autoPinBtn" onclick="toggleAutoPin()" title="Drag করলে node pin হবে/হবে না">AutoPin: ON</button>
+  <button class="btn" id="lassoBtn" onclick="toggleLasso()" title="Lasso selection mode">Lasso: OFF</button>
+  <button class="btn" style="background:#0369a1" onclick="togglePhysicsPanel()">&#x2699;&#xFE0F; Physics Tune</button>
   <span style="font-size:10px;color:#94a3b8;margin-left:auto">
-    Scroll=zoom | Drag=move | Click=info | Del=remove
+    Scroll=zoom | Drag=move | Click=info | Del=remove | RightClick=menu
   </span>
 </div>
 <div id="wrap">
@@ -8405,6 +8414,55 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
       <span id="panelX" onclick="closePanel()">&#xd7;</span>
     </div>
     <div id="panelBody"></div>
+  </div>
+  <!-- ── Physics Tune Panel ── -->
+  <div id="physTunePanel" style="display:none;position:absolute;bottom:14px;right:14px;z-index:998;
+       background:#fff;border:2px solid #1e3a8a;border-radius:12px;
+       padding:14px 18px;min-width:270px;max-width:310px;
+       box-shadow:0 8px 28px rgba(0,0,0,.20);font-size:12px;line-height:2;
+       font-family:'Segoe UI',Arial,sans-serif;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <span style="font-weight:800;font-size:13px;color:#1e3a8a;">&#x2699;&#xFE0F; Physics Tune</span>
+      <span onclick="togglePhysicsPanel()" style="cursor:pointer;color:#94a3b8;font-size:20px;line-height:1;">&#xd7;</span>
+    </div>
+    <div style="font-size:10px;color:#94a3b8;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">
+      Repulsion Solver Parameters
+    </div>
+    <div class="sl" style="justify-content:space-between;">
+      <span>Spring Length:</span>
+      <input type="range" id="pt_springLen" min="50" max="600" value="220" style="width:100px"
+             oninput="applyPhysicsTune()">
+      <span id="pt_springLen_v" style="min-width:32px;text-align:right;font-weight:700;color:#1e3a8a">220</span>
+    </div>
+    <div class="sl" style="justify-content:space-between;">
+      <span>Node Distance:</span>
+      <input type="range" id="pt_nodeDist" min="50" max="600" value="200" style="width:100px"
+             oninput="applyPhysicsTune()">
+      <span id="pt_nodeDist_v" style="min-width:32px;text-align:right;font-weight:700;color:#1e3a8a">200</span>
+    </div>
+    <div class="sl" style="justify-content:space-between;">
+      <span>Spring Constant:</span>
+      <input type="range" id="pt_springConst" min="1" max="100" value="4" style="width:100px"
+             oninput="applyPhysicsTune()">
+      <span id="pt_springConst_v" style="min-width:32px;text-align:right;font-weight:700;color:#1e3a8a">0.04</span>
+    </div>
+    <div class="sl" style="justify-content:space-between;">
+      <span>Central Gravity:</span>
+      <input type="range" id="pt_gravity" min="0" max="100" value="10" style="width:100px"
+             oninput="applyPhysicsTune()">
+      <span id="pt_gravity_v" style="min-width:32px;text-align:right;font-weight:700;color:#1e3a8a">0.10</span>
+    </div>
+    <div class="sl" style="justify-content:space-between;">
+      <span>Damping:</span>
+      <input type="range" id="pt_damping" min="1" max="99" value="10" style="width:100px"
+             oninput="applyPhysicsTune()">
+      <span id="pt_damping_v" style="min-width:32px;text-align:right;font-weight:700;color:#1e3a8a">0.10</span>
+    </div>
+    <hr style="margin:8px 0;border:none;border-top:1px solid #e2e8f0;">
+    <div style="display:flex;gap:8px;margin-top:4px;">
+      <button class="btn" style="flex:1;background:#16a34a" onclick="applyPhysicsTune(true)">&#x25B6; Apply &amp; Run</button>
+      <button class="btn" style="flex:1;background:#475569" onclick="resetPhysicsTune()">&#x21BA; Reset</button>
+    </div>
   </div>
 </div>
 
@@ -8634,9 +8692,80 @@ function togglePhysics(){{
   document.getElementById('physBtn').textContent=physicsOn?'\u23F8 Freeze':'\u25B6 Unfreeze';
 }}
 
-// dragEnd: pin node
+// ── Physics Tune Panel ──────────────────────────────────────────────
+function togglePhysicsPanel(){{
+  var p=document.getElementById('physTunePanel');
+  if(!p)return;
+  p.style.display=(p.style.display==='none'?'block':'none');
+}}
+function applyPhysicsTune(forceRun){{
+  var sl=+document.getElementById('pt_springLen').value;
+  var nd=+document.getElementById('pt_nodeDist').value;
+  var sc=+document.getElementById('pt_springConst').value/100;
+  var cg=+document.getElementById('pt_gravity').value/100;
+  var dm=+document.getElementById('pt_damping').value/100;
+  document.getElementById('pt_springLen_v').textContent=sl;
+  document.getElementById('pt_nodeDist_v').textContent=nd;
+  document.getElementById('pt_springConst_v').textContent=sc.toFixed(2);
+  document.getElementById('pt_gravity_v').textContent=cg.toFixed(2);
+  document.getElementById('pt_damping_v').textContent=dm.toFixed(2);
+  var opts={{
+    physics:{{
+      enabled:true,solver:'repulsion',
+      stabilization:{{iterations:300,updateInterval:20}},
+      repulsion:{{
+        centralGravity:cg,springLength:sl,
+        springConstant:sc,nodeDistance:nd,damping:dm
+      }}
+    }}
+  }};
+  network.setOptions(opts);
+  physicsOn=true;
+  document.getElementById('physBtn').textContent='\u23F8 Freeze';
+  if(forceRun){{
+    network.once('stabilizationIterationsDone',function(){{
+      network.fit({{animation:{{duration:500,easingFunction:'easeInOutQuad'}}}});
+    }});
+  }}
+}}
+function resetPhysicsTune(){{
+  document.getElementById('pt_springLen').value=220;
+  document.getElementById('pt_nodeDist').value=200;
+  document.getElementById('pt_springConst').value=4;
+  document.getElementById('pt_gravity').value=10;
+  document.getElementById('pt_damping').value=10;
+  applyPhysicsTune();
+}}
+
+// ── Edge Width ──────────────────────────────────────────────────────
+function changeEdgeWidth(v){{
+  document.getElementById('edgeWidthVal').textContent=v;
+  var mult=+v/7;
+  allEdges.update(allEdges.get().map(function(e){{
+    return{{id:e.id,width:Math.max(1,Math.round((e._total?Math.min(e._total/5+1,7):2)*mult))}};
+  }}));
+}}
+
+// ── AutoPin toggle ──────────────────────────────────────────────────
+var _autoPinEnabled=true;
+function toggleAutoPin(){{
+  _autoPinEnabled=!_autoPinEnabled;
+  document.getElementById('autoPinBtn').textContent='AutoPin: '+(_autoPinEnabled?'ON':'OFF');
+  document.getElementById('autoPinBtn').style.background=_autoPinEnabled?'#1e3a8a':'#475569';
+}}
+
+// ── Lasso selection ─────────────────────────────────────────────────
+var _lassoActive=false;
+function toggleLasso(){{
+  _lassoActive=!_lassoActive;
+  network.setOptions({{interaction:{{dragView:!_lassoActive,selectionType:_lassoActive?'rect':'single'}}}});
+  document.getElementById('lassoBtn').textContent='Lasso: '+(_lassoActive?'ON':'OFF');
+  document.getElementById('lassoBtn').style.background=_lassoActive?'#16a34a':'#475569';
+}}
+
+// dragEnd: pin node (only when AutoPin is ON)
 network.on('dragEnd',function(params){{
-  if(params.nodes.length>0){{
+  if(_autoPinEnabled && params.nodes.length>0){{
     params.nodes.forEach(function(nid){{
       var pos=network.getPositions([nid])[nid];
       allNodes.update({{id:nid,x:pos.x,y:pos.y,fixed:{{x:true,y:true}}}});
@@ -9093,6 +9222,12 @@ def link_analysis_page():
             _fs = _filter_start.strftime('%d/%m/%Y %H:%M') if _filter_start else '—'
             _fe = _filter_end.strftime('%d/%m/%Y %H:%M')   if _filter_end   else '—'
             st.info(f"🗓️ Filter: **{_fs}** → **{_fe}**")
+        # ── session_state-এ store করো যাতে expander collapse হলেও কাজ করে ──
+        st.session_state['_la_filter_start'] = _filter_start
+        st.session_state['_la_filter_end']   = _filter_end
+    # expander-এর বাইরে: session_state থেকে পড়ো
+    _filter_start       = st.session_state.get('_la_filter_start', None)
+    _filter_end         = st.session_state.get('_la_filter_end',   None)
     _date_filter_active = bool(_filter_start or _filter_end)
 
     # ── Subject Name & Photo ──
