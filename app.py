@@ -7985,7 +7985,12 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
         contact_names = {}
 
     # Subject 0 = primary (magenta/pink like Image 2), rest = normal palette
-    colors_subject = ['#db2777','#1d4ed8','#15803d','#7c3aed','#d97706']
+    colors_subject = [
+        '#db2777','#1d4ed8','#15803d','#7c3aed','#d97706',
+        '#0891b2','#b45309','#4f46e5','#059669','#dc2626',
+        '#7c2d12','#1e40af','#065f46','#6b21a8','#92400e',
+        '#0e7490','#166534','#9f1239','#0284c7','#78350f',
+    ]
 
     # SVG telephone icon as base64 data-URI for contact nodes
     _PHONE_SVG = (
@@ -8070,9 +8075,33 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
     common = {pb for pb, sd in connections.items() if len(sd) >= 2}
 
     # ── Contact nodes ──
-    # Pre-compute max total for importance-ring threshold (top 10%)
+    # Pre-compute max total for importance-ring threshold (top 10%) + gradient
     all_totals = [sum(d['total'] for d in sd.values()) for pb, sd in connections.items() if pb not in subjects]
     _importance_thresh = sorted(all_totals, reverse=True)[max(0, len(all_totals)//10 - 1)] if all_totals else 9999
+    _max_total = max(all_totals) if all_totals else 1
+
+    def _freq_color(total, max_total, is_common):
+        """Frequency-based HSL gradient: low=blue, mid=green, high=red. All values clamped."""
+        if max_total <= 0:
+            return '#e2e8f0', '#94a3b8'
+        ratio = min(max(total / max_total, 0.0), 1.0)
+        if ratio < 0.33:
+            r1 = ratio / 0.33
+            h, s, l = int(220 - r1*60), int(45 + r1*20), int(90 - r1*8)
+        elif ratio < 0.66:
+            r2 = (ratio - 0.33) / 0.33
+            h, s, l = int(160 - r2*100), int(65 + r2*15), int(82 - r2*10)
+        else:
+            r3 = (ratio - 0.66) / 0.34
+            h, s, l = int(60 - r3*55), int(80 + r3*10), int(72 - r3*12)
+        h = max(0, min(360, h))
+        s = max(10, min(100, s))
+        l = max(20, min(95, l))
+        bg  = f'hsl({h},{s}%,{l}%)'
+        bdr = f'hsl({h},{min(s+15,100)}%,{max(l-18,20)}%)'
+        if is_common:
+            bdr = '#dc2626'
+        return bg, bdr
 
     for pb, subj_dict in connections.items():
         if pb in nodes: continue
@@ -8083,9 +8112,9 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
         # ── Importance ring: top-10% by total interaction count ──
         is_important = (total >= _importance_thresh and total >= 10)
 
-        bg     = '#fca5a5' if is_common else ('#fef3c7' if is_iso_c else '#e2e8f0')
-        border = '#dc2626' if is_common else ('#d97706' if is_iso_c else '#94a3b8')
-        # Importance ring overrides border color (gold ring)
+        bg, border = _freq_color(total, _max_total, is_common)
+        if is_iso_c:
+            bg, border = '#fef3c7', '#d97706'
         if is_important:
             border = '#f59e0b'
 
@@ -8296,6 +8325,10 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <div class="li"><div class="dot" style="background:#dc2626"></div>Common Contact</div>
   <div class="li"><div class="dot" style="background:#64748b"></div>Single Contact</div>
   <div class="li"><div class="dot" style="background:#e2e8f0;border:3px solid #f59e0b;width:13px;height:13px;"></div>High-freq ⭐</div>
+  <div class="li" style="flex-direction:column;align-items:flex-start;gap:1px">
+    <span style="font-size:10px;color:#64748b">Freq: Low→High</span>
+    <div style="width:80px;height:7px;border-radius:4px;background:linear-gradient(90deg,hsl(220,45%,88%),hsl(120,65%,76%),hsl(5,90%,60%));border:1px solid #e2e8f0"></div>
+  </div>
   <div class="li"><div class="ln" style="background:#2563eb"></div>Connection (সংখ্যা = Call+SMS)</div>
   <div class="li"><div class="ln" style="background:#dc2626"></div>Common Contact Edge</div>
   <div class="li"><div class="ln" style="background:#7c3aed"></div>Subject ↔ Subject</div>
@@ -8968,6 +9001,13 @@ __EXTRA_JS__
 </script>
 </body>
 </html>""".replace("__EXTRA_JS__", "\n// ── Search ───────────────────────────────────────────────────────────────\nvar _sm=[],_si=-1,_ha=false,_ocs=false;\nfunction searchNodes(q){\n  q=q.trim().toLowerCase();\n  var ce=document.getElementById('searchCount');\n  if(!q){\n    _sm=[];_si=-1;\n    if(!_ha){\n      allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined})));\n      allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:false,opacity:1.0})));\n    }\n    if(ce)ce.textContent='';return;\n  }\n  var mt=new Set();\n  allNodes.get().forEach(function(n){\n    if((n.label||'').toLowerCase().includes(q)||String(n.id||'').toLowerCase().includes(q))mt.add(n.id);\n  });\n  _sm=[...mt];_si=_sm.length>0?0:-1;\n  allNodes.update(allNodes.get().map(function(n){\n    if(mt.has(n.id))return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    return{id:n.id,opacity:0.08,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:!(mt.has(e.from)&&mt.has(e.to))})));\n  if(ce)ce.textContent=mt.size>0?mt.size+' found':'No match';\n  if(_sm.length>0){network.focus(_sm[0],{scale:1.6,animation:{duration:400}});network.selectNodes([_sm[0]]);}\n}\nfunction handleSearchKey(e){\n  if(e.key!=='Enter'||_sm.length===0)return;\n  _si=(_si+1)%_sm.length;\n  network.focus(_sm[_si],{scale:1.6,animation:{duration:300}});\n  network.selectNodes([_sm[_si]]);\n}\n// ── Hover dim ────────────────────────────────────────────────────────────\nfunction _soc(){\n  if(_ocs)return;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,_oc:n.color||null,_bg:n.color&&n.color.background?n.color.background:null,_bw:n.borderWidth||2};\n  }));\n  _ocs=true;\n}\nnetwork.on('hoverNode',function(p){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _soc();_ha=true;\n  var h=p.node,cn=new Set(network.getConnectedNodes(h));cn.add(h);\n  allNodes.update(allNodes.get().map(function(n){\n    if(n.id===h)return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    if(cn.has(n.id))return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n    return{id:n.id,opacity:0.07,borderWidth:1,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:e.from===h||e.to===h?1.0:0.05};\n  }));\n});\nnetwork.on('blurNode',function(){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _ha=false;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:1.0};\n  }));\n});\n// ── Context menu ─────────────────────────────────────────────────────────\nvar _cm=(function(){\n  var el=document.createElement('div');\n  el.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px 0;min-width:185px;font-family:Segoe UI,Arial,sans-serif;font-size:13px;display:none';\n  document.body.appendChild(el);\n  function it(ic,lb,fn,dg){\n    var d=document.createElement('div');\n    d.style.cssText='padding:7px 14px;cursor:pointer;display:flex;gap:8px;align-items:center;'+(dg?'color:#dc2626':'color:#0f172a');\n    d.innerHTML='<span>'+ic+'</span><span>'+lb+'</span>';\n    d.onmouseenter=function(){d.style.background='#f1f5f9';};d.onmouseleave=function(){d.style.background='';};\n    d.onclick=function(){hide();fn();};return d;\n  }\n  function sp(){var h=document.createElement('hr');h.style.cssText='margin:3px 0;border:none;border-top:1px solid #f1f5f9';return h;}\n  function show(x,y,items){\n    el.innerHTML='';\n    items.forEach(function(i){if(i==='sep')el.appendChild(sp());else el.appendChild(i);});\n    el.style.display='block';\n    var vw=window.innerWidth,vh=window.innerHeight,r=el.getBoundingClientRect();\n    el.style.left=(x+r.width>vw?vw-r.width-8:x)+'px';el.style.top=(y+r.height>vh?vh-r.height-8:y)+'px';\n  }\n  function hide(){el.style.display='none';}\n  document.addEventListener('click',hide);\n  document.addEventListener('keydown',function(e){if(e.key==='Escape')hide();});\n  return{show:show,hide:hide,it:it};\n})();\nfunction _cp(t){\n  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(function(){_tk('Copied: '+t);}).catch(function(){_cf(t);});\n  else _cf(t);\n}\nfunction _cf(t){var a=document.createElement('textarea');a.value=t;a.style.cssText='position:fixed;opacity:0';document.body.appendChild(a);a.select();try{document.execCommand('copy');_tk('Copied: '+t);}catch(e){}document.body.removeChild(a);}\nfunction _tk(m){var t=document.createElement('div');t.textContent=m;t.style.cssText='position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:8px 18px;border-radius:20px;font-size:13px;z-index:99999;pointer-events:none;opacity:0;transition:opacity .2s';document.body.appendChild(t);requestAnimationFrame(function(){t.style.opacity='1';});setTimeout(function(){t.style.opacity='0';setTimeout(function(){document.body.removeChild(t);},300);},2000);}\nnetwork.on('oncontext',function(params){\n  params.event.preventDefault();\n  var x=params.event.clientX,y=params.event.clientY;\n  if(params.nodes.length>0){\n    var nid=params.nodes[0];selectedNodeId=nid;\n    var obj=allNodes.get(nid);var lbl=obj?(obj.label||nid):nid;\n    var num=String(nid).replace(/[^0-9+]/g,'');\n    _cm.show(x,y,[\n      _cm.it('📋','Copy Number',function(){_cp(num||String(nid));}),\n      _cm.it('📝','Copy Full Label',function(){_cp(lbl);}),\n      'sep',\n      _cm.it('🔦','Highlight',function(){var cn=new Set(network.getConnectedNodes(nid));cn.add(nid);allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:cn.has(n.id)?1.0:0.08})));},false),\n      _cm.it('👁','Show Info',function(){if(obj&&obj.title)showPanel('NODE INFO',obj.title);}),\n      'sep',\n      _cm.it('🗑','Remove',function(){deleteSelected();},true),\n    ]);\n  }else if(params.edges.length>0){\n    var eid=params.edges[0];selectedEdgeId=eid;var eo=allEdges.get(eid);\n    _cm.show(x,y,[\n      _cm.it('📋','Copy: '+(eo?String(eo.from).slice(-8):''),function(){_cp(eo?String(eo.from):'');}),\n      _cm.it('📋','Copy: '+(eo?String(eo.to).slice(-8):''),function(){_cp(eo?String(eo.to):'');}),\n      'sep',\n      _cm.it('ℹ️','Edge Info',function(){if(eo&&eo.title)showPanel('LINK INFO',eo.title);}),\n      'sep',\n      _cm.it('🗑','Remove',function(){deleteSelected();},true),\n    ]);\n  }else{\n    _cm.show(x,y,[\n      _cm.it('🔲','Fit All',function(){network.fit();}),\n      _cm.it('👁','Show All',function(){showAll();}),\n      _cm.it('🔴','Common Only',function(){showOnlyCommon();}),\n    ]);\n  }\n});\n")
+    # ── Name Editor: inject panel + JS via html.replace ──
+    _ne_panel = '<div id="nameEditorPanel" style="display:none;position:fixed;top:60px;left:14px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,.18);padding:14px 16px;width:260px;max-height:70vh;overflow-y:auto;z-index:9995;font-family:Segoe UI,Arial,sans-serif;font-size:12px;color:#0f172a;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;"><span style="font-weight:700;font-size:13px;color:#1e3a8a;">&#x270F;&#xFE0F; Contact Names</span><span id="neClose" style="cursor:pointer;color:#94a3b8;font-size:18px;line-height:1;">&#x2715;</span></div><div style="font-size:11px;color:#64748b;margin-bottom:10px;">Numbers-à¦\x8fà¦° à¦¨à¦¿à¦\x9aà§\x87 à¦¨à¦¾à¦® (optional)</div><div id="neList"></div><button id="neApplyBtn" style="margin-top:10px;width:100%;padding:7px;background:#1e3a8a;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:12px;font-weight:600;">&#x2705; Apply All</button><button id="neClearBtn" style="margin-top:5px;width:100%;padding:6px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;border-radius:7px;cursor:pointer;font-size:11px;">&#x2715; Clear All</button></div>'
+    _ne_js    = 'function neToggle(){var p=document.getElementById("nameEditorPanel");if(!p)return;if(p.style.display==="none"){neBuild();p.style.display="block";}else{p.style.display="none";}}function neBuild(){var L=document.getElementById("neList");if(!L)return;L.innerHTML="";var ns=allNodes.get().filter(function(n){return n.group!=="subject"&&n.group!=="isolated_subject";});ns.sort(function(a,b){return String(a.id).localeCompare(String(b.id));});ns.forEach(function(n){var num=String(n.id).replace(/[^0-9+]/g,"");var wrap=document.createElement("div");wrap.style.marginBottom="7px";var lbl=document.createElement("div");lbl.style.cssText="font-size:10px;color:#64748b;margin-bottom:2px;";lbl.textContent=num;var inp=document.createElement("input");inp.type="text";inp.dataset.nid=n.id;inp.value=n._cname||"";inp.placeholder="à¦¨à¦¾à¦® à¦²à¦¿à¦\x96à§\x81à¦¨...";inp.style.cssText="width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;outline:none;color:#0f172a;";inp.addEventListener("keydown",function(ev){if(ev.key==="Enter")neApplyOne(inp);});wrap.appendChild(lbl);wrap.appendChild(inp);L.appendChild(wrap);});}function neApplyOne(inp){var nid=inp.dataset.nid;var nn=(inp.value||"").trim();var obj=allNodes.get(nid);if(!obj)return;var num=String(nid).replace(/[^0-9+]/g,"");var newLbl=nn?nn+"\\n"+num:(obj._origLabel||num);allNodes.update([{id:nid,label:newLbl,_cname:nn}]);}function neApplyAll(){var inps=document.querySelectorAll("#neList input[data-nid]");var c=0;inps.forEach(function(inp){neApplyOne(inp);if((inp.value||"").trim())c++;});_tk(c+" à¦¨à¦¾à¦® apply à¦¹à¦¯à¦¼à§\x87à¦\x9bà§\x87");}function neClearAll(){document.querySelectorAll("#neList input[data-nid]").forEach(function(i){i.value="";});allNodes.get().forEach(function(n){if(n.group==="subject"||n.group==="isolated_subject")return;var num=String(n.id).replace(/[^0-9+]/g,"");allNodes.update([{id:n.id,label:n._origLabel||num,_cname:""}]);});_tk("à¦¨à¦¾à¦® à¦®à§\x81à¦\x9bà¦¾ à¦¹à¦¯à¦¼à§\x87à¦\x9bà§\x87");}document.addEventListener("DOMContentLoaded",function(){var cp=document.getElementById("neClose");if(cp)cp.onclick=function(){document.getElementById("nameEditorPanel").style.display="none";};var ab=document.getElementById("neApplyBtn");if(ab)ab.onclick=neApplyAll;var cb=document.getElementById("neClearBtn");if(cb)cb.onclick=neClearAll;var tb=document.querySelector(".toolbar");if(tb){var nb=document.createElement("button");nb.className="btn";nb.textContent="Names";nb.style.background="#0369a1";nb.title="Contact à¦¨à¦¾à¦® à¦¦à¦¿à¦¨";nb.onclick=neToggle;tb.appendChild(nb);}});'
+    html = html.replace(
+        "</body>",
+        _ne_panel + "<script>" + _ne_js + "</script></body>"
+    )
     return html
 
 
@@ -8977,32 +9017,46 @@ def link_analysis_page():
     <div style="background:white;border-radius:12px;padding:1.2rem 1.5rem;margin-bottom:1rem;
                 border-left:4px solid #2563eb;box-shadow:0 1px 4px rgba(0,0,0,.06)">
         <div style="font-size:1.2rem;font-weight:800;color:#1e3a8a">🔗 CDR Link Analysis</div>
-        <div style="font-size:.85rem;color:#64748b">Upload up to 5 CDR files to analyze connections, common contacts, and co-location events</div>
+        <div style="font-size:.85rem;color:#64748b">CDR ফাইল আপলোড করুন — সর্বোচ্চ ২০টি Subject বিশ্লেষণ করা যাবে</div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Upload Section ──
-    st.markdown("### 📂 Upload CDR Files (max 5)")
-    cols = st.columns(5)
-    uploaded_files = []
-    labels = ['Subject A', 'Subject B', 'Subject C', 'Subject D', 'Subject E']
+    # ── Step 1: Subject সংখ্যা নির্বাচন ──
+    _SUBJ_LETTERS = [chr(65+i) for i in range(20)]  # A–T
+    _num_subjects = st.number_input(
+        "📌 কতটি Subject বিশ্লেষণ করবেন?",
+        min_value=2, max_value=20, value=2,
+        step=1, key='_la_num_subj',
+        help="2–20 পর্যন্ত Subject নির্বাচন করুন।"
+    )
+    labels = [f"Subject {_SUBJ_LETTERS[i]}" for i in range(_num_subjects)]
 
-    for i, col in enumerate(cols):
-        with col:
-            f = st.file_uploader(
-                labels[i], type=['xlsx', 'xls', 'csv'],
-                key=f'link_cdr_{i}',
-                label_visibility='visible'
-            )
-            if f is not None and not validate_upload(f, kind="excel"):
-                f = None
-            uploaded_files.append(f)
+    # ── Step 2: Dynamic upload columns (max 5 per row) ──
+    st.markdown(f"### 📂 CDR ফাইল আপলোড ({_num_subjects}টি Subject)")
+    _cols_per_row = min(5, _num_subjects)
+    uploaded_files = []
+    for _row_start in range(0, _num_subjects, _cols_per_row):
+        _row_end = min(_row_start + _cols_per_row, _num_subjects)
+        _row_labels = labels[_row_start:_row_end]
+        _row_cols = st.columns(len(_row_labels))
+        for _ci, (_col, _lbl) in enumerate(zip(_row_cols, _row_labels)):
+            _idx = _row_start + _ci
+            with _col:
+                f = st.file_uploader(
+                    _lbl, type=['xlsx', 'xls', 'csv'],
+                    key=f'link_cdr_{_idx}',
+                    label_visibility='visible'
+                )
+                if f is not None and not validate_upload(f, kind="excel"):
+                    f = None
+                uploaded_files.append(f)
 
     active_files = [(f, labels[i]) for i, f in enumerate(uploaded_files) if f is not None]
 
     if len(active_files) < 2:
-        st.info("📌 Upload at least 2 CDR files to start link analysis")
+        st.info("📌 বিশ্লেষণ শুরু করতে কমপক্ষে ২টি CDR ফাইল আপলোড করুন")
         return
+    st.success(f"✅ {len(active_files)}টি ফাইল আপলোড হয়েছে")
 
     # Settings
     with st.expander("⚙️ Settings", expanded=False):
@@ -9013,26 +9067,56 @@ def link_analysis_page():
             coloc_window = st.slider("Co-location time window (minutes)", 5, 120, 30)
         with c3:
             radius_km = st.slider("Co-location radius (km)", 1, 20, 5)
-        exclude_noise = True  # Carrier/service numbers সবসময় filter হবে
+        exclude_noise = True
+        st.markdown("---")
+        st.markdown("**📅 Date & Time Range Filter** *(optional)*")
+        _df1, _df2, _tf1, _tf2 = st.columns(4)
+        with _df1:
+            _date_from = st.date_input("From Date", value=None, key="la_date_from")
+        with _df2:
+            _date_to   = st.date_input("To Date",   value=None, key="la_date_to")
+        with _tf1:
+            _time_from = st.time_input("From Time", value=None, key="la_time_from")
+        with _tf2:
+            _time_to   = st.time_input("To Time",   value=None, key="la_time_to")
+        import datetime as _dt
+        _filter_start = None
+        _filter_end   = None
+        if _date_from:
+            _filter_start = _dt.datetime.combine(_date_from, _time_from if _time_from else _dt.time(0,0,0))
+        if _date_to:
+            _filter_end   = _dt.datetime.combine(_date_to,   _time_to   if _time_to   else _dt.time(23,59,59))
+        if _filter_start and _filter_end and _filter_start > _filter_end:
+            st.warning("⚠️ 'From' তারিখ 'To' তারিখের পরে")
+            _filter_start = _filter_end = None
+        if _filter_start or _filter_end:
+            _fs = _filter_start.strftime('%d/%m/%Y %H:%M') if _filter_start else '—'
+            _fe = _filter_end.strftime('%d/%m/%Y %H:%M')   if _filter_end   else '—'
+            st.info(f"🗓️ Filter: **{_fs}** → **{_fe}**")
+    _date_filter_active = bool(_filter_start or _filter_end)
 
     # ── Subject Name & Photo ──
     with st.expander("👤 Subject Names & Photos (optional)", expanded=False):
-        st.caption("Enter name and upload photo. Photo will replace the star icon in the network graph.")
+        st.caption("নাম ও ছবি দিন — optional।")
         _subj_meta = {}
-        _meta_cols = st.columns(5)
-        for _si, (_mc, _lbl) in enumerate(zip(_meta_cols, labels)):
-            with _mc:
-                _sname = st.text_input(f"Name", key=f"subj_name_{_si}",
-                                       placeholder=f"e.g. John ({_lbl})")
-                _sphoto = st.file_uploader(f"Photo", type=["jpg","jpeg","png"],
-                                           key=f"subj_photo_{_si}")
-                if _sphoto is not None and not validate_upload(_sphoto, kind="image"):
-                    _sphoto = None
-                _photo_b64 = None
-                if _sphoto:
-                    import base64 as _b64
-                    _photo_b64 = "data:" + _sphoto.type + ";base64," + _b64.b64encode(_sphoto.read()).decode()
-                _subj_meta[_lbl] = {"name": _sname.strip(), "photo": _photo_b64}
+        for _row_start in range(0, len(active_files), _cols_per_row):
+            _row_end   = min(_row_start + _cols_per_row, len(active_files))
+            _row_lbls  = [lbl for _, lbl in active_files[_row_start:_row_end]]
+            _meta_cols = st.columns(len(_row_lbls))
+            for _si, (_mc, _lbl) in enumerate(zip(_meta_cols, _row_lbls)):
+                _real_idx = _row_start + _si
+                with _mc:
+                    _sname = st.text_input(f"নাম", key=f"subj_name_{_real_idx}",
+                                           placeholder=f"{_lbl}")
+                    _sphoto = st.file_uploader(f"ছবি", type=["jpg","jpeg","png"],
+                                               key=f"subj_photo_{_real_idx}")
+                    if _sphoto is not None and not validate_upload(_sphoto, kind="image"):
+                        _sphoto = None
+                    _photo_b64 = None
+                    if _sphoto:
+                        import base64 as _b64
+                        _photo_b64 = "data:" + _sphoto.type + ";base64," + _b64.b64encode(_sphoto.read()).decode()
+                    _subj_meta[_lbl] = {"name": _sname.strip(), "photo": _photo_b64}
 
     # ── Contact Names (optional) ──
     with st.expander("📇 Contact Names (optional)", expanded=False):
@@ -9071,9 +9155,19 @@ def link_analysis_page():
             for f, label in active_files:
                 df, subject, anomalies = _load_cdr(f, label)
                 if df is not None and len(df) > 0:
-                    dfs.append(df)
-                    subjects.append(subject)
-                    anomaly_counts.append(anomalies)
+                    if _date_filter_active and 'start' in df.columns:
+                        import pandas as _pd_dt
+                        _s = _pd_dt.to_datetime(df['start'], errors='coerce')
+                        if _filter_start:
+                            df = df[_s >= _pd_dt.Timestamp(_filter_start)]
+                        if _filter_end:
+                            _s2 = _pd_dt.to_datetime(df['start'], errors='coerce')
+                            df  = df[_s2 <= _pd_dt.Timestamp(_filter_end)]
+                        df = df.reset_index(drop=True)
+                    if len(df) > 0:
+                        dfs.append(df)
+                        subjects.append(subject)
+                        anomaly_counts.append(anomalies)
 
         if len(dfs) < 2:
             st.error("Could not load at least 2 valid CDR files")
