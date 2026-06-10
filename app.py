@@ -1764,132 +1764,6 @@ def _apply_bts_enrichment(df):
     except Exception:
         logger.debug('Teletalk enrichment (shared) failed', exc_info=True)
 
-    # ── Robi BTS CSV Enrichment ─────────────────────────────────────────────
-    # Robi 4G: ENODEBID//100 = CDR LAC_ID, Cell_ID শেষ ২ digit = CSV CELL_ID
-    # Robi 2G: CSV LAC = CDR LAC_ID, CSV CELL_ID = CDR Cell_ID (direct match)
-    try:
-        _is_robi_e = False
-        if 'operator' in df.columns:
-            _is_robi_e = any('robi' in str(v).lower()
-                             for v in df['operator'].dropna().unique())
-
-        if _is_robi_e and 'cell_id' in df.columns and 'lac' in df.columns:
-            import glob as _glob_re
-
-            def _find_robi_csv_e(tech_key):
-                for _d in [_UPLOADS_DIR_E, _CELL_DIR_E]:
-                    hits = _glob_re.glob(_os_e.path.join(_d, f'Robi_{tech_key}*.csv'))
-                    hits += _glob_re.glob(_os_e.path.join(_d, f'robi_{tech_key.lower()}*.csv'))
-                    hits = [h for h in hits if _os_e.path.getsize(h) > 1000]
-                    if hits: return hits[0]
-                return None
-
-            _robi_map_e = {}
-            _robi_2g_cell_only_e = {}
-
-            # 4G CSV
-            _r4g_path_e = _find_robi_csv_e('4G')
-            if _r4g_path_e:
-                try:
-                    _r4g_e = pd.read_csv(_r4g_path_e, engine='python', encoding='latin-1',
-                                         low_memory=False, on_bad_lines='skip')
-                    _r4g_e.columns = [c.strip().lower() for c in _r4g_e.columns]
-                    if all(c in _r4g_e.columns for c in ['enodebid','cell_id','latitude','longitude']):
-                        _cols_e = ['enodebid','cell_id','latitude','longitude'] +                                   [c for c in ['address','district','thana'] if c in _r4g_e.columns]
-                        _r4g_ev = _r4g_e[_cols_e].copy()
-                        for _nc in ['enodebid','cell_id','latitude','longitude']:
-                            _r4g_ev[_nc] = pd.to_numeric(_r4g_ev[_nc], errors='coerce')
-                        _r4g_ev = _r4g_ev.dropna(subset=['enodebid','cell_id','latitude','longitude'])
-                        _r4g_ev = _r4g_ev[_r4g_ev['latitude'].between(19,27) & _r4g_ev['longitude'].between(87,93)]
-                        _r4g_ev['_dlac'] = (_r4g_ev['enodebid'] // 100).astype(int)
-                        _r4g_ev['_cid']  = _r4g_ev['cell_id'].astype(int)
-                        _r4g_ev = _r4g_ev.drop_duplicates(subset=['_dlac','_cid'])
-                        for _, _rr in _r4g_ev.iterrows():
-                            _k = (int(_rr['_dlac']), int(_rr['_cid']))
-                            if _k not in _robi_map_e:
-                                _robi_map_e[_k] = (float(_rr['latitude']), float(_rr['longitude']),
-                                    str(_rr.get('address','')), str(_rr.get('district','')), str(_rr.get('thana','')))
-                except Exception:
-                    logger.debug('Robi 4G enrichment in _apply_bts failed', exc_info=True)
-
-            # 2G CSV
-            _r2g_path_e = _find_robi_csv_e('2G')
-            if _r2g_path_e:
-                try:
-                    _r2g_e = pd.read_csv(_r2g_path_e, engine='python', encoding='latin-1',
-                                         low_memory=False, on_bad_lines='skip')
-                    _r2g_e.columns = [c.strip().lower() for c in _r2g_e.columns]
-                    if all(c in _r2g_e.columns for c in ['lac','cell_id','latitude','longitude']):
-                        _cols2_e = ['lac','cell_id','latitude','longitude'] +                                    [c for c in ['address','district','thana'] if c in _r2g_e.columns]
-                        _r2g_ev = _r2g_e[_cols2_e].copy()
-                        for _nc in ['lac','cell_id','latitude','longitude']:
-                            _r2g_ev[_nc] = pd.to_numeric(_r2g_ev[_nc], errors='coerce')
-                        _r2g_ev = _r2g_ev.dropna(subset=['lac','cell_id','latitude','longitude'])
-                        _r2g_ev = _r2g_ev[_r2g_ev['latitude'].between(19,27) & _r2g_ev['longitude'].between(87,93)]
-                        for _, _rr in _r2g_ev.iterrows():
-                            try:
-                                _lac2_e = int(_rr['lac']); _cid2_e = int(_rr['cell_id'])
-                                _lat2_e = float(_rr['latitude']); _lon2_e = float(_rr['longitude'])
-                                _addr2_e = str(_rr.get('address','')); _dist2_e = str(_rr.get('district',''))
-                                _thana2_e = str(_rr.get('thana',''))
-                                _k2 = (_lac2_e, _cid2_e)
-                                if _k2 not in _robi_map_e:
-                                    _robi_map_e[_k2] = (_lat2_e, _lon2_e, _addr2_e, _dist2_e, _thana2_e)
-                                if _cid2_e not in _robi_2g_cell_only_e:
-                                    _robi_2g_cell_only_e[_cid2_e] = []
-                                _robi_2g_cell_only_e[_cid2_e].append(
-                                    (_lac2_e, _lat2_e, _lon2_e, _addr2_e, _dist2_e.lower(), _thana2_e))
-                            except Exception: continue
-                except Exception:
-                    logger.debug('Robi 2G enrichment in _apply_bts failed', exc_info=True)
-
-            # ── GPS inject ──
-            if _robi_map_e:
-                _cid_se = df['cell_id'].astype(str).str.strip()
-                _cid_se = _cid_se.where(
-                    ~(_cid_se.str.endswith('.0') & _cid_se.str[:-2].str.isdigit()),
-                    _cid_se.str[:-2])
-                _cid_int_se = pd.to_numeric(_cid_se, errors='coerce').astype('Int64')
-                _lac_se = pd.to_numeric(df.get('lac', pd.Series(dtype=str)), errors='coerce').astype('Int64')
-                _ctype_se = df['cell_type'].astype(str).str.upper() if 'cell_type' in df.columns                             else pd.Series(['2G']*len(df))
-                _sector_se = _cid_se.apply(
-                    lambda s: int(s[-2:]) if len(s) >= 2 and s.isdigit() else None)
-                _keys_e = pd.Series([
-                    (_lac_se.iloc[i], _sector_se.iloc[i]) if _ctype_se.iloc[i] == '4G'
-                    else (_lac_se.iloc[i], _cid_int_se.iloc[i])
-                    for i in range(len(df))], index=df.index)
-                _gps_m_e = _keys_e.map(
-                    lambda k: _robi_map_e.get(k) if pd.notna(k[0]) and pd.notna(k[1]) else None)
-                _mask_re = _gps_m_e.notna()
-                # 2G fallback
-                for _idx in df.index[~_mask_re & (_ctype_se != '4G')]:
-                    try:
-                        _ci_e = int(_cid_int_se.at[_idx])
-                        if _ci_e not in _robi_2g_cell_only_e: continue
-                        _cands_e = _robi_2g_cell_only_e[_ci_e]
-                        _addr_lo_e = str(df.at[_idx,'address'] or '').lower() if 'address' in df.columns else ''
-                        _best_e = _cands_e[0] if len(_cands_e) == 1 else                                   next((c for c in _cands_e if c[4] and c[4] in _addr_lo_e), None) or                                   next((c for c in _cands_e if 'dhaka' in c[4]), None) or _cands_e[0]
-                        if _best_e:
-                            _gps_m_e.at[_idx] = (_best_e[1],_best_e[2],_best_e[3],_best_e[4],_best_e[5])
-                            _mask_re.at[_idx] = True
-                    except Exception: continue
-                if _mask_re.any():
-                    _gdf_e = pd.DataFrame(_gps_m_e[_mask_re].tolist(),
-                                          index=_gps_m_e[_mask_re].index,
-                                          columns=['_lat','_lon','_addr','_dist','_thana'])
-                    if 'address' not in df.columns: df['address'] = ''
-                    _blnk_e = df['address'].astype(str).str.strip().isin(['','nan','None','NaN'])
-                    df.loc[_mask_re & _blnk_e, 'address'] = _gdf_e.loc[_blnk_e[_mask_re], '_addr'].values
-                    df.loc[_mask_re, 'cell_lat']       = pd.to_numeric(_gdf_e['_lat'], errors='coerce')
-                    df.loc[_mask_re, 'cell_lon']       = pd.to_numeric(_gdf_e['_lon'], errors='coerce')
-                    df.loc[_mask_re, 'loc_method']     = 'cell_exact'
-                    df.loc[_mask_re, 'csv_district']   = _gdf_e['_dist'].values
-                    df.loc[_mask_re, 'csv_thana']      = _gdf_e['_thana'].values
-                    df.loc[_mask_re, 'cell_csv_label'] = _gdf_e['_addr'].values
-    except Exception:
-        logger.debug('Robi enrichment in _apply_bts_enrichment failed', exc_info=True)
-    # ── End Robi BTS Enrichment ──────────────────────────────────────────────
-
     return df
 
 
@@ -7097,13 +6971,10 @@ def _load_cdr_bytes(file_bytes, label):
         df = df.reset_index(drop=True)
         after = len(df)
 
-        # ── GPS Enrichment — CDR Analysis-এর সম্পূর্ণ logic ব্যবহার করা হচ্ছে ──
-        # _apply_bts_enrichment():
-        #   • Teletalk → CGI/ECGI exact match (Teletalk.csv)
-        #   • Robi 4G  → ENODEBID//100 + sector (শেষ ২ digit) match (Robi_4G.csv)
-        #   • Robi 2G  → LAC + CID direct match + cell_only fallback (Robi_2G.csv)
-        #   → cell_lat, cell_lon, loc_method='cell_exact', csv_district, csv_thana, cell_csv_label
-        # GP / Banglalink → _ensure_cell_tower_cache + _load_cell_tower_gps (lac_n/cid_n merge)
+        # ── GPS Enrichment from cell tower CSV ──
+        # Step 1: detect operator(s) from this CDR
+        # Step 2: ensure CSV downloaded (from HF if needed)
+        # Step 3: enrich df rows with cell_lat/cell_lon/loc_method
         try:
             import os as _os2, tempfile as _tf2
             _cell_dir = _os2.path.join(_tf2.gettempdir(), "celltower_cache")
@@ -7113,46 +6984,36 @@ def _load_cdr_bytes(file_bytes, label):
             if 'operator' in df.columns:
                 for _ov in df['operator'].dropna().astype(str).unique():
                     _ol = _ov.lower()
-                    if 'grameen' in _ol or 'gp' in _ol:      _ops_set.add('gp')
-                    elif 'banglalink' in _ol or 'bl' in _ol:  _ops_set.add('bl')
-                    elif 'robi' in _ol or 'airtel' in _ol:   _ops_set.add('robi')
-                    elif 'teletalk' in _ol:                   _ops_set.add('teletalk')
+                    if 'grameen' in _ol or 'gp' in _ol:     _ops_set.add('gp')
+                    elif 'banglalink' in _ol or 'bl' in _ol: _ops_set.add('bl')
+                    elif 'robi' in _ol or 'airtel' in _ol:  _ops_set.add('robi')
+                    elif 'teletalk' in _ol:                  _ops_set.add('teletalk')
 
             # Download CSVs if not already cached
             _ensure_cell_tower_cache(_ops_set if _ops_set else None)
 
-            # Step A: Teletalk + Robi full enrichment (CDR Analysis-এর same logic)
-            df = _apply_bts_enrichment(df)
-
-            # Step B: GP / Banglalink → lac_n/cid_n merge (যেসব row এখনো unmatched)
-            _already_matched = (
-                'loc_method' in df.columns and
-                df['loc_method'].eq('cell_exact').any()
-            )
+            # Load GPS map and enrich
             _gps_map = _load_cell_tower_gps(_cell_dir)
             if _gps_map and 'lac_n' in df.columns and 'cid_n' in df.columns:
+                # Vectorized: build lookup DataFrame and merge
                 import pandas as _pd_gps
                 _keys = list(_gps_map.keys())
                 _vals = list(_gps_map.values())
-                _gps_df2 = _pd_gps.DataFrame({
+                _gps_df = _pd_gps.DataFrame({
                     'lac_n': [k[0] for k in _keys],
                     'cid_n': [k[1] for k in _keys],
                     '_glat': [v[0] for v in _vals],
                     '_glon': [v[1] for v in _vals],
                 })
-                # শুধু এখনো unmatched rows-এ apply করো (Teletalk/Robi-কে overwrite করবে না)
-                _unmatched_mask = ~df.get('loc_method', _pd_gps.Series('none', index=df.index)).eq('cell_exact')
-                if _unmatched_mask.any():
-                    _tmp2 = df.loc[_unmatched_mask, ['lac_n','cid_n']].astype(str).reset_index(drop=True)
-                    _tmp2 = _tmp2.merge(_gps_df2, on=['lac_n','cid_n'], how='left')
-                    _idxs = df.index[_unmatched_mask]
-                    df.loc[_idxs, 'cell_lat'] = _tmp2['_glat'].values
-                    df.loc[_idxs, 'cell_lon'] = _tmp2['_glon'].values
-                    _new_methods = _tmp2['_glat'].apply(
-                        lambda v: 'cell_exact' if _pd_gps.notna(v) else 'none').values
-                    df.loc[_idxs, 'loc_method'] = _new_methods
-                    if 'csv_district' not in df.columns:
-                        df['csv_district'] = ''
+                _orig_idx = df.index
+                _tmp = df[['lac_n','cid_n']].astype(str).reset_index(drop=True)
+                _tmp = _tmp.merge(_gps_df, on=['lac_n','cid_n'], how='left')
+                df = df.reset_index(drop=True)
+                df['cell_lat']     = _tmp['_glat']
+                df['cell_lon']     = _tmp['_glon']
+                df['loc_method']   = _tmp['_glat'].apply(
+                    lambda v: 'cell_exact' if _pd_gps.notna(v) else 'none')
+                df['csv_district'] = ''
         except Exception:
             logger.debug('suppressed exception', exc_info=True)
 
@@ -7587,15 +7448,14 @@ def _load_cell_tower_gps(cell_dir=None):
     if cell_dir: search_dirs.insert(0, cell_dir)
 
     csv_configs = [
-        ('GP_2G.csv',  'lac', 'cellid',         'latitude', 'longitude'),
-        ('GP_3G.csv',  'lac', 'cellid',         'latitude', 'longitude'),
-        ('GP_4G.csv',  'lac', 'cell_id',         'latitude', 'longitude'),
-        ('2G.csv',     'lac', 'cellid',           'latitude', 'longitude'),
-        ('4G.csv',     'lac', 'cell_id',          'latitude', 'longitude'),
-        ('Robi_4G.csv','enodebid','cell_id',      'latitude', 'longitude'),
-        ('Robi_2G.csv','lac', 'cell_id',          'latitude', 'longitude'),
-        ('Banglalink_4G.csv','tac','eutrancellid','latitude', 'longitude'),
-        ('Banglalink_2G3G.csv','lac','ci',        'lat',      'lon'),
+        ('GP_2G.csv',  'lac', 'cellid',      'latitude', 'longitude'),
+        ('GP_4G.csv',  'lac', 'cell_id',      'latitude', 'longitude'),
+        ('2G.csv',     'lac', 'cellid',        'latitude', 'longitude'),
+        ('4G.csv',     'lac', 'cell_id',       'latitude', 'longitude'),
+        ('Robi_4G.csv','enodebid','cell_id',   'latitude', 'longitude'),
+        ('Robi_2G.csv','lac', 'cell_id',       'latitude', 'longitude'),
+        ('Banglalink_4G.csv','tac','eutrancellid','latitude','longitude'),
+        ('Banglalink_2G3G.csv','lac','ci',     'lat',      'lon'),
     ]
 
     for d in search_dirs:
@@ -8129,7 +7989,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
         '#db2777','#1d4ed8','#15803d','#7c3aed','#d97706',
         '#0891b2','#b45309','#4f46e5','#059669','#dc2626',
         '#7c2d12','#1e40af','#065f46','#6b21a8','#92400e',
-        '#0e7490','#166534','#9f1239','#1d4ed8','#78350f',
+        '#0e7490','#166534','#9f1239','#0284c7','#78350f',
     ]
 
     # SVG telephone icon as base64 data-URI for contact nodes
@@ -8215,43 +8075,31 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
     common = {pb for pb, sd in connections.items() if len(sd) >= 2}
 
     # ── Contact nodes ──
-    # Pre-compute max total for importance-ring threshold (top 10%) + gradient normalization
+    # Pre-compute max total for importance-ring threshold (top 10%) + gradient
     all_totals = [sum(d['total'] for d in sd.values()) for pb, sd in connections.items() if pb not in subjects]
     _importance_thresh = sorted(all_totals, reverse=True)[max(0, len(all_totals)//10 - 1)] if all_totals else 9999
     _max_total = max(all_totals) if all_totals else 1
 
-    def _freq_gradient_color(total, max_total, is_common):
-        """call count অনুযায়ী HSL gradient — কম=ঠান্ডা নীল, বেশি=উষ্ণ লাল"""
+    def _freq_color(total, max_total, is_common):
+        """Frequency-based HSL gradient: low=blue, mid=green, high=red. All values clamped."""
         if max_total <= 0:
             return '#e2e8f0', '#94a3b8'
         ratio = min(max(total / max_total, 0.0), 1.0)
-        # Hue: 220 (blue) → 120 (green) → 30 (orange) → 0 (red)
-        # সব value clamp করা হচ্ছে negative/overflow থেকে বাঁচাতে
         if ratio < 0.33:
             r1 = ratio / 0.33
-            h = int(220 - r1 * 60)   # 220→160
-            s = int(45  + r1 * 20)   # 45→65
-            l = int(90  - r1 * 8)    # 90→82
+            h, s, l = int(220 - r1*60), int(45 + r1*20), int(90 - r1*8)
         elif ratio < 0.66:
             r2 = (ratio - 0.33) / 0.33
-            h = int(160 - r2 * 100)  # 160→60
-            s = int(65  + r2 * 15)   # 65→80
-            l = int(82  - r2 * 10)   # 82→72
+            h, s, l = int(160 - r2*100), int(65 + r2*15), int(82 - r2*10)
         else:
             r3 = (ratio - 0.66) / 0.34
-            h = int(60  - r3 * 55)   # 60→5 (never 0 to avoid wrap)
-            s = int(80  + r3 * 10)   # 80→90
-            l = int(72  - r3 * 12)   # 72→60
-        # Clamp all values to valid CSS ranges
+            h, s, l = int(60 - r3*55), int(80 + r3*10), int(72 - r3*12)
         h = max(0, min(360, h))
         s = max(10, min(100, s))
         l = max(20, min(95, l))
         bg  = f'hsl({h},{s}%,{l}%)'
-        bdr_s = min(s + 15, 100)
-        bdr_l = max(l - 18, 20)
-        bdr = f'hsl({h},{bdr_s}%,{bdr_l}%)'
+        bdr = f'hsl({h},{min(s+15,100)}%,{max(l-18,20)}%)'
         if is_common:
-            bg  = f'hsl({h},{s}%,{l}%)'
             bdr = '#dc2626'
         return bg, bdr
 
@@ -8264,11 +8112,9 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
         # ── Importance ring: top-10% by total interaction count ──
         is_important = (total >= _importance_thresh and total >= 10)
 
-        # ── Frequency gradient color ──
-        bg, border = _freq_gradient_color(total, _max_total, is_common)
+        bg, border = _freq_color(total, _max_total, is_common)
         if is_iso_c:
             bg, border = '#fef3c7', '#d97706'
-        # Importance ring overrides border color (gold ring)
         if is_important:
             border = '#f59e0b'
 
@@ -8295,9 +8141,6 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             f"<br><span style='color:#64748b;font-size:12px'>"
             f"Shared: {len(subj_dict)} | Total: {total}"
             + (" | <b style='color:#f59e0b'>⭐ High-frequency</b>" if is_important else "") +
-            f"<br><div style='margin:3px 0;background:#f1f5f9;border-radius:4px;height:6px;overflow:hidden'>"
-            f"<div style='width:{min(int(total/_max_total*100),100)}%;height:100%;background:linear-gradient(90deg,#3b82f6,#ef4444);border-radius:4px'></div></div>"
-            f"<span style='font-size:10px;color:#94a3b8'>Frequency: {total} / {_max_total}</span>" +
             f"</span><br>"
             f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
             + "<br>".join(subj_lines) +
@@ -8326,7 +8169,6 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             '_total': total,
             '_important': is_important,
             '_cname': _cname,
-            '_origLabel': node_label,  # rename-এর পরেও original ফিরে আনার জন্য
             # per-subject total — JS slider-এ প্রতিটি subject-এর জন্য আলাদা top-N filter করার জন্য
             '_subj_totals': {s: d['total'] for s, d in subj_dict.items()},
         }
@@ -8484,8 +8326,8 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <div class="li"><div class="dot" style="background:#64748b"></div>Single Contact</div>
   <div class="li"><div class="dot" style="background:#e2e8f0;border:3px solid #f59e0b;width:13px;height:13px;"></div>High-freq ⭐</div>
   <div class="li" style="flex-direction:column;align-items:flex-start;gap:1px">
-    <span style="font-size:10px;color:#64748b">Freq Color: Low → High</span>
-    <div style="width:80px;height:7px;border-radius:4px;background:linear-gradient(90deg,hsl(220,45%,88%),hsl(120,65%,76%),hsl(0,85%,68%));border:1px solid #e2e8f0"></div>
+    <span style="font-size:10px;color:#64748b">Freq: Low→High</span>
+    <div style="width:80px;height:7px;border-radius:4px;background:linear-gradient(90deg,hsl(220,45%,88%),hsl(120,65%,76%),hsl(5,90%,60%));border:1px solid #e2e8f0"></div>
   </div>
   <div class="li"><div class="ln" style="background:#2563eb"></div>Connection (সংখ্যা = Call+SMS)</div>
   <div class="li"><div class="ln" style="background:#dc2626"></div>Common Contact Edge</div>
@@ -8529,88 +8371,32 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <button class="btn" id="impRingBtn" onclick="toggleImportanceRing()" title="High-frequency gold ring">&#11088; Ring: ON</button>
   <div class="sl">
     <span>Top contacts (common বাদে):</span>
-    <input type="range" id="minConn" min="1" max="50" value="20"
+    <input type="range" id="minConn" min="1" max="20" value="20"
            oninput="filterByConnCount(this.value)">
     <span id="minConnVal">20</span>
   </div>
   <div class="sl">
     <span>Node Lbl:</span>
-    <input type="range" id="fontSz" min="0" max="40" value="13"
+    <input type="range" id="fontSz" min="0" max="22" value="13"
            oninput="changeFontSize(this.value)">
     <span id="fontVal">13</span>
   </div>
   <div class="sl">
     <span>Edge Lbl:</span>
-    <input type="range" id="edgeFontSz" min="0" max="30" value="14"
+    <input type="range" id="edgeFontSz" min="0" max="20" value="14"
            oninput="changeEdgeFontSize(this.value)">
     <span id="edgeFontVal">14</span>
   </div>
   <div class="sl">
     <span>Node Size:</span>
-    <input type="range" id="nodeSz" min="6" max="80" value="14"
+    <input type="range" id="nodeSz" min="6" max="40" value="14"
            oninput="changeNodeSize(this.value)">
     <span id="nodeVal">14</span>
   </div>
-  <div class="sl">
-    <span>Edge Width:</span>
-    <input type="range" id="edgeWidthSz" min="1" max="20" value="2"
-           oninput="changeEdgeWidth(this.value)">
-    <span id="edgeWidthVal">2</span>
-  </div>
-  <button class="btn" id="autoPinBtn" onclick="toggleAutoPin()"
-    style="background:#0e7490" title="Drag করলে node pin হবে কি না">&#x1F4CC; AutoPin: ON</button>
-  <button class="btn" id="lassoBtn" onclick="toggleLasso()"
-    style="background:#7c3aed" title="Lasso: drag করে এলাকা select">&#x1F7E3; Lasso: OFF</button>
-  <button class="btn" id="physTuneBtn" onclick="togglePhysicsPanel()"
-    style="background:#065f46" title="Physics parameters tune করুন">&#x2699;&#xFE0F; Physics Tune</button>
   <span style="font-size:10px;color:#94a3b8;margin-left:auto">
-    Scroll=zoom | Drag=move | Click=info | Del=remove | RightClick=menu
+    Scroll=zoom | Drag=move | Click=info | Del=remove
   </span>
 </div>
-
-<!-- ── Physics Tuning Panel ── -->
-<div id="physTunePanel" style="display:none;position:fixed;top:120px;right:18px;
-  background:#fff;border:1px solid #e2e8f0;border-radius:12px;
-  box-shadow:0 8px 28px rgba(0,0,0,.18);padding:14px 18px;min-width:250px;
-  z-index:9990;font-family:Segoe UI,Arial,sans-serif;font-size:12px;color:#0f172a;">
-  <div style="font-weight:700;font-size:13px;color:#1e3a8a;margin-bottom:10px;
-    display:flex;justify-content:space-between;align-items:center;">
-    ⚙️ Physics Tune
-    <span onclick="togglePhysicsPanel()" style="cursor:pointer;color:#94a3b8;font-size:16px">✕</span>
-  </div>
-  <div class="sl" style="flex-direction:column;align-items:flex-start;gap:3px;margin-bottom:8px">
-    <span style="font-weight:600">🔵 Node Distance: <span id="ptNdVal">200</span></span>
-    <input type="range" id="ptNodeDist" min="50" max="600" value="200" style="width:100%"
-      oninput="document.getElementById('ptNdVal').value=this.value;document.getElementById('ptNdVal').textContent=this.value;applyPhysicsTune()">
-  </div>
-  <div class="sl" style="flex-direction:column;align-items:flex-start;gap:3px;margin-bottom:8px">
-    <span style="font-weight:600">🔗 Spring Length: <span id="ptSlVal">220</span></span>
-    <input type="range" id="ptSpringLen" min="50" max="800" value="220" style="width:100%"
-      oninput="document.getElementById('ptSlVal').textContent=this.value;applyPhysicsTune()">
-  </div>
-  <div class="sl" style="flex-direction:column;align-items:flex-start;gap:3px;margin-bottom:8px">
-    <span style="font-weight:600">💪 Spring Strength: <span id="ptSsVal">0.04</span></span>
-    <input type="range" id="ptSpringStr" min="1" max="100" value="4" style="width:100%"
-      oninput="document.getElementById('ptSsVal').textContent=(this.value/100).toFixed(2);applyPhysicsTune()">
-  </div>
-  <div class="sl" style="flex-direction:column;align-items:flex-start;gap:3px;margin-bottom:8px">
-    <span style="font-weight:600">🌐 Central Gravity: <span id="ptCgVal">0.10</span></span>
-    <input type="range" id="ptCentGrav" min="0" max="100" value="10" style="width:100%"
-      oninput="document.getElementById('ptCgVal').textContent=(this.value/100).toFixed(2);applyPhysicsTune()">
-  </div>
-  <div class="sl" style="flex-direction:column;align-items:flex-start;gap:3px;margin-bottom:8px">
-    <span style="font-weight:600">🌊 Damping: <span id="ptDmpVal">0.10</span></span>
-    <input type="range" id="ptDamping" min="1" max="100" value="10" style="width:100%"
-      oninput="document.getElementById('ptDmpVal').textContent=(this.value/100).toFixed(2);applyPhysicsTune()">
-  </div>
-  <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
-    <button class="btn" style="font-size:11px;padding:4px 10px;background:#1e3a8a"
-      onclick="applyPhysicsTune(true)">▶ Re-run Physics</button>
-    <button class="btn" style="font-size:11px;padding:4px 10px;background:#475569"
-      onclick="resetPhysicsTune()">↺ Reset</button>
-  </div>
-</div>
-
 <div id="wrap">
   <div id="network"></div>
   <div id="panel">
@@ -8848,30 +8634,19 @@ function togglePhysics(){{
   document.getElementById('physBtn').textContent=physicsOn?'\u23F8 Freeze':'\u25B6 Unfreeze';
 }}
 
-// dragStart: drag শুরুতে fixed সাময়িক তুলে দাও — পুনরায় drag করা যাবে
-network.on('dragStart',function(params){{
-  if(params.nodes.length>0){{
-    params.nodes.forEach(function(nid){{
-      allNodes.update({{id:nid,fixed:{{x:false,y:false}}}});
-    }});
-  }}
-}});
-
-// dragEnd: AutoPin ON থাকলে নতুন position-এ pin করো
+// dragEnd: pin node
 network.on('dragEnd',function(params){{
-  if(params.nodes.length>0 && _autoPinEnabled){{
+  if(params.nodes.length>0){{
     params.nodes.forEach(function(nid){{
       var pos=network.getPositions([nid])[nid];
       allNodes.update({{id:nid,x:pos.x,y:pos.y,fixed:{{x:true,y:true}}}});
     }});
   }}
 }});
-
-// doubleClick (খালি জায়গায়): সব node unpin করো
+// doubleClick: unpin all
 network.on('doubleClick',function(params){{
   if(params.nodes.length===0&&params.edges.length===0){{
     allNodes.update(allNodes.get().map(n=>({{id:n.id,fixed:{{x:false,y:false}}}})));
-    _tk('সব node unpin হয়েছে');
   }}
 }});
 
@@ -9154,227 +8929,6 @@ function changeNodeSize(val){{
   }}));
 }}
 
-// ── Edge Width slider ──
-function changeEdgeWidth(val){{
-  val=parseInt(val);
-  document.getElementById('edgeWidthVal').textContent=val;
-  allEdges.update(allEdges.get().map(function(e){{
-    return{{id:e.id,width:val}};
-  }}));
-}}
-
-// ── AutoPin toggle ──
-var _autoPinEnabled = true;
-function toggleAutoPin(){{
-  _autoPinEnabled = !_autoPinEnabled;
-  var btn=document.getElementById('autoPinBtn');
-  btn.textContent = _autoPinEnabled ? 'AutoPin: ON' : 'AutoPin: OFF';
-  btn.style.background = _autoPinEnabled ? '#0e7490' : '#64748b';
-}}
-
-// ── Rename Node ──
-function _renameNode(nid){{
-  var obj = allNodes.get(nid);
-  if(!obj) return;
-  // inline rename modal দেখাই
-  var overlay = document.createElement('div');
-  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:19999;display:flex;align-items:center;justify-content:center';
-  var box = document.createElement('div');
-  box.style.cssText = 'background:#fff;border-radius:12px;padding:22px 26px;min-width:300px;box-shadow:0 12px 36px rgba(0,0,0,.22);font-family:Segoe UI,Arial,sans-serif';
-  var num = String(nid).replace(/[^0-9+]/g,'');
-  var curName = obj._cname || '';
-  box.innerHTML =
-    '<div style="font-weight:700;font-size:14px;color:#1e3a8a;margin-bottom:4px">Node Rename</div>'+
-    '<div style="font-size:11px;color:#64748b;margin-bottom:12px">'+num+'</div>'+
-    '<input id="_rnInput" type="text" value="'+curName.replace(/"/g,'&quot;')+'" placeholder="নাম লিখুন…"'+
-    ' style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid #cbd5e1;border-radius:7px;font-size:13px;outline:none;margin-bottom:14px">'+
-    '<div style="display:flex;gap:8px;justify-content:flex-end">'+
-    '<button id="_rnClear" style="padding:6px 14px;border-radius:6px;border:1px solid #e2e8f0;background:#f8fafc;cursor:pointer;font-size:12px">নাম মুছুন</button>'+
-    '<button id="_rnCancel" style="padding:6px 14px;border-radius:6px;border:1px solid #e2e8f0;background:#f8fafc;cursor:pointer;font-size:12px">Cancel</button>'+
-    '<button id="_rnOk" style="padding:6px 16px;border-radius:6px;border:none;background:#1e3a8a;color:#fff;cursor:pointer;font-size:12px;font-weight:600">OK</button>'+
-    '</div>';
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
-  var inp = document.getElementById('_rnInput');
-  inp.focus(); inp.select();
-  function _doRename(){{
-    var newName = inp.value.trim();
-    var newLabel = newName ? newName+'\n'+num : (obj._origLabel || num);
-    allNodes.update([{{id:nid, label:newLabel, _cname:newName}}]);
-    document.body.removeChild(overlay);
-    _tk(newName ? 'Renamed: '+newName : 'Name cleared');
-  }}
-  function _doClear(){{
-    inp.value='';
-  }}
-  document.getElementById('_rnOk').onclick = _doRename;
-  document.getElementById('_rnClear').onclick = _doClear;
-  document.getElementById('_rnCancel').onclick = function(){{ document.body.removeChild(overlay); }};
-  inp.addEventListener('keydown', function(e){{
-    if(e.key==='Enter') _doRename();
-    if(e.key==='Escape') document.body.removeChild(overlay);
-  }});
-  overlay.addEventListener('click', function(e){{ if(e.target===overlay) document.body.removeChild(overlay); }});
-}}
-
-// ── Custom Canvas Lasso Select ──
-var _lassoOn = false;
-var _lassoActive = false;
-var _lassoStart = {{x:0,y:0}};
-var _lassoRect = null;  // SVG overlay rect
-
-function toggleLasso(){{
-  _lassoOn = !_lassoOn;
-  var btn = document.getElementById('lassoBtn');
-  if(_lassoOn){{
-    // dragView OFF করি — drag এখন lasso হিসেবে কাজ করবে
-    network.setOptions({{interaction:{{dragView:false, dragNodes:false}}}});
-    btn.textContent = 'Lasso: ON';
-    btn.style.background = '#6d28d9';
-    // canvas cursor
-    var c = document.querySelector('#network canvas');
-    if(c) c.style.cursor = 'crosshair';
-  }}else{{
-    network.setOptions({{interaction:{{dragView:true, dragNodes:true}}}});
-    btn.textContent = 'Lasso: OFF';
-    btn.style.background = '#7c3aed';
-    var c = document.querySelector('#network canvas');
-    if(c) c.style.cursor = '';
-    _removeLassoRect();
-  }}
-}}
-
-// SVG overlay for lasso rect
-var _lassoSvg = null;
-function _ensureLassoSvg(){{
-  if(_lassoSvg) return;
-  var netDiv = document.getElementById('network');
-  _lassoSvg = document.createElementNS('http://www.w3.org/2000/svg','svg');
-  _lassoSvg.style.cssText='position:absolute;inset:0;pointer-events:none;z-index:100;overflow:visible';
-  netDiv.style.position='relative';
-  netDiv.appendChild(_lassoSvg);
-}}
-function _removeLassoRect(){{
-  if(_lassoSvg) _lassoSvg.innerHTML='';
-  _lassoRect=null;
-}}
-
-// Mouse events on network canvas
-document.getElementById('network').addEventListener('mousedown', function(e){{
-  if(!_lassoOn) return;
-  if(e.button!==0) return;
-  e.preventDefault(); e.stopPropagation();
-  _lassoActive=true;
-  _lassoStart={{x:e.offsetX, y:e.offsetY}};
-  _ensureLassoSvg();
-  _lassoRect = document.createElementNS('http://www.w3.org/2000/svg','rect');
-  _lassoRect.setAttribute('fill','rgba(99,102,241,0.10)');
-  _lassoRect.setAttribute('stroke','#6366f1');
-  _lassoRect.setAttribute('stroke-width','1.5');
-  _lassoRect.setAttribute('stroke-dasharray','5,3');
-  _lassoRect.setAttribute('rx','3');
-  _lassoRect.setAttribute('x', _lassoStart.x);
-  _lassoRect.setAttribute('y', _lassoStart.y);
-  _lassoRect.setAttribute('width','0');
-  _lassoRect.setAttribute('height','0');
-  _lassoSvg.appendChild(_lassoRect);
-}}, true);
-
-document.getElementById('network').addEventListener('mousemove', function(e){{
-  if(!_lassoOn||!_lassoActive||!_lassoRect) return;
-  var x = Math.min(e.offsetX, _lassoStart.x);
-  var y = Math.min(e.offsetY, _lassoStart.y);
-  var w = Math.abs(e.offsetX - _lassoStart.x);
-  var h = Math.abs(e.offsetY - _lassoStart.y);
-  _lassoRect.setAttribute('x',x); _lassoRect.setAttribute('y',y);
-  _lassoRect.setAttribute('width',w); _lassoRect.setAttribute('height',h);
-}}, true);
-
-document.getElementById('network').addEventListener('mouseup', function(e){{
-  if(!_lassoOn||!_lassoActive) return;
-  _lassoActive=false;
-  if(!_lassoRect) return;
-  // Screen rect → canvas domain convert করি
-  var x1s=Math.min(e.offsetX,_lassoStart.x), y1s=Math.min(e.offsetY,_lassoStart.y);
-  var x2s=Math.max(e.offsetX,_lassoStart.x), y2s=Math.max(e.offsetY,_lassoStart.y);
-  if((x2s-x1s)<4 && (y2s-y1s)<4){{ _removeLassoRect(); return; }}
-  // vis.js canvasToDOM / DOMtoCanvas
-  var p1 = network.DOMtoCanvas({{x:x1s, y:y1s}});
-  var p2 = network.DOMtoCanvas({{x:x2s, y:y2s}});
-  // সব visible node-এর position চেক করি
-  var visNodes = allNodes.get().filter(function(n){{return !n.hidden;}});
-  var selected = [];
-  visNodes.forEach(function(n){{
-    var pos = network.getPositions([n.id])[n.id];
-    if(!pos) return;
-    if(pos.x>=p1.x && pos.x<=p2.x && pos.y>=p1.y && pos.y<=p2.y){{
-      selected.push(n.id);
-    }}
-  }});
-  _removeLassoRect();
-  if(selected.length>0){{
-    network.selectNodes(selected);
-    // Highlight selected, dim rest
-    var selSet = new Set(selected);
-    allNodes.update(allNodes.get().map(function(n){{
-      return{{id:n.id, opacity: selSet.has(n.id)?1.0:0.15}};
-    }}));
-    _tk(selected.length+' node(s) selected');
-    // lasso OFF করি auto
-    toggleLasso();
-  }}
-}}, true);
-
-// ── Physics Tune Panel toggle ──
-function togglePhysicsPanel(){{
-  var p=document.getElementById('physTunePanel');
-  p.style.display = p.style.display==='none' ? 'block' : 'none';
-}}
-
-function applyPhysicsTune(restart){{
-  var nd  = parseInt(document.getElementById('ptNodeDist').value);
-  var sl  = parseInt(document.getElementById('ptSpringLen').value);
-  var ss  = parseInt(document.getElementById('ptSpringStr').value)/100;
-  var cg  = parseInt(document.getElementById('ptCentGrav').value)/100;
-  var dmp = parseInt(document.getElementById('ptDamping').value)/100;
-  if(restart){{
-    network.setOptions({{
-      physics:{{
-        enabled:true,solver:'repulsion',
-        stabilization:{{iterations:500,updateInterval:20}},
-        repulsion:{{centralGravity:cg,springLength:sl,springConstant:ss,
-                    nodeDistance:nd,damping:dmp}}
-      }}
-    }});
-    physicsOn=true;
-    document.getElementById('physBtn').textContent='\u23F8 Freeze';
-    network.once('stabilizationIterationsDone',function(){{
-      network.fit({{animation:{{duration:500,easingFunction:'easeInOutQuad'}}}});
-    }});
-  }}else{{
-    network.setOptions({{
-      physics:{{
-        repulsion:{{centralGravity:cg,springLength:sl,springConstant:ss,
-                    nodeDistance:nd,damping:dmp}}
-      }}
-    }});
-  }}
-}}
-
-function resetPhysicsTune(){{
-  document.getElementById('ptNodeDist').value=200;
-  document.getElementById('ptSpringLen').value=220;
-  document.getElementById('ptSpringStr').value=4;
-  document.getElementById('ptCentGrav').value=10;
-  document.getElementById('ptDamping').value=10;
-  document.getElementById('ptNdVal').textContent=200;
-  document.getElementById('ptSlVal').textContent=220;
-  document.getElementById('ptSsVal').textContent='0.04';
-  document.getElementById('ptCgVal').textContent='0.10';
-  document.getElementById('ptDmpVal').textContent='0.10';
-  applyPhysicsTune(true);
-}}
-
 // ── Search nodes by number or name ──
 function searchNodes(q){{
   q = q.trim().toLowerCase();
@@ -9444,123 +8998,9 @@ network.on('click',function(params){{
 }});
 
 __EXTRA_JS__
-<!-- ── Inline Name Editor Panel ── -->
-<div id="nameEditorPanel" style="display:none;position:fixed;top:60px;left:14px;
-  background:#fff;border:1px solid #e2e8f0;border-radius:12px;
-  box-shadow:0 8px 28px rgba(0,0,0,.18);padding:14px 16px;width:260px;
-  max-height:70vh;overflow-y:auto;z-index:9995;
-  font-family:Segoe UI,Arial,sans-serif;font-size:12px;color:#0f172a;">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-    <span style="font-weight:700;font-size:13px;color:#1e3a8a">✏️ Contact Names</span>
-    <span onclick="document.getElementById('nameEditorPanel').style.display='none'"
-      style="cursor:pointer;color:#94a3b8;font-size:16px;line-height:1">✕</span>
-  </div>
-  <div style="font-size:11px;color:#64748b;margin-bottom:10px">
-    নম্বরের নিচে নাম লিখুন (optional)
-  </div>
-  <div id="nameEditorList"></div>
-  <button onclick="applyAllNames()"
-    style="margin-top:10px;width:100%;padding:7px;background:#1e3a8a;color:#fff;
-    border:none;border-radius:7px;cursor:pointer;font-size:12px;font-weight:600">
-    ✅ সব নাম Apply করুন
-  </button>
-  <button onclick="clearAllNames()"
-    style="margin-top:5px;width:100%;padding:6px;background:#f1f5f9;color:#475569;
-    border:1px solid #e2e8f0;border-radius:7px;cursor:pointer;font-size:11px">
-    ✕ সব নাম মুছুন
-  </button>
-</div>
-
-<!-- Name Editor toggle button (toolbar-এর পাশে) -->
-<script>
-// toolbar-এ Name Editor বাটন যোগ করি
-(function(){{
-  var tb = document.querySelector('.toolbar');
-  if(!tb) return;
-  var btn = document.createElement('button');
-  btn.className = 'btn';
-  btn.id = 'nameEditorBtn';
-  btn.innerHTML = '&#x1F4CB; Names';
-  btn.style.background = '#0369a1';
-  btn.title = 'Contact নাম দিন';
-  btn.onclick = toggleNameEditor;
-  tb.appendChild(btn);
-}})();
-
-function toggleNameEditor(){{
-  var p = document.getElementById('nameEditorPanel');
-  if(p.style.display === 'none'){{
-    buildNameEditorList();
-    p.style.display = 'block';
-  }} else {{
-    p.style.display = 'none';
-  }}
-}}
-
-function buildNameEditorList(){{
-  var list = document.getElementById('nameEditorList');
-  list.innerHTML = '';
-  // সব non-subject node দেখাই (contact + common)
-  var nodes = allNodes.get().filter(function(n){{
-    return n.group !== 'subject' && n.group !== 'isolated_subject';
-  }});
-  // sort by id
-  nodes.sort(function(a,b){{ return String(a.id).localeCompare(String(b.id)); }});
-  nodes.forEach(function(n){{
-    var num = String(n.id).replace(/[^0-9+]/g,'');
-    var curName = n._cname || '';
-    var row = document.createElement('div');
-    row.style.cssText = 'margin-bottom:7px';
-    row.innerHTML =
-      '<div style="font-size:10px;color:#64748b;margin-bottom:2px">'+num+'</div>'+
-      '<input type="text" data-nid="'+n.id+'" value="'+curName.replace(/"/g,'&quot;')+'"'+
-      ' placeholder="নাম লিখুন…"'+
-      ' style="width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid #e2e8f0;'+
-      'border-radius:6px;font-size:12px;outline:none;color:#0f172a"'+
-      ' onkeydown="if(event.key==='Enter')applySingleName(this)">';
-    list.appendChild(row);
-  }});
-}}
-
-function applySingleName(inp){{
-  var nid = inp.getAttribute('data-nid');
-  var newName = inp.value.trim();
-  var obj = allNodes.get(nid);
-  if(!obj) return;
-  var num = String(nid).replace(/[^0-9+]/g,'');
-  var newLabel = newName ? (newName + '\n' + num) : (obj._origLabel || num);
-  allNodes.update([{{id:nid, label:newLabel, _cname:newName}}]);
-}}
-
-function applyAllNames(){{
-  var inputs = document.querySelectorAll('#nameEditorList input[data-nid]');
-  var count = 0;
-  inputs.forEach(function(inp){{
-    var nid = inp.getAttribute('data-nid');
-    var newName = inp.value.trim();
-    var obj = allNodes.get(nid);
-    if(!obj) return;
-    var num = String(nid).replace(/[^0-9+]/g,'');
-    var newLabel = newName ? (newName + '\n' + num) : (obj._origLabel || num);
-    allNodes.update([{{id:nid, label:newLabel, _cname:newName}}]);
-    if(newName) count++;
-  }});
-  _tk(count + ' নাম apply হয়েছে');
-}}
-
-function clearAllNames(){{
-  var inputs = document.querySelectorAll('#nameEditorList input[data-nid]');
-  inputs.forEach(function(inp){{ inp.value=''; }});
-  allNodes.get().forEach(function(n){{
-    if(n.group==='subject'||n.group==='isolated_subject') return;
-    var num = String(n.id).replace(/[^0-9+]/g,'');
-    allNodes.update([{{id:n.id, label:obj._origLabel||num, _cname:''}}]);
-  }});
-  _tk('সব নাম মুছা হয়েছে');
-}}
 </script>
 </body>
-</html>""".replace("__EXTRA_JS__", "\n// ── Search ───────────────────────────────────────────────────────────────\nvar _sm=[],_si=-1,_ha=false,_ocs=false;\nfunction searchNodes(q){\n  q=q.trim().toLowerCase();\n  var ce=document.getElementById('searchCount');\n  if(!q){\n    _sm=[];_si=-1;\n    if(!_ha){\n      allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined})));\n      allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:false,opacity:1.0})));\n    }\n    if(ce)ce.textContent='';return;\n  }\n  var mt=new Set();\n  allNodes.get().forEach(function(n){\n    if((n.label||'').toLowerCase().includes(q)||String(n.id||'').toLowerCase().includes(q))mt.add(n.id);\n  });\n  _sm=[...mt];_si=_sm.length>0?0:-1;\n  allNodes.update(allNodes.get().map(function(n){\n    if(mt.has(n.id))return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    return{id:n.id,opacity:0.08,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:!(mt.has(e.from)&&mt.has(e.to))})));\n  if(ce)ce.textContent=mt.size>0?mt.size+' found':'No match';\n  if(_sm.length>0){network.focus(_sm[0],{scale:1.6,animation:{duration:400}});network.selectNodes([_sm[0]]);}\n}\nfunction handleSearchKey(e){\n  if(e.key!=='Enter'||_sm.length===0)return;\n  _si=(_si+1)%_sm.length;\n  network.focus(_sm[_si],{scale:1.6,animation:{duration:300}});\n  network.selectNodes([_sm[_si]]);\n}\n// ── Hover dim ────────────────────────────────────────────────────────────\nfunction _soc(){\n  if(_ocs)return;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,_oc:n.color||null,_bg:n.color&&n.color.background?n.color.background:null,_bw:n.borderWidth||2};\n  }));\n  _ocs=true;\n}\nnetwork.on('hoverNode',function(p){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _soc();_ha=true;\n  var h=p.node,cn=new Set(network.getConnectedNodes(h));cn.add(h);\n  allNodes.update(allNodes.get().map(function(n){\n    if(n.id===h)return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    if(cn.has(n.id))return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n    return{id:n.id,opacity:0.07,borderWidth:1,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:e.from===h||e.to===h?1.0:0.05};\n  }));\n});\nnetwork.on('blurNode',function(){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _ha=false;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:1.0};\n  }));\n});\n// ── Context menu ─────────────────────────────────────────────────────────\nvar _cm=(function(){\n  var el=document.createElement('div');\n  el.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px 0;min-width:185px;font-family:Segoe UI,Arial,sans-serif;font-size:13px;display:none';\n  document.body.appendChild(el);\n  function it(ic,lb,fn,dg){\n    var d=document.createElement('div');\n    d.style.cssText='padding:7px 14px;cursor:pointer;display:flex;gap:8px;align-items:center;'+(dg?'color:#dc2626':'color:#0f172a');\n    d.innerHTML='<span>'+ic+'</span><span>'+lb+'</span>';\n    d.onmouseenter=function(){d.style.background='#f1f5f9';};d.onmouseleave=function(){d.style.background='';};\n    d.onclick=function(){hide();fn();};return d;\n  }\n  function sp(){var h=document.createElement('hr');h.style.cssText='margin:3px 0;border:none;border-top:1px solid #f1f5f9';return h;}\n  function show(x,y,items){\n    el.innerHTML='';\n    items.forEach(function(i){if(i==='sep')el.appendChild(sp());else el.appendChild(i);});\n    el.style.display='block';\n    var vw=window.innerWidth,vh=window.innerHeight,r=el.getBoundingClientRect();\n    el.style.left=(x+r.width>vw?vw-r.width-8:x)+'px';el.style.top=(y+r.height>vh?vh-r.height-8:y)+'px';\n  }\n  function hide(){el.style.display='none';}\n  document.addEventListener('click',hide);\n  document.addEventListener('keydown',function(e){if(e.key==='Escape')hide();});\n  return{show:show,hide:hide,it:it};\n})();\nfunction _cp(t){\n  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(function(){_tk('Copied: '+t);}).catch(function(){_cf(t);});\n  else _cf(t);\n}\nfunction _cf(t){var a=document.createElement('textarea');a.value=t;a.style.cssText='position:fixed;opacity:0';document.body.appendChild(a);a.select();try{document.execCommand('copy');_tk('Copied: '+t);}catch(e){}document.body.removeChild(a);}\nfunction _tk(m){var t=document.createElement('div');t.textContent=m;t.style.cssText='position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:8px 18px;border-radius:20px;font-size:13px;z-index:99999;pointer-events:none;opacity:0;transition:opacity .2s';document.body.appendChild(t);requestAnimationFrame(function(){t.style.opacity='1';});setTimeout(function(){t.style.opacity='0';setTimeout(function(){document.body.removeChild(t);},300);},2000);}\nnetwork.on('oncontext',function(params){\n  params.event.preventDefault();\n  var x=params.event.clientX,y=params.event.clientY;\n  if(params.nodes.length>0){\n    var nid=params.nodes[0];selectedNodeId=nid;\n    var obj=allNodes.get(nid);var lbl=obj?(obj.label||nid):nid;\n    var num=String(nid).replace(/[^0-9+]/g,'');\n    _cm.show(x,y,[\n      _cm.it('📋','Copy Number',function(){_cp(num||String(nid));}),\n      _cm.it('📝','Copy Full Label',function(){_cp(lbl);}),\n      'sep',\n      _cm.it('✏️','Rename Node',function(){_renameNode(nid);}),\n      _cm.it('🔦','Highlight',function(){var cn=new Set(network.getConnectedNodes(nid));cn.add(nid);allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:cn.has(n.id)?1.0:0.08})));},false),\n      _cm.it('👁','Show Info',function(){if(obj&&obj.title)showPanel('NODE INFO',obj.title);}),\n      'sep',\n      _cm.it('🗑','Remove',function(){deleteSelected();},true),\n    ]);\n  }else if(params.edges.length>0){\n    var eid=params.edges[0];selectedEdgeId=eid;var eo=allEdges.get(eid);\n    _cm.show(x,y,[\n      _cm.it('📋','Copy: '+(eo?String(eo.from).slice(-8):''),function(){_cp(eo?String(eo.from):'');}),\n      _cm.it('📋','Copy: '+(eo?String(eo.to).slice(-8):''),function(){_cp(eo?String(eo.to):'');}),\n      'sep',\n      _cm.it('ℹ️','Edge Info',function(){if(eo&&eo.title)showPanel('LINK INFO',eo.title);}),\n      'sep',\n      _cm.it('🗑','Remove',function(){deleteSelected();},true),\n    ]);\n  }else{\n    _cm.show(x,y,[\n      _cm.it('🔲','Fit All',function(){network.fit();}),\n      _cm.it('👁','Show All',function(){showAll();}),\n      _cm.it('🔴','Common Only',function(){showOnlyCommon();}),\n    ]);\n  }\n});\n")
+</html>""".replace("__EXTRA_JS__", "\n// ── Search ───────────────────────────────────────────────────────────────\nvar _sm=[],_si=-1,_ha=false,_ocs=false;\nfunction searchNodes(q){\n  q=q.trim().toLowerCase();\n  var ce=document.getElementById('searchCount');\n  if(!q){\n    _sm=[];_si=-1;\n    if(!_ha){\n      allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined})));\n      allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:false,opacity:1.0})));\n    }\n    if(ce)ce.textContent='';return;\n  }\n  var mt=new Set();\n  allNodes.get().forEach(function(n){\n    if((n.label||'').toLowerCase().includes(q)||String(n.id||'').toLowerCase().includes(q))mt.add(n.id);\n  });\n  _sm=[...mt];_si=_sm.length>0?0:-1;\n  allNodes.update(allNodes.get().map(function(n){\n    if(mt.has(n.id))return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    return{id:n.id,opacity:0.08,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(e=>({id:e.id,hidden:!(mt.has(e.from)&&mt.has(e.to))})));\n  if(ce)ce.textContent=mt.size>0?mt.size+' found':'No match';\n  if(_sm.length>0){network.focus(_sm[0],{scale:1.6,animation:{duration:400}});network.selectNodes([_sm[0]]);}\n}\nfunction handleSearchKey(e){\n  if(e.key!=='Enter'||_sm.length===0)return;\n  _si=(_si+1)%_sm.length;\n  network.focus(_sm[_si],{scale:1.6,animation:{duration:300}});\n  network.selectNodes([_sm[_si]]);\n}\n// ── Hover dim ────────────────────────────────────────────────────────────\nfunction _soc(){\n  if(_ocs)return;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,_oc:n.color||null,_bg:n.color&&n.color.background?n.color.background:null,_bw:n.borderWidth||2};\n  }));\n  _ocs=true;\n}\nnetwork.on('hoverNode',function(p){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _soc();_ha=true;\n  var h=p.node,cn=new Set(network.getConnectedNodes(h));cn.add(h);\n  allNodes.update(allNodes.get().map(function(n){\n    if(n.id===h)return{id:n.id,opacity:1.0,borderWidth:4,color:{border:'#f59e0b',background:n._bg||undefined}};\n    if(cn.has(n.id))return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n    return{id:n.id,opacity:0.07,borderWidth:1,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:e.from===h||e.to===h?1.0:0.05};\n  }));\n});\nnetwork.on('blurNode',function(){\n  var q=document.getElementById('searchBox').value.trim();if(q)return;\n  _ha=false;\n  allNodes.update(allNodes.get().map(function(n){\n    return{id:n.id,opacity:1.0,borderWidth:n._bw||2,color:n._oc||undefined};\n  }));\n  allEdges.update(allEdges.get().map(function(e){\n    return{id:e.id,opacity:1.0};\n  }));\n});\n// ── Context menu ─────────────────────────────────────────────────────────\nvar _cm=(function(){\n  var el=document.createElement('div');\n  el.style.cssText='position:fixed;z-index:9999;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);padding:4px 0;min-width:185px;font-family:Segoe UI,Arial,sans-serif;font-size:13px;display:none';\n  document.body.appendChild(el);\n  function it(ic,lb,fn,dg){\n    var d=document.createElement('div');\n    d.style.cssText='padding:7px 14px;cursor:pointer;display:flex;gap:8px;align-items:center;'+(dg?'color:#dc2626':'color:#0f172a');\n    d.innerHTML='<span>'+ic+'</span><span>'+lb+'</span>';\n    d.onmouseenter=function(){d.style.background='#f1f5f9';};d.onmouseleave=function(){d.style.background='';};\n    d.onclick=function(){hide();fn();};return d;\n  }\n  function sp(){var h=document.createElement('hr');h.style.cssText='margin:3px 0;border:none;border-top:1px solid #f1f5f9';return h;}\n  function show(x,y,items){\n    el.innerHTML='';\n    items.forEach(function(i){if(i==='sep')el.appendChild(sp());else el.appendChild(i);});\n    el.style.display='block';\n    var vw=window.innerWidth,vh=window.innerHeight,r=el.getBoundingClientRect();\n    el.style.left=(x+r.width>vw?vw-r.width-8:x)+'px';el.style.top=(y+r.height>vh?vh-r.height-8:y)+'px';\n  }\n  function hide(){el.style.display='none';}\n  document.addEventListener('click',hide);\n  document.addEventListener('keydown',function(e){if(e.key==='Escape')hide();});\n  return{show:show,hide:hide,it:it};\n})();\nfunction _cp(t){\n  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(function(){_tk('Copied: '+t);}).catch(function(){_cf(t);});\n  else _cf(t);\n}\nfunction _cf(t){var a=document.createElement('textarea');a.value=t;a.style.cssText='position:fixed;opacity:0';document.body.appendChild(a);a.select();try{document.execCommand('copy');_tk('Copied: '+t);}catch(e){}document.body.removeChild(a);}\nfunction _tk(m){var t=document.createElement('div');t.textContent=m;t.style.cssText='position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#0f172a;color:#fff;padding:8px 18px;border-radius:20px;font-size:13px;z-index:99999;pointer-events:none;opacity:0;transition:opacity .2s';document.body.appendChild(t);requestAnimationFrame(function(){t.style.opacity='1';});setTimeout(function(){t.style.opacity='0';setTimeout(function(){document.body.removeChild(t);},300);},2000);}\nnetwork.on('oncontext',function(params){\n  params.event.preventDefault();\n  var x=params.event.clientX,y=params.event.clientY;\n  if(params.nodes.length>0){\n    var nid=params.nodes[0];selectedNodeId=nid;\n    var obj=allNodes.get(nid);var lbl=obj?(obj.label||nid):nid;\n    var num=String(nid).replace(/[^0-9+]/g,'');\n    _cm.show(x,y,[\n      _cm.it('📋','Copy Number',function(){_cp(num||String(nid));}),\n      _cm.it('📝','Copy Full Label',function(){_cp(lbl);}),\n      'sep',\n      _cm.it('🔦','Highlight',function(){var cn=new Set(network.getConnectedNodes(nid));cn.add(nid);allNodes.update(allNodes.get().map(n=>({id:n.id,opacity:cn.has(n.id)?1.0:0.08})));},false),\n      _cm.it('👁','Show Info',function(){if(obj&&obj.title)showPanel('NODE INFO',obj.title);}),\n      'sep',\n      _cm.it('🗑','Remove',function(){deleteSelected();},true),\n    ]);\n  }else if(params.edges.length>0){\n    var eid=params.edges[0];selectedEdgeId=eid;var eo=allEdges.get(eid);\n    _cm.show(x,y,[\n      _cm.it('📋','Copy: '+(eo?String(eo.from).slice(-8):''),function(){_cp(eo?String(eo.from):'');}),\n      _cm.it('📋','Copy: '+(eo?String(eo.to).slice(-8):''),function(){_cp(eo?String(eo.to):'');}),\n      'sep',\n      _cm.it('ℹ️','Edge Info',function(){if(eo&&eo.title)showPanel('LINK INFO',eo.title);}),\n      'sep',\n      _cm.it('🗑','Remove',function(){deleteSelected();},true),\n    ]);\n  }else{\n    _cm.show(x,y,[\n      _cm.it('🔲','Fit All',function(){network.fit();}),\n      _cm.it('👁','Show All',function(){showAll();}),\n      _cm.it('🔴','Common Only',function(){showOnlyCommon();}),\n    ]);\n  }\n});\n")
     return html
 
 
@@ -9578,15 +9018,14 @@ def link_analysis_page():
     _SUBJ_LETTERS = [chr(65+i) for i in range(20)]  # A–T
     _num_subjects = st.number_input(
         "📌 কতটি Subject বিশ্লেষণ করবেন?",
-        min_value=2, max_value=20, value=st.session_state.get('_la_num_subj', 2),
+        min_value=2, max_value=20, value=2,
         step=1, key='_la_num_subj',
-        help="2–20 পর্যন্ত Subject নির্বাচন করুন। সংখ্যা পরিবর্তন করলে নিচের upload box পরিবর্তন হবে।"
+        help="2–20 পর্যন্ত Subject নির্বাচন করুন।"
     )
     labels = [f"Subject {_SUBJ_LETTERS[i]}" for i in range(_num_subjects)]
 
-    # ── Step 2: Dynamic upload columns ──
+    # ── Step 2: Dynamic upload columns (max 5 per row) ──
     st.markdown(f"### 📂 CDR ফাইল আপলোড ({_num_subjects}টি Subject)")
-    # max 5 per row for readability
     _cols_per_row = min(5, _num_subjects)
     uploaded_files = []
     for _row_start in range(0, _num_subjects, _cols_per_row):
@@ -9610,7 +9049,6 @@ def link_analysis_page():
     if len(active_files) < 2:
         st.info("📌 বিশ্লেষণ শুরু করতে কমপক্ষে ২টি CDR ফাইল আপলোড করুন")
         return
-
     st.success(f"✅ {len(active_files)}টি ফাইল আপলোড হয়েছে")
 
     # Settings
@@ -9622,46 +9060,37 @@ def link_analysis_page():
             coloc_window = st.slider("Co-location time window (minutes)", 5, 120, 30)
         with c3:
             radius_km = st.slider("Co-location radius (km)", 1, 20, 5)
-        exclude_noise = True  # Carrier/service numbers সবসময় filter হবে
-
-        # ── Date / Time Range Filter ──
+        exclude_noise = True
         st.markdown("---")
-        st.markdown("**📅 Date & Time Range Filter** *(optional — খালি রাখলে সব data বিশ্লেষণ হবে)*")
+        st.markdown("**📅 Date & Time Range Filter** *(optional)*")
         _df1, _df2, _tf1, _tf2 = st.columns(4)
         with _df1:
-            _date_from = st.date_input("From Date", value=None, key="la_date_from",
-                                        help="শুরুর তারিখ (inclusive)")
+            _date_from = st.date_input("From Date", value=None, key="la_date_from")
         with _df2:
-            _date_to   = st.date_input("To Date",   value=None, key="la_date_to",
-                                        help="শেষের তারিখ (inclusive)")
+            _date_to   = st.date_input("To Date",   value=None, key="la_date_to")
         with _tf1:
-            _time_from = st.time_input("From Time", value=None, key="la_time_from",
-                                        help="দিনের শুরুর সময় — From Date-এর সাথে apply হবে")
+            _time_from = st.time_input("From Time", value=None, key="la_time_from")
         with _tf2:
-            _time_to   = st.time_input("To Time",   value=None, key="la_time_to",
-                                        help="দিনের শেষের সময় — To Date-এর সাথে apply হবে")
-        # Build datetime filter bounds
+            _time_to   = st.time_input("To Time",   value=None, key="la_time_to")
         import datetime as _dt
         _filter_start = None
         _filter_end   = None
         if _date_from:
-            _t0 = _time_from if _time_from else _dt.time(0, 0, 0)
-            _filter_start = _dt.datetime.combine(_date_from, _t0)
+            _filter_start = _dt.datetime.combine(_date_from, _time_from if _time_from else _dt.time(0,0,0))
         if _date_to:
-            _t1 = _time_to if _time_to else _dt.time(23, 59, 59)
-            _filter_end   = _dt.datetime.combine(_date_to, _t1)
+            _filter_end   = _dt.datetime.combine(_date_to,   _time_to   if _time_to   else _dt.time(23,59,59))
         if _filter_start and _filter_end and _filter_start > _filter_end:
-            st.warning("⚠️ 'From' তারিখ 'To' তারিখের পরে — filter কাজ করবে না")
+            st.warning("⚠️ 'From' তারিখ 'To' তারিখের পরে")
             _filter_start = _filter_end = None
         if _filter_start or _filter_end:
-            _f_str = (_filter_start.strftime('%d/%m/%Y %H:%M') if _filter_start else '—')
-            _t_str = (_filter_end.strftime('%d/%m/%Y %H:%M')   if _filter_end   else '—')
-            st.info(f"🗓️ Filter active: **{_f_str}** → **{_t_str}**")
+            _fs = _filter_start.strftime('%d/%m/%Y %H:%M') if _filter_start else '—'
+            _fe = _filter_end.strftime('%d/%m/%Y %H:%M')   if _filter_end   else '—'
+            st.info(f"🗓️ Filter: **{_fs}** → **{_fe}**")
     _date_filter_active = bool(_filter_start or _filter_end)
 
-    # ── Subject Name & Photo (dynamic) ──
+    # ── Subject Name & Photo ──
     with st.expander("👤 Subject Names & Photos (optional)", expanded=False):
-        st.caption("নাম ও ছবি দিন — Graph-এ নম্বরের পাশে নাম ও ছবি দেখাবে। সম্পূর্ণ optional।")
+        st.caption("নাম ও ছবি দিন — optional।")
         _subj_meta = {}
         for _row_start in range(0, len(active_files), _cols_per_row):
             _row_end   = min(_row_start + _cols_per_row, len(active_files))
@@ -9670,14 +9099,10 @@ def link_analysis_page():
             for _si, (_mc, _lbl) in enumerate(zip(_meta_cols, _row_lbls)):
                 _real_idx = _row_start + _si
                 with _mc:
-                    _sname = st.text_input(
-                        f"নাম", key=f"subj_name_{_real_idx}",
-                        placeholder=f"{_lbl}"
-                    )
-                    _sphoto = st.file_uploader(
-                        f"ছবি", type=["jpg","jpeg","png"],
-                        key=f"subj_photo_{_real_idx}"
-                    )
+                    _sname = st.text_input(f"নাম", key=f"subj_name_{_real_idx}",
+                                           placeholder=f"{_lbl}")
+                    _sphoto = st.file_uploader(f"ছবি", type=["jpg","jpeg","png"],
+                                               key=f"subj_photo_{_real_idx}")
                     if _sphoto is not None and not validate_upload(_sphoto, kind="image"):
                         _sphoto = None
                     _photo_b64 = None
@@ -9723,16 +9148,14 @@ def link_analysis_page():
             for f, label in active_files:
                 df, subject, anomalies = _load_cdr(f, label)
                 if df is not None and len(df) > 0:
-                    # ── Date/Time filter apply ──
                     if _date_filter_active and 'start' in df.columns:
                         import pandas as _pd_dt
                         _s = _pd_dt.to_datetime(df['start'], errors='coerce')
                         if _filter_start:
-                            _fs = _pd_dt.Timestamp(_filter_start)
-                            df = df[_s >= _fs]
+                            df = df[_s >= _pd_dt.Timestamp(_filter_start)]
                         if _filter_end:
-                            _fe = _pd_dt.Timestamp(_filter_end)
-                            df = df[_pd_dt.to_datetime(df['start'], errors='coerce') <= _fe]
+                            _s2 = _pd_dt.to_datetime(df['start'], errors='coerce')
+                            df  = df[_s2 <= _pd_dt.Timestamp(_filter_end)]
                         df = df.reset_index(drop=True)
                     if len(df) > 0:
                         dfs.append(df)
@@ -9749,7 +9172,7 @@ def link_analysis_page():
         for i, (df, sub, anoms) in enumerate(zip(dfs, subjects, anomaly_counts)):
             with summary_cols[i]:
                 st.markdown(f"""
-                <div style="background:white;border-top:4px solid {['#db2777','#1d4ed8','#15803d','#7c3aed','#d97706','#0891b2','#b45309','#4f46e5','#059669','#dc2626','#7c2d12','#1e40af','#065f46','#6b21a8','#92400e','#0e7490','#166534','#9f1239','#1d4ed8','#78350f'][i % 20]};
+                <div style="background:white;border-top:4px solid {'#2563eb #dc2626 #16a34a #7c3aed #d97706'.split()[i % 5]};
                             border-radius:10px;padding:1rem;box-shadow:0 1px 3px rgba(0,0,0,.06);text-align:center">
                     <div style="font-size:.75rem;color:#94a3b8;text-transform:uppercase">{active_files[i][1]}</div>
                     <div style="font-size:.95rem;font-weight:800;color:#0f172a;margin:.25rem 0">{sub}</div>
