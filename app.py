@@ -8377,13 +8377,13 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   </div>
   <div class="sl">
     <span>Node Lbl:</span>
-    <input type="range" id="fontSz" min="0" max="22" value="13"
+    <input type="range" id="fontSz" min="0" max="40" value="13"
            oninput="changeFontSize(this.value)">
     <span id="fontVal">13</span>
   </div>
   <div class="sl">
     <span>Edge Lbl:</span>
-    <input type="range" id="edgeFontSz" min="0" max="20" value="14"
+    <input type="range" id="edgeFontSz" min="0" max="40" value="14"
            oninput="changeEdgeFontSize(this.value)">
     <span id="edgeFontVal">14</span>
   </div>
