@@ -8387,6 +8387,8 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
            oninput="changeEdgeFontSize(this.value)">
     <span id="edgeFontVal">14</span>
   </div>
+</div>
+<div class="bar">
   <div class="sl">
     <span>Node Size:</span>
     <input type="range" id="nodeSz" min="6" max="40" value="14"
@@ -9457,7 +9459,7 @@ def link_analysis_page():
 
             graph_html = _build_network_html(dfs, top_connections, subjects, subj_edge_count, _subj_meta_by_phone, _contact_names_dict)
 
-        st.components.v1.html(graph_html, height=780, scrolling=False)
+        st.components.v1.html(graph_html, height=900, scrolling=False)
 
         # Download graph
         st.download_button(
