@@ -8121,6 +8121,7 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
         nodes[sub] = n
 
     common = {pb for pb, sd in connections.items() if len(sd) >= 2}
+    common_count = max(1, len(common))   # FEAT: Top Common slider-এর max value
 
     # ── Contact nodes ──
     # Pre-compute max total for importance-ring threshold (top 10%) + gradient
@@ -8307,6 +8308,8 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
     nodes_json = json.dumps(list(nodes.values()), ensure_ascii=False)
     edges_json = json.dumps(edges, ensure_ascii=False)
     subjects_json = json.dumps(subjects, ensure_ascii=False)
+    # FEAT: Python-side common count — JS slider max ও initial "সব" label-এর জন্য
+    _common_count_py = common_count
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -8422,6 +8425,12 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
     <input type="range" id="minConn" min="1" max="20" value="20"
            oninput="filterByConnCount(this.value)">
     <span id="minConnVal">20</span>
+  </div>
+  <div class="sl">
+    <span>Top common:</span>
+    <input type="range" id="maxCommon" min="1" max="{_common_count_py}" value="{_common_count_py}"
+           oninput="filterByCommonCount(this.value)">
+    <span id="maxCommonVal">সব</span>
   </div>
   <div class="sl">
     <span>Node Lbl:</span>
@@ -8563,6 +8572,11 @@ edgesData = edgesData.map(function(e){{
   return e;
 }});
 
+// FEAT: Top Common slider — সব common node-এর id দিয়ে initialize (default: সব দেখাও)
+var _commonVisibleSet = new Set(
+  nodesData.filter(function(n){{return n.group==='common';}}).map(function(n){{return n.id;}})
+);
+
 var allNodes  = new vis.DataSet(nodesData);
 var allEdges  = new vis.DataSet(edgesData);
 // Delete history for undo
@@ -8600,7 +8614,9 @@ network.once('stabilizationIterationsDone', function(){{
   network.setOptions({{physics:{{enabled:false}}}});
   physicsOn=false;
   document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
-  // Default: top-20 non-common contact দেখাও
+  // Default: top-20 non-common contact দেখাও, সব common দেখাও
+  var _cmaxInit = parseInt(document.getElementById('maxCommon').max);
+  filterByCommonCount(_cmaxInit);   // FEAT: সব common দেখাও (slider max-এ শুরু)
   filterByConnCount(20);
 }});
 
@@ -9014,7 +9030,9 @@ function filterByConnCount(val){{
       updates.push({{id:n.id,hidden:false}});return;
     }}
     if(n.group==='common'){{
-      updates.push({{id:n.id,hidden:false}});return;
+      // FEAT: Top Common slider-এর _commonVisibleSet মেনে চলো
+      // (আগে সবসময় hidden:false ছিল, এখন common filter-ও apply হয়)
+      updates.push({{id:n.id,hidden:!_commonVisibleSet.has(n.id)}});return;
     }}
     updates.push({{id:n.id,hidden:!showSet.has(n.id)}});
   }});
@@ -9024,6 +9042,47 @@ function filterByConnCount(val){{
   allNodes.get().forEach(function(n){{if(n.hidden)hiddenNodes.add(n.id);}});
   allEdges.update(allEdges.get().map(function(e){{
     return{{id:e.id,hidden:hiddenNodes.has(e.to)||hiddenNodes.has(e.from)}};
+  }}));
+}}
+
+// ── FEAT: Top Common contacts slider ─────────────────────────────────────
+// Common contact-গুলো total call+SMS count অনুযায়ী sort করে top-N দেখায়।
+// val = slider value; যদি val >= মোট common count হয় → "সব" দেখায়, সবাই visible।
+// _commonVisibleSet আপডেট করার পর filterByConnCount-ও re-trigger হয়,
+// যাতে non-common slider-এর state সংরক্ষিত থাকে এবং edge visibility ঠিক থাকে।
+function filterByCommonCount(val){{
+  val = parseInt(val);
+  var totalCommon = parseInt(document.getElementById('maxCommon').max);
+  var lbl = document.getElementById('maxCommonVal');
+
+  // সর্বোচ্চ মানে "সব" দেখাও
+  if(val >= totalCommon){{
+    lbl.textContent = 'সব';
+  }} else {{
+    lbl.textContent = val;
+  }}
+
+  // common node-গুলো total interaction count অনুযায়ী rank করো
+  var commonNodes = nodesData.filter(function(n){{ return n.group === 'common'; }});
+  commonNodes.sort(function(a,b){{ return (b._total||0) - (a._total||0); }});
+
+  var limit = Math.min(val, commonNodes.length);
+  _commonVisibleSet = new Set(commonNodes.slice(0, limit).map(function(n){{ return n.id; }}));
+
+  // common node visibility আপডেট করো
+  var updates = [];
+  nodesData.forEach(function(n){{
+    if(n.group === 'common'){{
+      updates.push({{id: n.id, hidden: !_commonVisibleSet.has(n.id)}});
+    }}
+  }});
+  allNodes.update(updates);
+
+  // edge visibility পুনরায় sync করো (hidden common node-এর edge-ও লুকাবে)
+  var hiddenNodes = new Set();
+  allNodes.get().forEach(function(n){{ if(n.hidden) hiddenNodes.add(n.id); }});
+  allEdges.update(allEdges.get().map(function(e){{
+    return {{id: e.id, hidden: hiddenNodes.has(e.to) || hiddenNodes.has(e.from)}};
   }}));
 }}
 
@@ -9075,12 +9134,28 @@ document.addEventListener('keydown',function(e){{
 }});
 
 function showOnlyCommon(){{
+  // FEAT: common slider সর্বোচ্চে set করো (সব common দেখাও) এবং _commonVisibleSet reset করো
+  var _cmx = parseInt(document.getElementById('maxCommon').max);
+  _commonVisibleSet = new Set(
+    nodesData.filter(function(n){{return n.group==='common';}}).map(function(n){{return n.id;}})
+  );
+  document.getElementById('maxCommon').value = _cmx;
+  document.getElementById('maxCommonVal').textContent = 'সব';
   var keep=nodesData.filter(n=>n.group==='subject'||n.group==='isolated_subject'||n.group==='common').map(n=>n.id);
   allNodes.update(nodesData.map(n=>({{id:n.id,hidden:!keep.includes(n.id)}})));
   allEdges.update(edgesData.map(e=>({{id:e.id,hidden:!keep.includes(e.to)}})));
   network.fit();
 }}
 function showAll(){{
+  // FEAT: দুটো slider-ই reset করো এবং সব node দেখাও
+  var _cmx2 = parseInt(document.getElementById('maxCommon').max);
+  _commonVisibleSet = new Set(
+    nodesData.filter(function(n){{return n.group==='common';}}).map(function(n){{return n.id;}})
+  );
+  document.getElementById('maxCommon').value = _cmx2;
+  document.getElementById('maxCommonVal').textContent = 'সব';
+  document.getElementById('minConn').value = 20;
+  document.getElementById('minConnVal').textContent = 20;
   allNodes.update(nodesData.map(n=>({{id:n.id,hidden:false}})));
   allEdges.update(edgesData.map(e=>({{id:e.id,hidden:false}})));
   network.fit();
