@@ -8421,6 +8421,9 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
   <button class="btn grn" onclick="showAll()">&#128065; All</button>
   <button class="btn del" id="delBtn" onclick="deleteSelected()">&#x1F5D1; Delete</button>
   <button class="btn orn" onclick="undoDelete()">&#x21BA; Undo</button>
+  <button class="btn" id="straightBtn" onclick="toggleStraightEdges()"
+    title="Edge সোজা/বাঁকা করো — overlap কমে, গ্রাফ পরিষ্কার হয়"
+    style="background:#0d9488">&#x2194; Straight: OFF</button>
   <button class="btn teal" onclick="exportGraphPNG()">&#x1F4F7; Export PNG</button>
   <button class="btn violet" onclick="copyGraphToClipboard()">&#x1F4CB; Copy Image</button>
 </div>
@@ -8442,6 +8445,7 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
       style="font-size:11px;padding:2px 6px;border-radius:5px;border:1px solid #cbd5e1;
              background:#f8fafc;color:#1e3a8a;cursor:pointer;">
       <option value="physics">&#x1F300; Physics (default)</option>
+      <option value="radial">&#x2B55; Radial (সবচেয়ে পরিষ্কার)</option>
       <option value="hierarchyLR">&#x27A1; Hierarchy L→R</option>
       <option value="hierarchyUD">&#x2B07; Hierarchy U→D</option>
       <option value="bipartite">&#x21C4; Bipartite (Subj left/right)</option>
@@ -8626,10 +8630,17 @@ var network = new vis.Network(
       smooth:{{type:'dynamic'}},shadow:false
     }},
     physics:{{
-      enabled:true,solver:'repulsion',
-      stabilization:{{iterations:500,updateInterval:20}},
-      repulsion:{{centralGravity:.1,springLength:220,springConstant:.04,
-                  nodeDistance:200,damping:.10}}
+      enabled:true,
+      solver:'barnesHut',
+      stabilization:{{iterations:600,updateInterval:20}},
+      barnesHut:{{
+        gravitationalConstant:-3000,
+        centralGravity:0.15,
+        springLength:220,
+        springConstant:0.04,
+        damping:0.12,
+        avoidOverlap:0.9
+      }}
     }},
     interaction:{{hover:true,tooltipDelay:150,navigationButtons:true,
                   hideEdgesOnDrag:true,keyboard:true,
@@ -8881,10 +8892,18 @@ function applyLayout(mode){{
     network.setOptions({{
       layout:{{improvedLayout:false,hierarchical:{{enabled:false}}}},
       physics:{{
-        enabled:true,solver:'repulsion',
-        stabilization:{{iterations:500,updateInterval:20}},
-        repulsion:{{centralGravity:.1,springLength:220,springConstant:.04,
-                    nodeDistance:200,damping:.10}}
+        enabled:true,
+        // barnesHut: avoidOverlap সাপোর্ট করে (repulsion করে না)
+        solver:'barnesHut',
+        stabilization:{{iterations:600,updateInterval:20}},
+        barnesHut:{{
+          gravitationalConstant:-3000,
+          centralGravity:0.15,
+          springLength:220,
+          springConstant:0.04,
+          damping:0.12,
+          avoidOverlap:0.9   // ← overlap prevent: 0=off, 1=full prevent
+        }}
       }}
     }});
     physicsOn=true;
@@ -9007,9 +9026,100 @@ function applyLayout(mode){{
     setTimeout(function(){{network.fit({{animation:{{duration:600}}}});}},200);
     return;
   }}
+  if(mode==='radial'){{
+    // ── Radial (Star) Layout ─────────────────────────────────────────────
+    // CDR link analysis-এর জন্য সবচেয়ে পরিষ্কার layout:
+    //   • Subject(গুলো) → কেন্দ্রে (ছোট বৃত্তে)
+    //   • Common contacts → মাঝের বলয়ে (inner ring)
+    //   • প্রতিটি subject-এর নিজস্ব contacts → বাইরের spoke-এ
+    // Physics বন্ধ থাকে → position deterministic, কখনো বদলায় না।
+    network.setOptions({{layout:{{improvedLayout:false,hierarchical:{{enabled:false}}}},physics:{{enabled:false}}}});
+    physicsOn=false;
+    document.getElementById('physBtn').textContent='\u25B6 Start';
+
+    var vis_nodes = allNodes.get().filter(function(n){{return !n.hidden;}});
+    var subjN    = vis_nodes.filter(function(n){{return n.group==='subject'||n.group==='isolated_subject';}});
+    var commonN  = vis_nodes.filter(function(n){{return n.group==='common';}});
+    var contactN = vis_nodes.filter(function(n){{return n.group==='contact'||n.group==='iso_c';}});
+
+    var posR=[];
+    var PI2=2*Math.PI;
+
+    // ── 1) Subjects: কেন্দ্রে ছোট বৃত্ত ──
+    var subjR = subjN.length>1 ? Math.max(110, subjN.length*55) : 0;
+    subjN.forEach(function(n,i){{
+      var a=(PI2*i/Math.max(subjN.length,1))-Math.PI/2;
+      posR.push({{id:n.id, x:Math.round(subjR*Math.cos(a)), y:Math.round(subjR*Math.sin(a)), fixed:false}});
+    }});
+
+    // ── 2) Common contacts: মাঝের বলয় ──
+    var commonR = Math.max(310, Math.max(commonN.length*55,1)/(PI2)*2.2);
+    commonN.forEach(function(n,i){{
+      var a=(PI2*i/Math.max(commonN.length,1))-Math.PI/2;
+      posR.push({{id:n.id, x:Math.round(commonR*Math.cos(a)), y:Math.round(commonR*Math.sin(a)), fixed:false}});
+    }});
+
+    // ── 3) Non-common contacts: বাইরের বলয়, subject-ভিত্তিক sector-এ ──
+    // প্রতিটি contact-এর primary subject খোঁজো (সবচেয়ে বেশি interaction)
+    var contactBySubj={{}};
+    subjN.forEach(function(s){{contactBySubj[s.id]=[];}});
+    var unassigned=[];
+    contactN.forEach(function(n){{
+      var bestS=null,bestV=-1;
+      if(n._subj_totals){{
+        Object.keys(n._subj_totals).forEach(function(s){{
+          if((n._subj_totals[s]||0)>bestV){{bestV=n._subj_totals[s];bestS=s;}}
+        }});
+      }}
+      if(bestS&&contactBySubj[bestS])contactBySubj[bestS].push(n);
+      else unassigned.push(n);
+    }});
+    // unassigned → প্রথম subject-এ
+    if(subjN.length>0)unassigned.forEach(function(n){{contactBySubj[subjN[0].id].push(n);}});
+
+    var outerR=Math.max(570, commonR+Math.max(contactN.length*38,1)/(PI2)*2.0);
+    var totalC=contactN.length||1;
+    subjN.forEach(function(s,si){{
+      var sContacts=contactBySubj[s.id]||[];
+      if(sContacts.length===0)return;
+      // Subject-এর কেন্দ্র angle থেকে sector বের করো
+      var sEntry=posR.find(function(p){{return p.id===s.id;}});
+      var baseA=sEntry?Math.atan2(sEntry.y,sEntry.x):(PI2*si/subjN.length-Math.PI/2);
+      // প্রতি subject-এর sector = মোট angle / subject সংখ্যা × 0.75 (gap রাখার জন্য)
+      var sectorW=(PI2/Math.max(subjN.length,1))*0.78;
+      sContacts.forEach(function(n,ci){{
+        var a=baseA+sectorW*(ci-(sContacts.length-1)/2)/Math.max(sContacts.length,1);
+        posR.push({{id:n.id, x:Math.round(outerR*Math.cos(a)), y:Math.round(outerR*Math.sin(a)), fixed:false}});
+      }});
+    }});
+
+    allNodes.update(posR);
+    setTimeout(function(){{network.fit({{animation:{{duration:700}}}});}},200);
+    return;
+  }}
 }}
 
-// ── Importance Ring toggle ──
+// ── Straight Edges toggle ────────────────────────────────────────────────
+// edge বাঁকা (smooth:dynamic) থেকে সোজা (smooth:false) করে বা উল্টো।
+// সোজা edge-এ overlap ও crossing অনেক কমে, গ্রাফ পরিষ্কার দেখায়।
+var _straightEdges=false;
+function toggleStraightEdges(){{
+  _straightEdges=!_straightEdges;
+  var btn=document.getElementById('straightBtn');
+  if(_straightEdges){{
+    btn.textContent='\u2194 Straight: ON';
+    btn.style.background='#16a34a';
+    allEdges.update(allEdges.get().map(function(e){{
+      return{{id:e.id,smooth:{{enabled:false}}}};
+    }}));
+  }}else{{
+    btn.textContent='\u2194 Straight: OFF';
+    btn.style.background='#0d9488';
+    allEdges.update(allEdges.get().map(function(e){{
+      return{{id:e.id,smooth:{{type:'dynamic'}}}};
+    }}));
+  }}
+}}
 var _impRingOn = true;
 function toggleImportanceRing(){{
   _impRingOn = !_impRingOn;
