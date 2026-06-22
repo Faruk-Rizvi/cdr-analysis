@@ -8032,6 +8032,13 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
     if contact_names is None:
         contact_names = {}
 
+    # BUG FIX: first/last contact date — এতদিন edge tooltip-এ ছিল না
+    # _build_first_last_dates @st.cache_data cached, তাই extra cost নেই
+    try:
+        _fl_dates = _build_first_last_dates(dfs)
+    except Exception:
+        _fl_dates = {}
+
     # Subject 0 = primary (magenta/pink like Image 2), rest = normal palette
     colors_subject = [
         '#db2777','#1d4ed8','#15803d','#7c3aed','#d97706',
@@ -8242,15 +8249,34 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
                 if pair in seen_subj_pairs:
                     continue
                 seen_subj_pairs.add(pair)
-                # দুইদিকের data মিলিয়ে combined stats
+                # BUG FIX: double counting — A→B call দুই CDR-এ দুইবার থাকে
+                # max() দিয়ে একবারই গণনা হয়, কিন্তু tooltip format অপরিবর্তিত
                 rev = connections.get(sub, {}).get(pb, {})
-                call_total  = data['call_out'] + data['call_in'] + rev.get('call_out', 0) + rev.get('call_in', 0)
-                sms_total   = data['sms_out']  + data['sms_in']  + rev.get('sms_out', 0)  + rev.get('sms_in', 0)
-                dur = round(data['duration'] + rev.get('duration', 0), 1)
+                moc_out  = max(data.get('call_out', 0), rev.get('call_in', 0))   # sub→pb
+                mtc_in   = max(data.get('call_in', 0),  rev.get('call_out', 0))  # pb→sub
+                sms_out  = max(data.get('sms_out', 0),  rev.get('sms_in', 0))
+                sms_in   = max(data.get('sms_in', 0),   rev.get('sms_out', 0))
+                call_total = moc_out + mtc_in
+                sms_total  = sms_out + sms_in
+                dur        = round(max(data.get('duration', 0), rev.get('duration', 0)), 1)
+                # First/Last: দুই CDR থেকে earliest first ও latest last
+                _d1 = _fl_dates.get((sub, pb), {})
+                _d2 = _fl_dates.get((pb, sub), {})
+                _firsts = [x for x in [_d1.get('first',''), _d2.get('first','')] if x and x != '—']
+                _lasts  = [x for x in [_d1.get('last',''),  _d2.get('last','')]  if x and x != '—']
+                first_d = min(_firsts) if _firsts else '—'
+                last_d  = max(_lasts)  if _lasts  else '—'
             else:
-                call_total = data['call_out'] + data['call_in']
-                sms_total  = data['sms_out'] + data['sms_in']
-                dur = round(data['duration'], 1)
+                moc_out    = data['call_out']
+                mtc_in     = data['call_in']
+                sms_out    = data['sms_out']
+                sms_in     = data['sms_in']
+                call_total = moc_out + mtc_in
+                sms_total  = sms_out + sms_in
+                dur        = round(data['duration'], 1)
+                _d = _fl_dates.get((sub, pb), {})
+                first_d = _d.get('first', '—')
+                last_d  = _d.get('last',  '—')
 
             grand_total = call_total + sms_total
 
@@ -8262,21 +8288,25 @@ def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_m
             else:
                 ec = '#2563eb'  # blue — regular contact
 
-            # ── Tooltip: call + sms breakdown ──
+            # ── Tooltip: পুরোনো format অপরিবর্তিত + নিচে First/Last date ──
             edge_title = (
                 f"<div style='font-family:Segoe UI,Arial,sans-serif;font-size:14px;"
                 f"padding:10px 14px;line-height:1.8'>"
-                f"<b style='font-size:15px;color:{ec}'>\U0001f4de\U0001f4ac {sub} ↔ {pb}</b><br>"
+                f"<b style='font-size:15px;color:{ec}'>\U0001f4de\U0001f4ac {sub} \u2192 {pb}</b><br>"
                 f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
-                f"&nbsp;&nbsp;\U0001f4de MOC (outgoing): <b>{data['call_out']}</b><br>"
-                f"&nbsp;&nbsp;\U0001f4de MTC (incoming): <b>{data['call_in']}</b><br>"
-                f"&nbsp;&nbsp;\U0001f4ac SMS sent: <b>{data['sms_out']}</b><br>"
-                f"&nbsp;&nbsp;\U0001f4ac SMS received: <b>{data['sms_in']}</b><br>"
+                f"&nbsp;&nbsp;\U0001f4de MOC (outgoing): <b>{moc_out}</b><br>"
+                f"&nbsp;&nbsp;\U0001f4de MTC (incoming): <b>{mtc_in}</b><br>"
+                f"&nbsp;&nbsp;\U0001f4ac SMS sent: <b>{sms_out}</b><br>"
+                f"&nbsp;&nbsp;\U0001f4ac SMS received: <b>{sms_in}</b><br>"
                 f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
                 f"&nbsp;&nbsp;\U0001f4de Total Calls: <b>{call_total}</b> &nbsp; "
                 f"\U0001f4ac Total SMS: <b>{sms_total}</b><br>"
                 f"&nbsp;&nbsp;\U0001f522 Grand Total: <b>{grand_total}</b><br>"
-                f"&nbsp;&nbsp;\u23f1 Duration: {dur} min</div>"
+                f"&nbsp;&nbsp;\u23f1 Duration: {dur} min<br>"
+                f"<hr style='margin:6px 0;border:none;border-top:1px solid #e2e8f0'>"
+                f"&nbsp;&nbsp;\U0001f4c5 First Contact: <b style='color:#16a34a'>{first_d}</b><br>"
+                f"&nbsp;&nbsp;\U0001f4c5 Last Contact: &nbsp;<b style='color:#dc2626'>{last_d}</b>"
+                f"</div>"
             )
 
             # Width: subject-to-subject মোটা, common হলেও মোটা
