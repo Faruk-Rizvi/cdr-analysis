@@ -3252,9 +3252,15 @@ def generate_recommendation(df):
     return recs
 
 
+@st.cache_data(show_spinner=False, max_entries=8)
 def movement_pattern_analysis(df):
     """
     Distance-based movement pattern analysis.
+
+    PERF: cached — এই ভারী ফাংশনটি এক রানে build_html / build_docx /
+    build_movement_map / generate_recommendation / main display থেকে
+    ৫-৬ বার একই df-এ কল হতো। ক্যাশিং-এর ফলে একই df-এ একবারই গণনা হয়,
+    বাকি কলগুলো cache থেকে আসে। ইনপুট df mutate করা হয় না, তাই নিরাপদ।
     - Home coord from most frequent night-time BTS address.
     - Out-of-home: any location >= 35 km from home coord.
     - Transit < 6 hours at intermediate stop: ignored.
@@ -6103,6 +6109,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
     """
     import json as _json, re as _re  # math → _math_mod
     import pandas as _pd
+    import functools as _functools_mv   # PERF: text_gps() memoization-এর জন্য
 
     # ── Thana/District GPS — module-level BD_THANA_GPS / BD_DISTRICT_GPS ──
     # (দুই জায়গায় duplicate না রেখে একটা single source of truth থেকে নেওয়া হচ্ছে)
@@ -6148,6 +6155,7 @@ def build_movement_map(df, phone, operator, mv_data=None):
         a=str(addr).upper()
         return any(p in a for p in INVALID_PATTERNS)
 
+    @_functools_mv.lru_cache(maxsize=4096)
     def text_gps(addr_str):
         """
         CDR address text → GPS.
@@ -6156,6 +6164,13 @@ def build_movement_map(df, phone, operator, mv_data=None):
           2a. P.S: আছে → Thana parse → District parse
           2b. P.S: নেই → Area keyword scan → District fallback
           3.  উভয় path miss → Nominatim geocoding (last resort)
+
+        PERF: lru_cache দিয়ে memoized — একই BTS address সাধারণত একটা CDR-এ
+        শত শত বার repeat হয় (একই tower-এ বহু call/SMS)। আগে প্রতিটা row-এর
+        জন্য regex parsing + (uncached হলে) Nominatim network call নতুন করে
+        হতো; এখন একই address দ্বিতীয়বার এলে তাৎক্ষণিক cache থেকে ফেরত আসে।
+        cache প্রতি build_movement_map() call-এ নতুন তৈরি হয় (closure-local),
+        তাই ভিন্ন df/call-এর মধ্যে stale data leak হয় না।
         """
         if is_invalid(addr_str): return None
         s = str(addr_str).upper()
@@ -6816,9 +6831,8 @@ def build_movement_map(df, phone, operator, mv_data=None):
 # CDR LINK ANALYSIS — Multi-CDR Connection & Co-location Analysis
 # ═══════════════════════════════════════════════════════════════
 
-import streamlit as st
-import pandas as pd
-import re
+# NOTE: streamlit/pandas/re ইতিমধ্যে ফাইলের শুরুতে import করা — এখানে শুধু
+# link-analysis-এর জন্য প্রয়োজনীয় বাকিগুলো রাখা হলো।
 import json
 import math
 from itertools import combinations
@@ -7060,10 +7074,13 @@ def _is_carrier_number(num: str) -> bool:
 
 
 
+@st.cache_data(show_spinner=False, max_entries=10)
 def _build_first_last_dates(dfs):
     """
     প্রতিটি (subject, contact) pair-এর first ও last contact date বের করে।
     Returns: dict { (subject, phone_b): {'first': date, 'last': date} }
+
+    PERF: cached — dfs অপরিবর্তিত থাকলে rerun-এ আবার গণনা হয় না।
     """
     result = {}
     for df in dfs:
@@ -7104,6 +7121,7 @@ def _build_first_last_dates(dfs):
 
 
 
+@st.cache_data(show_spinner=False, max_entries=15)
 def _build_suspicious_patterns(dfs, window_min=30):
     """
     দুই ধরনের suspicious pattern detect করে:
@@ -7116,6 +7134,9 @@ def _build_suspicious_patterns(dfs, window_min=30):
                        যেখানে A ও B দুজনেই subject। X একটা intermediary হিসেবে কাজ করছে।
 
     Returns: (mirror_rows, relay_rows) — দুটো list of dicts
+
+    PERF: cached per (dfs, window_min) — "Pattern detection window" slider
+    সরালে শুধু নতুন window_min-এর জন্যই গণনা হয়; আগের মান-এ ফিরলে cache hit।
     """
     # Subject phone → DataFrame mapping
     subj_dfs = {}
@@ -7246,9 +7267,14 @@ def _build_suspicious_patterns(dfs, window_min=30):
     return mirror_rows, relay_rows
 
 
+@st.cache_data(show_spinner=False, max_entries=10)
 def _build_connections(dfs, exclude_noise=True):
     """Build connection table from multiple CDRs.
     exclude_noise=True → carrier/service/IVR numbers are dropped before building connections.
+
+    PERF: cached — Link Analysis page-এ ছোট widget বদল (slider ইত্যাদি) হলেও
+    এই ফাংশন বারবার একই dfs-এ পুনরায় গণনা করত। ইনপুট dfs mutate করা হয় না
+    এবং রিটার্ন plain dict (defaultdict নয়), তাই caching নিরাপদ।
     """
     # connections[phone_b] = {subject: {call_out, call_in, sms_out, sms_in}}
     connections = defaultdict(lambda: defaultdict(lambda: {
@@ -7338,7 +7364,12 @@ def _build_connections(dfs, exclude_noise=True):
             pass  # keep
         else:
             del sms_filtered[pb]
-    return sms_filtered
+    # PERF: plain nested dict-এ convert করা হলো — defaultdict-এর lambda
+    # default_factory pickle করা যায় না, যা @st.cache_data-কে ভাঙত।
+    # Downstream code শুধু .items()/.get()/membership-check ব্যবহার করে
+    # (auto-vivification-এর উপর নির্ভর করে না), তাই behavior অপরিবর্তিত।
+    return {pb: dict(sub_d) for pb, sub_d in sms_filtered.items()}
+
 
 
 def _haversine_km(lat1, lon1, lat2, lon2):
@@ -7487,6 +7518,7 @@ def _load_cell_tower_gps(cell_dir=None):
     return cell_dict
 
 
+@st.cache_data(show_spinner=False, max_entries=15)
 def _build_colocation(dfs, window_min=30, radius_km=3.0):
     """
     Common Location Analysis:
@@ -7499,8 +7531,13 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
 
     ভিন্ন operator হলেও GPS haversine দিয়ে তুলনা করা হয়।
     একই operator হলে GPS + same LAC+CID উভয়ই চেক করা হয়।
+
+    PERF: cached per (dfs, window_min, radius_km) — Settings expander-এর
+    "Co-location time window" / "radius" slider সরালে শুধু নতুন combo-র জন্যই
+    গণনা হয়; আগের মান-এ ফিরে গেলে cache hit (geocoding আবার করতে হয় না)।
     """
     # math → _math_mod (module-level import)
+    import functools as _functools_co   # PERF: _text_gps() memoization-এর জন্য
 
     results = []
     if len(dfs) < 2:
@@ -7522,6 +7559,7 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
         'Bogra Sadar South New':'Bogra',
     }
 
+    @_functools_co.lru_cache(maxsize=4096)
     def _text_gps(addr_str):
         """
         Co-location GPS parse — same conditional logic as build_movement_map.
@@ -7529,6 +7567,11 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
           2a. P.S: আছে → Thana → District
           2b. P.S: নেই → Keyword scan → District fallback
           3.  শুধু miss হলে → Nominatim (last resort)
+
+        PERF: lru_cache memoized — sub_df.apply()-এ প্রতিটি row-এর জন্য আলাদা
+        করে call হয়; একই BTS address বহু row-এ repeat হওয়ায় memoization
+        regex-parsing খরচ অনেক কমায়। cache প্রতি _build_colocation() call-এ
+        নতুন (closure-local), তাই stale data leak হয় না।
         """
         if not addr_str:
             return None
@@ -7973,12 +8016,17 @@ def _build_colocation(dfs, window_min=30, radius_km=3.0):
     return unique[:1000]
 
 
+@st.cache_data(show_spinner=False, max_entries=10)
 def _build_network_html(dfs, connections, subjects, subj_edge_count=None, subj_meta=None, contact_names=None):
     """Network graph — clean labels, delete nodes, filter by connection count.
 
     contact_names : dict  {phone_str: name_str}  — optional display names for
                     contact nodes (non-subject). When provided, node labels show
                     "Name\nPhone" instead of phone only.
+
+    PERF: cached — Run করার পর অন্য slider (co-location radius, pattern
+    window) সরালে graph নতুন করে build হবে না; শুধু top_n বা subject
+    name/photo বদলালে নতুন গণনা হবে।
     """
     # math → _math_mod (module-level import)
     if contact_names is None:
@@ -9282,6 +9330,24 @@ def link_analysis_page():
 
     if st.button("🔗 Run Link Analysis", type="primary", use_container_width=False,
                  key="run_link_analysis"):
+        st.session_state['_la_analysis_triggered'] = True
+
+    # ── PERF FIX ─────────────────────────────────────────────────────────
+    # আগে এই পুরো analysis block সরাসরি `if st.button(...)`-এর ভেতরে ছিল।
+    # Streamlit-এ st.button() শুধুমাত্র click হওয়া script-run-এই True হয়;
+    # তার পরের যেকোনো rerun-এ (নিচের slider সরানো, download button-এ ক্লিক)
+    # এটা আবার False হয়ে যেত — ফলে পুরো ফলাফল (network graph, co-location,
+    # suspicious patterns ইত্যাদি) স্ক্রিন থেকে উধাও হয়ে যেত এবং
+    # ব্যবহারকারীকে আবার "Run Link Analysis" চাপতে হতো, যা নিচের সব ভারী
+    # ফাংশন (_build_connections, _build_colocation, _build_suspicious_patterns,
+    # _build_network_html) আবার শুরু থেকে চালাতো।
+    #
+    # এখন একটি session_state flag persist করে রাখা হচ্ছে, যাতে block-টা
+    # প্রতি rerun-এ চলতে থাকে (ফলাফল উধাও হয় না)। আর নিচের ভারী ফাংশনগুলো
+    # @st.cache_data দিয়ে cache করা হয়েছে — তাই widget বদলালেও repeat-call
+    # গুলো প্রায় বিনামূল্যে (cache hit) হয়, শুধু পরিবর্তিত parameter-এর
+    # (যেমন co-location radius slider) জন্য নতুন গণনা হয়।
+    if st.session_state.get('_la_analysis_triggered', False):
 
         # ── Load CDRs ──
         dfs = []
@@ -14091,7 +14157,9 @@ def main():
                 if not out_df.empty:
                     st.dataframe(out_df, use_container_width=True, hide_index=True)
                     fig = plot_contacts(df, 'out', 10, 'Top 10 Outgoing Contacts')
-                    if fig: st.pyplot(fig)
+                    if fig:
+                        st.pyplot(fig)
+                        plt.close(fig)   # PERF: free matplotlib memory (prevents leak across reruns)
                 else:
                     st.info("No outgoing call data available.")
             with t2:
@@ -14101,7 +14169,9 @@ def main():
                 if not in_df.empty:
                     st.dataframe(in_df, use_container_width=True, hide_index=True)
                     fig = plot_contacts(df, 'in', 10, 'Top 10 Incoming Contacts')
-                    if fig: st.pyplot(fig)
+                    if fig:
+                        st.pyplot(fig)
+                        plt.close(fig)   # PERF: free matplotlib memory (prevents leak across reruns)
                 else:
                     st.info("No incoming call data available.")
 
