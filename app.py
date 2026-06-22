@@ -9027,12 +9027,17 @@ function applyLayout(mode){{
     return;
   }}
   if(mode==='radial'){{
-    // ── Radial (Star) Layout ─────────────────────────────────────────────
-    // CDR link analysis-এর জন্য সবচেয়ে পরিষ্কার layout:
-    //   • Subject(গুলো) → কেন্দ্রে (ছোট বৃত্তে)
-    //   • Common contacts → মাঝের বলয়ে (inner ring)
-    //   • প্রতিটি subject-এর নিজস্ব contacts → বাইরের spoke-এ
-    // Physics বন্ধ থাকে → position deterministic, কখনো বদলায় না।
+    // ── Optimized Minimal-Overlap Layout ─────────────────────────────────
+    // Core idea: subject-গুলো বাইরে চওড়াভাবে, common contact-গুলো ভেতরে
+    // weighted angle-এ — যাতে S1→C ও S2→C edge কম cross করে।
+    //
+    // Algorithm:
+    //  1. Subjects → বড় outer circle (চওড়া gap, overlap নেই)
+    //  2. Common contacts → inner circle, তবে প্রতিটির position নির্ধারণ হয়
+    //     তার weighted angle দিয়ে: যে subject-এর সাথে বেশি connected,
+    //     সেই subject-এর দিকে বেশি টানে। Sort করে edge crossing কমায়।
+    //  3. Non-common contacts → প্রতিটি subject-এর sector-এ, outer edge-এ
+    // Physics বন্ধ → সবসময় একই position, কখনো নিজে নড়ে না।
     network.setOptions({{layout:{{improvedLayout:false,hierarchical:{{enabled:false}}}},physics:{{enabled:false}}}});
     physicsOn=false;
     document.getElementById('physBtn').textContent='\u25B6 Start';
@@ -9041,54 +9046,80 @@ function applyLayout(mode){{
     var subjN    = vis_nodes.filter(function(n){{return n.group==='subject'||n.group==='isolated_subject';}});
     var commonN  = vis_nodes.filter(function(n){{return n.group==='common';}});
     var contactN = vis_nodes.filter(function(n){{return n.group==='contact'||n.group==='iso_c';}});
+    var PI2 = 2*Math.PI;
+    var posR = [];
 
-    var posR=[];
-    var PI2=2*Math.PI;
-
-    // ── 1) Subjects: কেন্দ্রে ছোট বৃত্ত ──
-    var subjR = subjN.length>1 ? Math.max(110, subjN.length*55) : 0;
-    subjN.forEach(function(n,i){{
-      var a=(PI2*i/Math.max(subjN.length,1))-Math.PI/2;
+    // ── 1) Subjects: চওড়া outer circle ──────────────────────────────────
+    // radius: subject সংখ্যার সাথে বাড়ে, minimum 500 যাতে পরস্পর দূরে থাকে
+    var nSubj = Math.max(subjN.length, 1);
+    var subjR = Math.max(500, nSubj * 240);
+    var subjAngleMap = {{}};  // id → angle (weighted avg-এর জন্য দরকার)
+    subjN.forEach(function(n, i) {{
+      var a = (PI2 * i / nSubj) - Math.PI/2;
+      subjAngleMap[n.id] = a;
       posR.push({{id:n.id, x:Math.round(subjR*Math.cos(a)), y:Math.round(subjR*Math.sin(a)), fixed:false}});
     }});
 
-    // ── 2) Common contacts: মাঝের বলয় ──
-    var commonR = Math.max(310, Math.max(commonN.length*55,1)/(PI2)*2.2);
-    commonN.forEach(function(n,i){{
-      var a=(PI2*i/Math.max(commonN.length,1))-Math.PI/2;
-      posR.push({{id:n.id, x:Math.round(commonR*Math.cos(a)), y:Math.round(commonR*Math.sin(a)), fixed:false}});
+    // ── 2) Common contacts: inner circle, weighted angle sort ─────────────
+    // প্রতিটি common contact-এর "weighted angle" = তার connections-এর
+    // ভারবিভাজিত কোণ (circular mean) — বেশি connected subject-এর দিকে টানে।
+    // Sort করলে edge-গুলো কম cross করে (optimal bipartite embedding theorem)।
+    var commonR = Math.max(240, subjR * 0.42);
+    var wCommon = commonN.map(function(n) {{
+      var sinS=0, cosS=0, totW=0;
+      if(n._subj_totals) {{
+        Object.keys(n._subj_totals).forEach(function(s) {{
+          var w = Math.max(n._subj_totals[s] || 0, 1);
+          var a = subjAngleMap[s] !== undefined ? subjAngleMap[s] : 0;
+          sinS += w * Math.sin(a);
+          cosS += w * Math.cos(a);
+          totW += w;
+        }});
+      }}
+      return {{n:n, wa: totW>0 ? Math.atan2(sinS/totW, cosS/totW) : 0}};
+    }});
+    // weighted angle অনুযায়ী sort → edge crossing সর্বনিম্ন হয়
+    wCommon.sort(function(a,b){{ return a.wa - b.wa; }});
+
+    // ── Spread: সব common contact একই angle-এ থাকলে overlap হবে —
+    //    তাই নিজের wa-র কাছে থেকেও spread করো ──
+    var nC = wCommon.length;
+    var spread = nC>1 ? Math.min((PI2/nSubj)*0.7, (PI2*0.15)/nC) : 0;
+    wCommon.forEach(function(item, i) {{
+      var offset = nC>1 ? (i - (nC-1)/2) * spread : 0;
+      var a = item.wa + offset;
+      posR.push({{id:item.n.id, x:Math.round(commonR*Math.cos(a)), y:Math.round(commonR*Math.sin(a)), fixed:false}});
     }});
 
-    // ── 3) Non-common contacts: বাইরের বলয়, subject-ভিত্তিক sector-এ ──
-    // প্রতিটি contact-এর primary subject খোঁজো (সবচেয়ে বেশি interaction)
-    var contactBySubj={{}};
-    subjN.forEach(function(s){{contactBySubj[s.id]=[];}});
+    // ── 3) Non-common contacts: outer arc, subject-এর sector-এ ─────────
+    // প্রতিটি contact primary subject-এর দিকে বের হয় → তাদের edge cross হয় না
+    var contactBySubj = {{}};
+    subjN.forEach(function(s){{ contactBySubj[s.id]=[]; }});
     var unassigned=[];
-    contactN.forEach(function(n){{
-      var bestS=null,bestV=-1;
-      if(n._subj_totals){{
-        Object.keys(n._subj_totals).forEach(function(s){{
+    contactN.forEach(function(n) {{
+      var bestS=null, bestV=-1;
+      if(n._subj_totals) {{
+        Object.keys(n._subj_totals).forEach(function(s) {{
           if((n._subj_totals[s]||0)>bestV){{bestV=n._subj_totals[s];bestS=s;}}
         }});
       }}
-      if(bestS&&contactBySubj[bestS])contactBySubj[bestS].push(n);
+      if(bestS && contactBySubj[bestS]) contactBySubj[bestS].push(n);
       else unassigned.push(n);
     }});
-    // unassigned → প্রথম subject-এ
-    if(subjN.length>0)unassigned.forEach(function(n){{contactBySubj[subjN[0].id].push(n);}});
+    if(subjN.length>0) unassigned.forEach(function(n){{ contactBySubj[subjN[0].id].push(n); }});
 
-    var outerR=Math.max(570, commonR+Math.max(contactN.length*38,1)/(PI2)*2.0);
-    var totalC=contactN.length||1;
-    subjN.forEach(function(s,si){{
-      var sContacts=contactBySubj[s.id]||[];
-      if(sContacts.length===0)return;
-      // Subject-এর কেন্দ্র angle থেকে sector বের করো
-      var sEntry=posR.find(function(p){{return p.id===s.id;}});
-      var baseA=sEntry?Math.atan2(sEntry.y,sEntry.x):(PI2*si/subjN.length-Math.PI/2);
-      // প্রতি subject-এর sector = মোট angle / subject সংখ্যা × 0.75 (gap রাখার জন্য)
-      var sectorW=(PI2/Math.max(subjN.length,1))*0.78;
-      sContacts.forEach(function(n,ci){{
-        var a=baseA+sectorW*(ci-(sContacts.length-1)/2)/Math.max(sContacts.length,1);
+    // non-common radius: subject-এর বাইরে (subject-এর পেছনে বের হয়)
+    var outerR = subjR + Math.max(160, Math.max(contactN.length, 1)*28);
+    var sectorFrac = 0.72 / nSubj;  // overlap কমাতে sector ছোট রাখো
+    subjN.forEach(function(s, si) {{
+      var sContacts = contactBySubj[s.id] || [];
+      if(!sContacts.length) return;
+      var baseA = subjAngleMap[s.id];
+      // মোট sector width: subject সংখ্যা বাড়লে sector ছোট হয়
+      var sw = PI2 * sectorFrac;
+      sContacts.forEach(function(n, ci) {{
+        var frac = sContacts.length>1 ? (ci/(sContacts.length-1) - 0.5) : 0;
+        var a = baseA + sw * frac;
         posR.push({{id:n.id, x:Math.round(outerR*Math.cos(a)), y:Math.round(outerR*Math.sin(a)), fixed:false}});
       }});
     }});
