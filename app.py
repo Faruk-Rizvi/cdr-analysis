@@ -8871,7 +8871,7 @@ function toggleLasso(){{
 }}
 
 // dragStart: drag শুরুর আগে node unfix করো
-// BUG FIX: fixed:{x:true,y:true} সেট থাকলে vis.js drag-ও block করে।
+// BUG FIX: fixed:{{x:true,y:true}} সেট থাকলে vis.js drag-ও block করে।
 // তাই drag শুরুতে সর্বদা unfix — এতে যতোবার ইচ্ছা drag করা যাবে।
 network.on('dragStart',function(params){{
   if(params.nodes.length>0){{
