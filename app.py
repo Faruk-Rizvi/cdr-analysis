@@ -8870,12 +8870,30 @@ function toggleLasso(){{
   document.getElementById('lassoBtn').style.background=_lassoActive?'#16a34a':'#475569';
 }}
 
+// dragStart: drag শুরুর আগে node unfix করো
+// BUG FIX: fixed:{x:true,y:true} সেট থাকলে vis.js drag-ও block করে।
+// তাই drag শুরুতে সর্বদা unfix — এতে যতোবার ইচ্ছা drag করা যাবে।
+network.on('dragStart',function(params){{
+  if(params.nodes.length>0){{
+    params.nodes.forEach(function(nid){{
+      allNodes.update({{id:nid,fixed:{{x:false,y:false}}}});
+    }});
+  }}
+}});
+
 // dragEnd: pin node (only when AutoPin is ON)
 network.on('dragEnd',function(params){{
-  if(_autoPinEnabled && params.nodes.length>0){{
+  if(params.nodes.length>0){{
     params.nodes.forEach(function(nid){{
       var pos=network.getPositions([nid])[nid];
-      allNodes.update({{id:nid,x:pos.x,y:pos.y,fixed:{{x:true,y:true}}}});
+      if(_autoPinEnabled){{
+        // physicsOn=true → physics চলছে → fixed:true দিয়ে physics থেকে রক্ষা করো
+        // physicsOn=false → physics বন্ধ → fixed:false রাখো, বারবার drag করা যাবে
+        allNodes.update({{id:nid,x:pos.x,y:pos.y,fixed:physicsOn?true:false}});
+      }}else{{
+        // AutoPin OFF → শুধু position update, কখনো fix করো না
+        allNodes.update({{id:nid,x:pos.x,y:pos.y,fixed:false}});
+      }}
     }});
   }}
 }});
