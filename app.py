@@ -8426,10 +8426,6 @@ input[type=range]{{width:80px;accent-color:#2563eb}}
     style="background:#0d9488">&#x2194; Straight: OFF</button>
   <button class="btn teal" onclick="exportGraphPNG()">&#x1F4F7; Export PNG</button>
   <button class="btn violet" onclick="copyGraphToClipboard()">&#x1F4CB; Copy Image</button>
-  <button class="btn" onclick="exportNetworkHTML()" style="background:#0369a1"
-    title="বর্তমান node position, নাম, ছবি সহ HTML সেভ করুন — পরে খুললে একই অবস্থায় থাকবে">
-    &#x1F4BE; Save HTML
-  </button>
 </div>
 <div class="bar">
   <!-- Search box -->
@@ -8624,8 +8620,6 @@ var selectedNodeId = null;
 var selectedEdgeId = null;
 
 var physicsOn = true;
-// Saved HTML export থেকে খোলা হলে positions ও state restore করা হবে
-var _isSaved = !!(window._GRAPH_SAVED);
 
 var network = new vis.Network(
   document.getElementById('network'),
@@ -8636,7 +8630,7 @@ var network = new vis.Network(
       smooth:{{type:'dynamic'}},shadow:false
     }},
     physics:{{
-      enabled:!_isSaved,
+      enabled:true,
       solver:'barnesHut',
       stabilization:{{iterations:600,updateInterval:20}},
       barnesHut:{{
@@ -8655,40 +8649,19 @@ var network = new vis.Network(
   }}
 );
 
-// Saved state → immediately fit, no physics
-if(_isSaved){{
-  // Apply saved nodes and edges (with positions, names, photos)
-  if(window._SAVED_NODES) allNodes.update(window._SAVED_NODES);
-  if(window._SAVED_EDGES) allEdges.update(window._SAVED_EDGES);
-  // Restore custom label offsets
-  if(window._SAVED_CLO && typeof _clo!=='undefined'){{
-    Object.assign(_clo, window._SAVED_CLO);
-  }}
-  physicsOn=false;
-  document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
-  setTimeout(function(){{
-    network.fit({{animation:{{duration:700}}}});
-    var _cmx=parseInt(document.getElementById('maxCommon').max);
-    filterByCommonCount(_cmx);
-    filterByConnCount(20);
-    network.redraw();
-  }},300);
-}}
-
 // Auto-fit after stabilization
 network.once('stabilizationIterationsDone', function(){{
-  if(_isSaved)return; // saved state already handled above
   network.fit({{animation:{{duration:600,easingFunction:'easeInOutQuad'}}}});
   network.setOptions({{physics:{{enabled:false}}}});
   physicsOn=false;
   document.getElementById('physBtn').textContent='\u25B6 Unfreeze';
   // Default: top-20 non-common contact দেখাও, সব common দেখাও
   var _cmaxInit = parseInt(document.getElementById('maxCommon').max);
-  filterByCommonCount(_cmaxInit);
+  filterByCommonCount(_cmaxInit);   // FEAT: সব common দেখাও (slider max-এ শুরু)
   filterByConnCount(20);
 }});
 
-setTimeout(function(){{if(network&&!_isSaved)network.fit();}}, 2500);
+setTimeout(function(){{if(network)network.fit();}}, 2500);
 
 // ── Shared: capture graph canvas to dataURL ──
 var _exportDataURL = null;
@@ -8778,76 +8751,6 @@ function downloadExportedPNG(){{
   a.click();
   document.getElementById('exportStatus').textContent = '✅ Downloaded!';
   setTimeout(function(){{document.getElementById('exportStatus').textContent='';}},2500);
-}}
-
-// ── Save HTML with current positions, names, photos ──────────────────────
-// বর্তমান সব node position, label, ছবি সহ HTML সেভ হবে।
-// পরে খুললে নতুন করে layout করতে হবে না — সব যেখানে ছিল সেখানেই থাকবে।
-function exportNetworkHTML(){{
-  try{{
-    var positions = network.getPositions();
-
-    // Node: current data + position + fixed (so physics doesn't move them)
-    var savedNodes = allNodes.get().map(function(n){{
-      var p = positions[n.id];
-      var copy = {{}};
-      Object.keys(n).forEach(function(k){{
-        var v = n[k];
-        if(v===null||v===undefined)return;
-        if(typeof v==='function')return;
-        if(v instanceof Element){{
-          // DOM title element → HTML string
-          if(k==='title') copy.title = v.innerHTML||'';
-          return;
-        }}
-        try{{ JSON.stringify(v); copy[k]=v; }}catch(e){{}}
-      }});
-      if(p){{ copy.x=p.x; copy.y=p.y; }}
-      copy.fixed={{x:true,y:true}};  // freeze position when reopened
-      return copy;
-    }});
-
-    // Edge: current data (labels, colors etc)
-    var savedEdges = allEdges.get().map(function(e){{
-      var copy={{}};
-      Object.keys(e).forEach(function(k){{
-        var v=e[k];
-        if(v===null||v===undefined||typeof v==='function')return;
-        if(v instanceof Element){{if(k==='title')copy.title=v.innerHTML||'';return;}}
-        try{{JSON.stringify(v);copy[k]=v;}}catch(ex){{}}
-      }});
-      return copy;
-    }});
-
-    // Custom label offsets (from Label Position feature)
-    var savedClo = typeof _clo!=='undefined'?_clo:{{}};
-
-    // Get current page HTML
-    var html = document.documentElement.outerHTML;
-
-    // Inject: saved state flag + data + label offsets
-    var stateScript = '<script>'
-      + 'window._GRAPH_SAVED=true;'
-      + 'window._SAVED_NODES=' + JSON.stringify(savedNodes) + ';'
-      + 'window._SAVED_EDGES=' + JSON.stringify(savedEdges) + ';'
-      + 'window._SAVED_CLO=' + JSON.stringify(savedClo) + ';'
-      + '<\\/script>';
-
-    html = html.replace('<head>', '<head>' + stateScript);
-
-    var blob = new Blob([html], {{type:'text/html;charset=utf-8'}});
-    var a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    var ts = new Date().toISOString().slice(0,10);
-    a.download = 'CDR_Network_' + ts + '.html';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(a.href);
-    if(typeof _tk==='function') _tk('\uD83D\uDCBE \u0997\u09CD\u09B0\u09BE\u09AB \u09B8\u09B0\u09CD\u09AC\u09B6\u09C7\u09B7 \u0985\u09AC\u09B8\u09CD\u09A5\u09BE\u09B8\u09B9 \u09B8\u09C7\u09AD \u09B9\u09AF\u09BC\u09C7\u099B\u09C7');
-  }}catch(err){{
-    alert('Export error: '+err.message);
-  }}
 }}
 
 // ── Copy from modal ──
@@ -9453,11 +9356,6 @@ function changeFontSize(val){{
   document.getElementById('fontVal').textContent=val===0?'off':val;
   allNodes.update(allNodes.get().map(n=>({{id:n.id,
     font:Object.assign({{}},n.font,{{size:val}})}})));
-  // Custom-positioned labels (afterDrawing)-ও একই size-এ update করো
-  if(typeof _clo!=='undefined'){{
-    Object.keys(_clo).forEach(function(nid){{_clo[nid]._fs=val;}});
-  }}
-  if(network)network.redraw();
 }}
 function changeEdgeFontSize(val){{
   val=parseInt(val);
@@ -9666,11 +9564,10 @@ __EXTRA_JS__
         '  });'
         '  _clo={};network.redraw();_tk("সব label reset হয়েছে");'
         '}'
-        # afterDrawing canvas custom label renderer — slider font size সহ
+        # afterDrawing canvas custom label renderer
         'network.on("afterDrawing",function(ctx){'
         '  var nids=Object.keys(_clo);if(!nids.length)return;'
         '  var positions=network.getPositions(nids);'
-        '  var _sliderFs=parseInt((document.getElementById("fontSz")||{}).value)||14;'
         '  ctx.save();ctx.textAlign="center";ctx.textBaseline="middle";'
         '  nids.forEach(function(nid){'
         '    var nd=allNodes.get(nid);if(!nd||nd.hidden)return;'
@@ -9678,8 +9575,7 @@ __EXTRA_JS__
         '    var off=_clo[nid];'
         '    var lx=pos.x+off.dx,ly=pos.y+off.dy;'
         '    var lines=(off.label||String(nid)).split("\\n");'
-        '    var fs=off._fs||_sliderFs;'  # per-label cached size or current slider
-        '    var maxW=0;'
+        '    var fs=14,maxW=0;'
         '    lines.forEach(function(l){'
         '      ctx.font="bold "+fs+"px Segoe UI,Arial,sans-serif";'
         '      maxW=Math.max(maxW,ctx.measureText(l).width);'
@@ -9751,9 +9647,8 @@ __EXTRA_JS__
         '    fnt.bold=true;'           # both name+number lines same size, bold
         '    var upd={id:nid,label:lbl,_cname:name,_origLabel:lbl,font:fnt};'
         '    if(photo){'
-        '      upd.image=photo;'       # replace phone/star icon with real photo
+        '      upd.image=photo;'       # replace phone icon with real photo
         '      upd._photoData=photo;'  # cache for re-open
-        '      upd.shape="circularImage";'  # subject star → circular photo
         '      upd.size=Math.max(n.size||22,42);'
         '      upd.borderWidth=4;'
         '    }'
