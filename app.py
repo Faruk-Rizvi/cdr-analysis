@@ -5870,9 +5870,9 @@ def build_docx(df, phone, operator, date_range, total_raw, anomaly_count, target
     # ════════════════════════════════════════════════════════════════════
     if target_location:
         add_h('13. Target Location Analysis')
-        tloc_df = target_location_analysis(df, target_location)
-        if tloc_df is not None and not tloc_df.empty:
-            add_df_table(tloc_df)
+        tloc_results = target_location_analysis(df, target_location)
+        if tloc_results:
+            add_df_table(pd.DataFrame(tloc_results))
         else:
             p = doc.add_paragraph(f'No activity found near "{target_location}".')
             p.runs[0].font.name = FONT
